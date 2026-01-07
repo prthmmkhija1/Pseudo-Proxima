@@ -1,6 +1,8 @@
-# How to Build Proxima: A Quantum Simulation AI Agent
+# How to Build Proxima: A Strategic Guide to Designing an AI Agent for Quantum Simulations
 
-> **A Strategic, Phased Guide to Designing and Building an Intelligent Quantum Simulation Agent**
+> **Document Version:** 1.0  
+> **Last Updated:** January 7, 2026  
+> **Status:** High-Level Design Document
 
 ---
 
@@ -16,197 +18,271 @@
 
 ## Introduction
 
-**Proxima** is an independent, extensible AI agent designed to orchestrate quantum simulations across multiple backends. Inspired by the architectural philosophy of [OpenCode AI](https://github.com/opencode-ai/opencode) and [Charmbracelet's Crush](https://github.com/charmbracelet/crush), Proxima provides:
+### What is Proxima?
 
-- Seamless backend selection and comparison
-- Transparent execution monitoring
-- Intelligent result interpretation
-- Fail-safe resource awareness
-- LLM-powered analysis and assistance
+Proxima is an intelligent AI agent designed to orchestrate quantum simulations across multiple backends. It provides a unified interface for selecting, executing, comparing, and interpreting results from various quantum computing frameworks.
+
+### Design Philosophy
+
+Proxima draws architectural and UX inspiration from:
+
+- **OpenCode AI** ([GitHub](https://github.com/opencode-ai/opencode)): For its intelligent code assistance patterns and agent-driven workflows
+- **Crush by Charmbracelet** ([GitHub](https://github.com/charmbracelet/crush)): For its elegant terminal UI paradigms and user experience design
+
+However, Proxima is built as a completely independent, extensible system with its own identity.
 
 ### Supported Quantum Backends
 
-| Backend        | Simulators                    | Repository                                                                             |
-| -------------- | ----------------------------- | -------------------------------------------------------------------------------------- |
-| **LRET**       | Framework Integration         | [kunal5556/LRET](https://github.com/kunal5556/LRET/tree/feature/framework-integration) |
-| **Cirq**       | Density Matrix, State Vector  | [quantumlib/Cirq](https://github.com/quantumlib/Cirq)                                  |
-| **Qiskit Aer** | Density Matrix, State Vector  | [Qiskit/qiskit-aer](https://github.com/Qiskit/qiskit-aer)                              |
-| **Extensible** | Additional backends as needed | User-defined                                                                           |
+| Backend        | Simulator Types                         | Repository                                                                             |
+| -------------- | --------------------------------------- | -------------------------------------------------------------------------------------- |
+| **LRET**       | Framework Integration                   | [kunal5556/LRET](https://github.com/kunal5556/LRET/tree/feature/framework-integration) |
+| **Cirq**       | Density Matrix, State Vector            | [quantumlib/Cirq](https://github.com/quantumlib/Cirq)                                  |
+| **Qiskit Aer** | Density Matrix, State Vector            | [Qiskit/qiskit-aer](https://github.com/Qiskit/qiskit-aer)                              |
+| **Extensible** | Custom backends via plugin architecture | —                                                                                      |
 
 ---
 
 ## Strategic System Sketch
 
-### Overall Architecture
+### Overall Architecture Overview
 
-Proxima follows a **layered, modular architecture** with clear separation of concerns. The system is organized into five primary layers:
+Proxima follows a **layered modular architecture** with clear separation of concerns:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                         PRESENTATION LAYER                          │
-│    CLI Interface │ Future UI │ Notification System │ Progress View  │
-├─────────────────────────────────────────────────────────────────────┤
-│                         ORCHESTRATION LAYER                         │
-│  Agent Core │ Pipeline Manager │ State Machine │ Execution Timer    │
-├─────────────────────────────────────────────────────────────────────┤
+│                         USER INTERFACE LAYER                        │
+│         (CLI / Future TUI via Bubble Tea / Future Web UI)           │
+└─────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                        AGENT ORCHESTRATION LAYER                    │
+│  ┌─────────────┐  ┌──────────────┐  ┌────────────────────────────┐  │
+│  │   Planner   │  │   Executor   │  │   State Machine Manager    │  │
+│  └─────────────┘  └──────────────┘  └────────────────────────────┘  │
+│  ┌─────────────────────────────────────────────────────────────┐    │
+│  │              proxima_agent.md Interpreter                   │    │
+│  └─────────────────────────────────────────────────────────────┘    │
+└─────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────┐
 │                         INTELLIGENCE LAYER                          │
-│  LLM Router │ Backend Selector │ Result Interpreter │ Planner       │
-├─────────────────────────────────────────────────────────────────────┤
-│                         EXECUTION LAYER                             │
-│  Backend Adapters │ Resource Monitor │ Fail-Safe Controller         │
-├─────────────────────────────────────────────────────────────────────┤
-│                         INFRASTRUCTURE LAYER                        │
-│  Config Manager │ State Persistence │ Logging │ Plugin System       │
+│  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐   │
+│  │  LLM Router      │  │  Backend Selector │  │  Insight Engine  │   │
+│  │  (Local/Remote)  │  │  (Auto-Selection) │  │  (Analysis)      │   │
+│  └──────────────────┘  └──────────────────┘  └──────────────────┘   │
+└─────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                      RESOURCE MANAGEMENT LAYER                      │
+│  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐   │
+│  │  Memory Monitor  │  │  Execution Timer │  │  Consent Manager │   │
+│  └──────────────────┘  └──────────────────┘  └──────────────────┘   │
+│  ┌──────────────────────────────────────────────────────────────┐   │
+│  │              Execution Control (Start/Abort/Pause/Resume)    │   │
+│  └──────────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                       BACKEND ABSTRACTION LAYER                     │
+│  ┌────────────┐  ┌────────────┐  ┌────────────┐  ┌────────────┐     │
+│  │    LRET    │  │    Cirq    │  │ Qiskit Aer │  │  Custom    │     │
+│  │  Adapter   │  │  Adapter   │  │  Adapter   │  │  Adapter   │     │
+│  └────────────┘  └────────────┘  └────────────┘  └────────────┘     │
+└─────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                         DATA & OUTPUT LAYER                         │
+│  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐   │
+│  │  Result Store    │  │  Comparison      │  │  Export Engine   │   │
+│  │  (JSON/SQLite)   │  │  Aggregator      │  │  (CSV/XLSX)      │   │
+│  └──────────────────┘  └──────────────────┘  └──────────────────┘   │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
-### Core Components
+---
 
-#### 1. Agent Core
+### Core Components Detailed
 
-The central nervous system of Proxima responsible for:
+#### 1. User Interface Layer
 
-- Receiving and parsing user commands
-- Coordinating between all other components
-- Maintaining the global execution context
-- Dispatching tasks to appropriate handlers
+**Purpose:** Provides the interaction surface for users to communicate with Proxima.
 
-#### 2. Pipeline Manager
+**Components:**
 
-Manages the execution workflow through distinct stages:
+- **CLI Interface:** Primary interface using libraries like Cobra (Go) or Click/Typer (Python)
+- **TUI Interface (Future):** Rich terminal UI using Bubble Tea (Go) or Rich/Textual (Python)
+- **Web UI (Future):** React or Svelte-based dashboard
 
-- **Planning Stage**: Analyzes the task and determines required steps
-- **Validation Stage**: Checks resources, permissions, and feasibility
-- **Execution Stage**: Runs the actual simulation
-- **Analysis Stage**: Interprets and formats results
-- **Reporting Stage**: Delivers insights to the user
+**Data Flow:**
 
-#### 3. Backend Registry & Adapters
+- User commands enter here
+- Execution status, timers, and progress displayed here
+- All consent prompts surface through this layer
 
-A plugin-based system where each quantum backend is wrapped in an adapter:
+---
 
-- **Backend Registry**: Maintains a catalog of available backends with their capabilities
-- **Adapter Interface**: Standardized contract that all backend adapters must implement
-- **Capability Descriptors**: Metadata describing what each backend can do (qubit limits, noise models, etc.)
+#### 2. Agent Orchestration Layer
 
-#### 4. State Machine Controller
+**Purpose:** The brain of Proxima—plans, coordinates, and manages task execution.
 
-Manages execution states with full visibility:
+**Components:**
 
-```
-┌──────────┐    ┌─────────┐    ┌───────────┐    ┌──────────┐
-│  IDLE    │───▶│ PLANNING│───▶│ VALIDATING│───▶│ RUNNING  │
-└──────────┘    └─────────┘    └───────────┘    └──────────┘
-     ▲                                               │
-     │              ┌──────────┐                     │
-     │◀─────────────│ COMPLETED│◀────────────────────┘
-     │              └──────────┘
-     │              ┌──────────┐    ┌──────────┐
-     └──────────────│ ABORTED  │◀───│  PAUSED  │
-                    └──────────┘    └──────────┘
-```
+| Component                        | Responsibility                                                                       |
+| -------------------------------- | ------------------------------------------------------------------------------------ |
+| **Planner**                      | Decomposes user requests into executable stages; creates task DAGs                   |
+| **Executor**                     | Runs tasks according to plan; manages parallel/sequential execution                  |
+| **State Machine Manager**        | Tracks execution states (IDLE, PLANNING, RUNNING, PAUSED, ABORTED, COMPLETED, ERROR) |
+| **proxima_agent.md Interpreter** | Parses and executes instructions from agent definition files                         |
 
-#### 5. Resource Monitor
+**Key Behaviors:**
 
-Continuously tracks system resources:
+- Explicit planning before execution
+- Transparent stage transitions
+- Traceable execution history
+- Support for future agent.md-based automation
 
-- RAM usage and availability
-- CPU utilization
-- GPU memory (if applicable)
-- Disk space for result storage
-- Network connectivity for remote backends
+---
 
-#### 6. LLM Router
+#### 3. Intelligence Layer
 
-Manages connections to language models:
+**Purpose:** Provides smart decision-making capabilities.
 
-- **Local LLM Detector**: Discovers locally installed models (Ollama, LM Studio, llama.cpp)
-- **Remote API Manager**: Handles API keys for cloud providers (OpenAI, Anthropic, etc.)
-- **Model Selector**: Routes requests to appropriate LLM based on task and user preference
-- **Consent Manager**: Ensures explicit user approval before LLM invocation
+**Components:**
 
-#### 7. Result Interpreter
+| Component            | Function                                                                                  |
+| -------------------- | ----------------------------------------------------------------------------------------- |
+| **LLM Router**       | Routes requests to appropriate LLM (local vs. remote); manages API keys; enforces consent |
+| **Backend Selector** | Analyzes workload characteristics and recommends optimal backend                          |
+| **Insight Engine**   | Transforms raw simulation data into human-readable analytical insights                    |
 
-Transforms raw simulation output into actionable insights:
-
-- Reads various file formats (CSV, XLSX, JSON, binary)
-- Applies statistical analysis
-- Generates human-readable summaries
-- Creates comparison matrices for multi-backend runs
-
-#### 8. Configuration Manager
-
-Handles all configuration aspects:
-
-- User preferences
-- Backend configurations
-- API keys (encrypted storage)
-- Resource thresholds
-- `proxima_agent.md` parsing (future-proofed)
-
-### Data Flow
+**LLM Router Decision Tree:**
 
 ```
-User Input
-    │
+User Request → Is LLM needed?
+                    │
+            ┌───────┴───────┐
+            ▼               ▼
+           Yes              No
+            │                │
+    Local LLM available?    Proceed
+            │
+    ┌───────┴───────┐
+    ▼               ▼
+   Yes              No
+    │                │
+User consent?    Use Remote API
+    │            (with consent)
     ▼
-┌───────────────┐
-│  Agent Core   │──────────────────────────────────┐
-└───────────────┘                                  │
-    │                                              │
-    ▼                                              ▼
-┌───────────────┐    ┌───────────────┐    ┌───────────────┐
-│ Task Planner  │───▶│Backend Selector│───▶│Resource Monitor│
-└───────────────┘    └───────────────┘    └───────────────┘
-    │                        │                     │
-    ▼                        ▼                     ▼
-┌───────────────────────────────────────────────────────────┐
-│                    Pipeline Manager                        │
-│  [Plan] ──▶ [Validate] ──▶ [Execute] ──▶ [Analyze]        │
-└───────────────────────────────────────────────────────────┘
-    │                                              │
-    ▼                                              ▼
-┌───────────────┐                         ┌───────────────┐
-│Backend Adapter│                         │LLM Router     │
-│  (Cirq/Qiskit/│                         │(Interpretation)│
-│   LRET/etc.)  │                         └───────────────┘
-└───────────────┘                                  │
-    │                                              │
-    ▼                                              ▼
-┌───────────────┐                         ┌───────────────┐
-│ Raw Results   │────────────────────────▶│Result Interpreter│
-└───────────────┘                         └───────────────┘
-                                                   │
-                                                   ▼
-                                          ┌───────────────┐
-                                          │ User Output   │
-                                          │ (Insights)    │
-                                          └───────────────┘
+Use Local LLM
 ```
 
-### Control Flow
+---
 
-1. **Command Reception**: User issues a command via CLI
-2. **Intent Parsing**: Agent Core determines what the user wants
-3. **Planning**: Task Planner breaks the request into stages
-4. **Backend Resolution**: Either user-specified or auto-selected
-5. **Resource Check**: Monitor validates system can handle the task
-6. **Consent Gate**: If issues detected, user must explicitly confirm
-7. **Execution**: Pipeline Manager orchestrates the run with live progress
-8. **Result Processing**: Raw output transformed into insights
-9. **Delivery**: Formatted results presented to user
+#### 4. Resource Management Layer
 
-### Feature Interconnections
+**Purpose:** Ensures safe, transparent, and controllable execution.
 
-| Feature                  | Depends On                         | Provides To                |
-| ------------------------ | ---------------------------------- | -------------------------- |
-| Execution Timer          | State Machine                      | Presentation Layer         |
-| Backend Selection        | Backend Registry, LLM Router       | Pipeline Manager           |
-| Fail-Safe                | Resource Monitor                   | State Machine              |
-| Result Interpretation    | LLM Router, Backend Adapters       | Presentation Layer         |
-| Multi-Backend Comparison | Backend Registry, Pipeline Manager | Result Interpreter         |
-| LLM Integration          | Config Manager, Consent Manager    | All Intelligence Functions |
-| agent.md Compatibility   | Config Manager                     | Agent Core                 |
+**Components:**
+
+- **Memory Monitor:** Continuously tracks RAM usage using psutil or similar; triggers warnings at configurable thresholds
+- **Execution Timer:** Tracks wall-clock time per stage and total execution; displays elapsed time in real-time
+- **Consent Manager:** Gates all potentially risky or resource-intensive operations behind explicit user approval
+- **Execution Controller:** Implements Start, Abort, Pause, Resume operations with proper state persistence
+
+**Fail-Safe Decision Flow:**
+
+```
+Before Execution:
+  │
+  ├─→ Check available memory
+  │     └─→ Below threshold? → Warn user → Require consent
+  │
+  ├─→ Check hardware compatibility
+  │     └─→ Incompatible? → Explain risks → Offer "force execute"
+  │
+  └─→ All checks pass → Proceed with execution
+```
+
+---
+
+#### 5. Backend Abstraction Layer
+
+**Purpose:** Provides a unified interface to diverse quantum simulation backends.
+
+**Design Pattern:** Adapter Pattern with Plugin Architecture
+
+**Each Adapter Must Implement:**
+
+- `initialize()` — Set up the backend
+- `validate_circuit(circuit)` — Check circuit compatibility
+- `execute(circuit, options)` — Run the simulation
+- `get_capabilities()` — Report supported features (noise models, qubit limits, etc.)
+- `get_resource_requirements()` — Estimate memory/compute needs
+
+**Backend Selection Intelligence:**
+
+```
+User Query Analysis:
+  │
+  ├─→ Extract circuit size (qubit count)
+  ├─→ Identify noise requirements
+  ├─→ Detect density matrix vs. state vector needs
+  ├─→ Check hardware constraints
+  │
+  └─→ Score each backend → Select highest score → Explain selection
+```
+
+---
+
+#### 6. Data & Output Layer
+
+**Purpose:** Manages simulation results, comparisons, and exports.
+
+**Components:**
+
+- **Result Store:** Persists simulation outcomes in structured format (JSON or SQLite)
+- **Comparison Aggregator:** Aligns results from multiple backends for side-by-side analysis
+- **Export Engine:** Generates CSV, XLSX, and formatted reports
+
+---
+
+### Control & Data Flow Summary
+
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│                          CONTROL FLOW                                │
+│                                                                      │
+│  User Command → Planning → Resource Check → Consent → Execute →      │
+│  Monitor → Complete/Abort/Pause → Report Results                     │
+└──────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────┐
+│                           DATA FLOW                                  │
+│                                                                      │
+│  User Input → Parsed Request → Execution Plan → Backend Calls →      │
+│  Raw Results → Insight Processing → Formatted Output → User          │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+### Feature Interconnection Map
+
+| Feature                  | Depends On                           | Feeds Into                       |
+| ------------------------ | ------------------------------------ | -------------------------------- |
+| Execution Timer          | State Machine                        | UI Layer, Logs                   |
+| Backend Selection        | Intelligence Layer, Backend Adapters | Executor                         |
+| Fail-Safe                | Memory Monitor, Consent Manager      | Executor (gates execution)       |
+| Execution Control        | State Machine                        | All execution paths              |
+| Result Interpretation    | Insight Engine, LLM Router           | Export Engine, UI                |
+| Multi-Backend Comparison | All Adapters, Comparison Aggregator  | Insight Engine                   |
+| LLM Integration          | LLM Router, Consent Manager          | Insight Engine, Backend Selector |
+| agent.md Compatibility   | Interpreter, Planner                 | Full orchestration               |
 
 ---
 
@@ -214,27 +290,41 @@ User Input
 
 ### Overview
 
-The development of Proxima is divided into **six phases**, each building upon the previous:
+The development of Proxima is divided into **six phases**, each building upon the previous to create a fully functional quantum simulation agent.
 
 ```
-Phase 1          Phase 2          Phase 3          Phase 4          Phase 5          Phase 6
-┌────────┐      ┌────────┐      ┌────────┐      ┌────────┐      ┌────────┐      ┌────────┐
-│Foundation│───▶│Execution│───▶│Intelligence│──▶│Advanced│───▶│Integration│──▶│Polish & │
-│  Core   │     │ Engine  │     │  Layer    │    │Features│     │ & Extend │    │  UI     │
-└────────┘      └────────┘      └────────┘      └────────┘      └────────┘      └────────┘
-  4 weeks         5 weeks         5 weeks         4 weeks         4 weeks         3 weeks
+Phase 1: Foundation & Core Infrastructure
+    │
+    ▼
+Phase 2: Backend Integration & Abstraction
+    │
+    ▼
+Phase 3: Intelligence & Decision Systems
+    │
+    ▼
+Phase 4: Safety, Control & Transparency
+    │
+    ▼
+Phase 5: Advanced Features & agent.md Support
+    │
+    ▼
+Phase 6: UI Enhancement & Production Hardening
 ```
 
-### Phase Breakdown
+---
 
-| Phase | Name                    | Duration | Primary Focus                                               |
-| ----- | ----------------------- | -------- | ----------------------------------------------------------- |
-| 1     | Foundation Core         | 4 weeks  | Project structure, CLI, config, basic state management      |
-| 2     | Execution Engine        | 5 weeks  | Backend adapters, pipeline, resource monitoring, fail-safes |
-| 3     | Intelligence Layer      | 5 weeks  | LLM integration, auto-selection, result interpretation      |
-| 4     | Advanced Features       | 4 weeks  | Multi-backend comparison, execution control, insights       |
-| 5     | Integration & Extension | 4 weeks  | agent.md support, plugin system, additional backends        |
-| 6     | Polish & UI             | 3 weeks  | CLI refinement, future UI groundwork, documentation         |
+### Phase Summary Table
+
+| Phase | Name                 | Duration  | Key Deliverables                                                  |
+| ----- | -------------------- | --------- | ----------------------------------------------------------------- |
+| 1     | Foundation           | 3-4 weeks | Project structure, CLI scaffold, configuration system             |
+| 2     | Backend Integration  | 4-5 weeks | LRET, Cirq, Qiskit adapters; unified interface                    |
+| 3     | Intelligence Systems | 4-5 weeks | LLM integration, backend auto-selection, insight engine           |
+| 4     | Safety & Control     | 3-4 weeks | Memory monitoring, execution control, consent system              |
+| 5     | Advanced Features    | 4-5 weeks | Multi-backend comparison, agent.md interpreter, pipeline planning |
+| 6     | UI & Production      | 3-4 weeks | TUI, documentation, testing, deployment                           |
+
+**Total Estimated Duration:** 21-27 weeks
 
 ---
 
@@ -242,1275 +332,1205 @@ Phase 1          Phase 2          Phase 3          Phase 4          Phase 5     
 
 ---
 
-### Phase 1: Foundation Core
+### Phase 1: Foundation & Core Infrastructure
 
-**Duration**: 4 weeks  
-**Goal**: Establish the project skeleton, CLI interface, configuration system, and basic state management.
+**Objective:** Establish the project skeleton, development environment, and foundational systems.
+
+---
 
 #### Step 1.1: Project Initialization
 
-**Objective**: Set up the project structure and development environment.
+**Language Selection Decision:**
 
-**Tools & Technologies**:
+- **Option A (Recommended for Performance):** Go
+  - Use Go modules for dependency management
+  - Leverage goroutines for concurrent execution
+  - Utilize Cobra for CLI framework
+- **Option B (Recommended for Quantum Ecosystem):** Python
+  - Use Poetry or PDM for dependency management
+  - Leverage asyncio for concurrent execution
+  - Utilize Typer or Click for CLI framework
 
-- **Language**: Go (primary) or Rust for performance-critical components
-- **Build System**: Make or Task (taskfile.dev)
-- **Dependency Management**: Go modules
-- **Version Control**: Git with conventional commits
-
-**Directory Structure to Create**:
+**Directory Structure to Create:**
 
 ```
 proxima/
-├── cmd/
-│   └── proxima/          # Main entry point
-├── internal/
-│   ├── agent/            # Agent core logic
-│   ├── config/           # Configuration management
-│   ├── state/            # State machine
-│   ├── cli/              # CLI handlers
-│   └── logging/          # Structured logging
-├── pkg/
-│   ├── types/            # Shared types and interfaces
-│   └── utils/            # Utility functions
-├── configs/              # Default configuration files
-├── docs/                 # Documentation
-└── tests/                # Test suites
+├── cmd/                    # CLI entry points
+├── internal/               # Private application code
+│   ├── agent/              # Orchestration logic
+│   ├── backends/           # Backend adapters
+│   ├── intelligence/       # LLM and decision systems
+│   ├── resources/          # Resource management
+│   ├── ui/                 # User interface components
+│   └── utils/              # Shared utilities
+├── pkg/                    # Public libraries (if needed)
+├── configs/                # Configuration files
+├── docs/                   # Documentation
+├── tests/                  # Test suites
+├── proxima_agent.md        # Agent definition file (for Phase 5)
+└── README.md
 ```
 
-**Actions**:
+---
 
-1. Initialize the Go module with an appropriate module path
-2. Set up the directory structure as outlined
-3. Configure linting with golangci-lint
-4. Set up pre-commit hooks for code quality
-5. Create initial Makefile with build, test, and lint targets
+#### Step 1.2: Configuration System
 
-#### Step 1.2: CLI Framework Setup
+**Tools to Use:**
 
-**Objective**: Build an interactive command-line interface.
+- **Go:** Viper for configuration management
+- **Python:** Pydantic Settings or Dynaconf
 
-**Tools & Technologies**:
+**Configuration Hierarchy to Implement:**
 
-- **CLI Framework**: Cobra (spf13/cobra) for command structure
-- **Interactive UI**: Bubble Tea (charmbracelet/bubbletea) for rich terminal UI
-- **Styling**: Lip Gloss (charmbracelet/lipgloss) for terminal styling
-- **Prompts**: Huh (charmbracelet/huh) for interactive forms
+1. Default values (hardcoded)
+2. Configuration file (`~/.proxima/config.yaml`)
+3. Environment variables (prefixed with `PROXIMA_`)
+4. Command-line flags (highest priority)
 
-**Actions**:
+**Configuration Categories:**
 
-1. Define the root command with version, help, and configuration flags
-2. Create subcommand structure:
-   - `proxima run` - Execute a simulation
-   - `proxima config` - Manage configuration
-   - `proxima backends` - List and manage backends
-   - `proxima status` - Show current state
-   - `proxima abort` - Cancel running operation
-3. Implement help text and usage examples for each command
-4. Set up flag parsing for common options (verbose, quiet, config file path)
-5. Create the main event loop using Bubble Tea for interactive mode
-
-#### Step 1.3: Configuration System
-
-**Objective**: Implement a robust configuration management system.
-
-**Tools & Technologies**:
-
-- **Config Parsing**: Viper (spf13/viper) for multi-format config
-- **Validation**: go-playground/validator for config validation
-- **Secret Storage**: OS keyring integration via zalando/go-keyring
-
-**Configuration Hierarchy** (lowest to highest priority):
-
-1. Default values (embedded)
-2. System-wide config file (`/etc/proxima/config.yaml`)
-3. User config file (`~/.config/proxima/config.yaml`)
-4. Project config file (`./proxima.yaml`)
-5. Environment variables (`PROXIMA_*`)
-6. Command-line flags
-
-**Actions**:
-
-1. Define configuration schema as Go structs with validation tags
-2. Implement configuration loading with the priority hierarchy
-3. Create secure storage for API keys using OS keyring
-4. Implement configuration validation with meaningful error messages
-5. Add `proxima config init` command to generate default config
-6. Add `proxima config show` command to display current configuration
-7. Add `proxima config set <key> <value>` for CLI-based config updates
-
-#### Step 1.4: State Machine Implementation
-
-**Objective**: Create a state machine to track execution states.
-
-**Tools & Technologies**:
-
-- **State Machine**: looplab/fsm for finite state machine
-- **Persistence**: Local JSON or SQLite via modernc.org/sqlite
-
-**States to Implement**:
-
-- `IDLE`: No operation in progress
-- `PLANNING`: Analyzing and planning the task
-- `VALIDATING`: Checking resources and permissions
-- `RUNNING`: Actively executing simulation
-- `PAUSED`: Execution suspended (if backend supports)
-- `COMPLETED`: Successfully finished
-- `ABORTED`: User-cancelled or error-terminated
-- `ERROR`: Encountered unrecoverable error
-
-**Actions**:
-
-1. Define the state enum and valid transitions
-2. Implement the state machine with transition callbacks
-3. Create state persistence to survive process restarts
-4. Implement state query API for other components
-5. Add logging for all state transitions
-6. Create state change event emitter for UI updates
-
-#### Step 1.5: Logging Infrastructure
-
-**Objective**: Implement structured, leveled logging.
-
-**Tools & Technologies**:
-
-- **Logger**: zerolog (rs/zerolog) for structured JSON logging
-- **Log Rotation**: lumberjack (natefinch/lumberjack) for file rotation
-
-**Log Levels**:
-
-- `TRACE`: Very detailed debugging
-- `DEBUG`: Debugging information
-- `INFO`: General operational information
-- `WARN`: Warning conditions
-- `ERROR`: Error conditions
-- `FATAL`: Unrecoverable errors
-
-**Actions**:
-
-1. Initialize zerolog with appropriate defaults
-2. Configure output to both console (pretty) and file (JSON)
-3. Implement log level configuration via config/flags
-4. Add context enrichment (execution ID, backend, stage)
-5. Set up log rotation with configurable retention
-6. Create logging middleware for CLI commands
+- General settings (verbosity, output format)
+- Backend configurations (API endpoints, credentials)
+- LLM settings (API keys, model preferences, local LLM paths)
+- Resource thresholds (memory limits, timeout values)
+- Consent preferences (auto-approve certain actions)
 
 ---
 
-### Phase 2: Execution Engine
+#### Step 1.3: Logging & Telemetry Foundation
 
-**Duration**: 5 weeks  
-**Goal**: Implement backend adapters, pipeline management, resource monitoring, and fail-safe mechanisms.
+**Logging Framework:**
 
-#### Step 2.1: Backend Adapter Interface
+- **Go:** Zap or Zerolog for structured logging
+- **Python:** Structlog or Loguru
 
-**Objective**: Define and implement the standardized backend interface.
+**Log Levels to Implement:**
 
-**Interface Contract** (conceptual):
+- DEBUG: Detailed execution information
+- INFO: General operational messages
+- WARN: Resource warnings, consent prompts
+- ERROR: Failures and exceptions
 
-- `Initialize()`: Set up the backend
-- `Validate(task)`: Check if backend can handle the task
-- `Execute(task)`: Run the simulation
-- `GetCapabilities()`: Return backend capabilities
-- `GetStatus()`: Return current backend status
-- `Abort()`: Cancel running operation
-- `Pause()` / `Resume()`: If supported
+**Telemetry Considerations:**
 
-**Actions**:
-
-1. Define the `BackendAdapter` interface in Go
-2. Define the `BackendCapabilities` struct (qubit limits, simulators, noise support)
-3. Define the `ExecutionResult` struct for standardized output
-4. Create a `BackendRegistry` to manage registered adapters
-5. Implement backend discovery (auto-detect installed backends)
-
-#### Step 2.2: LRET Backend Adapter
-
-**Objective**: Implement adapter for the LRET framework.
-
-**Reference**: [LRET Framework Integration Branch](https://github.com/kunal5556/LRET/tree/feature/framework-integration)
-
-**Actions**:
-
-1. Analyze LRET's API and execution model
-2. Create the LRET adapter implementing the `BackendAdapter` interface
-3. Map LRET-specific configuration to Proxima's config system
-4. Handle LRET's output format and convert to standardized results
-5. Implement LRET-specific error handling and status reporting
-6. Test with sample LRET simulations
-
-#### Step 2.3: Cirq Backend Adapter
-
-**Objective**: Implement adapter for Google's Cirq.
-
-**Reference**: [Cirq Repository](https://github.com/quantumlib/Cirq)
-
-**Simulators to Support**:
-
-- **Density Matrix Simulator**: For mixed-state simulations
-- **State Vector Simulator**: For pure-state simulations
-
-**Actions**:
-
-1. Create Python bridge (using go-python or gRPC to Python service)
-2. Implement Cirq adapter with simulator selection
-3. Handle circuit serialization/deserialization
-4. Map Cirq measurement results to standardized format
-5. Implement noise model configuration passthrough
-6. Add simulator-specific capability descriptors
-
-#### Step 2.4: Qiskit Aer Backend Adapter
-
-**Objective**: Implement adapter for IBM's Qiskit Aer.
-
-**Reference**: [Qiskit Aer Repository](https://github.com/Qiskit/qiskit-aer)
-
-**Simulators to Support**:
-
-- **AerSimulator** with density_matrix method
-- **AerSimulator** with statevector method
-
-**Actions**:
-
-1. Create Python bridge similar to Cirq
-2. Implement Qiskit Aer adapter
-3. Handle Qiskit circuit format (QASM, native)
-4. Map Qiskit result objects to standardized format
-5. Implement backend options configuration
-6. Add GPU acceleration detection and configuration
-
-#### Step 2.5: Pipeline Manager
-
-**Objective**: Orchestrate multi-stage execution workflow.
-
-**Pipeline Stages**:
-
-1. **Intake**: Parse and validate user request
-2. **Planning**: Determine execution strategy
-3. **Resource Check**: Validate system resources
-4. **Backend Prep**: Initialize selected backend(s)
-5. **Execution**: Run simulation with progress tracking
-6. **Collection**: Gather results from backend
-7. **Analysis**: Process and interpret results
-8. **Delivery**: Present results to user
-
-**Actions**:
-
-1. Define the `PipelineStage` interface
-2. Implement each stage as a separate component
-3. Create the `PipelineManager` to orchestrate stages
-4. Implement stage-to-stage data passing
-5. Add checkpoint system for recovery
-6. Implement rollback capability for failed stages
-7. Create progress event emitter for each stage
-
-#### Step 2.6: Execution Timer
-
-**Objective**: Track and display execution timing.
-
-**Metrics to Track**:
-
-- Total elapsed time
-- Per-stage elapsed time
-- Estimated time remaining (if determinable)
-- Backend-specific timing
-
-**Actions**:
-
-1. Create a `Timer` component with start/stop/lap capabilities
-2. Integrate timer with state machine transitions
-3. Implement per-stage timing hooks in Pipeline Manager
-4. Create timer display component for CLI
-5. Add timing data to execution results
-6. Implement timing persistence for historical analysis
-
-#### Step 2.7: Resource Monitor
-
-**Objective**: Continuously monitor system resources.
-
-**Metrics to Monitor**:
-
-- Total and available RAM
-- CPU usage percentage
-- GPU memory (if CUDA available)
-- Disk space in working directory
-- Network latency (for remote backends)
-
-**Tools & Technologies**:
-
-- **System Metrics**: shirou/gopsutil for cross-platform system info
-- **GPU Metrics**: NVML bindings for NVIDIA GPUs
-
-**Actions**:
-
-1. Implement resource polling at configurable intervals
-2. Define threshold configuration (warning, critical levels)
-3. Create resource status API for other components
-4. Implement predictive resource estimation based on task
-5. Add resource trend tracking (increasing/decreasing usage)
-
-#### Step 2.8: Fail-Safe Controller
-
-**Objective**: Implement safety mechanisms with user consent.
-
-**Fail-Safe Triggers**:
-
-- Available RAM below threshold
-- CPU temperature critical (if detectable)
-- Disk space insufficient for expected output
-- Backend not responding
-- Network timeout for remote operations
-
-**Actions**:
-
-1. Define fail-safe conditions and severity levels
-2. Implement condition checking hooks in pipeline
-3. Create user warning display with clear explanations
-4. Implement "force execute" consent mechanism
-5. Add configurable bypass for experienced users (with warnings)
-6. Log all fail-safe triggers and user decisions
-7. Implement graceful degradation options where possible
+- Execution timing metrics
+- Backend usage statistics
+- Error frequency tracking
+- All telemetry must be opt-in with explicit consent
 
 ---
 
-### Phase 3: Intelligence Layer
+#### Step 1.4: CLI Scaffold
 
-**Duration**: 5 weeks  
-**Goal**: Integrate LLM capabilities, implement intelligent backend selection, and create result interpretation.
+**Commands to Implement:**
 
-#### Step 3.1: LLM Router Foundation
+| Command            | Description                        |
+| ------------------ | ---------------------------------- |
+| `proxima init`     | Initialize configuration           |
+| `proxima config`   | View/modify settings               |
+| `proxima run`      | Execute a simulation (placeholder) |
+| `proxima backends` | List available backends            |
+| `proxima version`  | Display version information        |
 
-**Objective**: Build the routing layer for LLM requests.
+**CLI Flags to Support:**
 
-**Components**:
-
-- **Provider Registry**: Catalog of available LLM providers
-- **Request Router**: Routes requests to appropriate provider
-- **Response Handler**: Standardizes responses across providers
-- **Rate Limiter**: Manages API call frequency
-- **Cost Tracker**: Monitors API usage costs
-
-**Actions**:
-
-1. Define the `LLMProvider` interface
-2. Implement the provider registry with registration API
-3. Create request/response types for LLM interactions
-4. Implement the routing logic based on task type and user preference
-5. Add request queuing for rate limiting
-6. Implement cost estimation and tracking
-
-#### Step 3.2: Remote LLM Integration
-
-**Objective**: Integrate cloud-based LLM providers.
-
-**Providers to Support**:
-
-- OpenAI (GPT-4, GPT-4-turbo, etc.)
-- Anthropic (Claude 3, Claude 3.5)
-- Google (Gemini)
-- Additional providers as needed
-
-**Tools & Technologies**:
-
-- **OpenAI**: sashabaranov/go-openai
-- **Anthropic**: anthropics/anthropic-sdk-go (or HTTP client)
-- **Google**: Official Google AI SDK
-
-**Actions**:
-
-1. Implement OpenAI provider adapter
-2. Implement Anthropic provider adapter
-3. Implement Google provider adapter
-4. Create secure API key storage and retrieval
-5. Add provider health checking
-6. Implement automatic failover between providers
-7. Add model selection configuration per task type
-
-#### Step 3.3: Local LLM Integration
-
-**Objective**: Support locally running language models.
-
-**Local LLM Platforms to Detect**:
-
-- **Ollama**: REST API integration
-- **LM Studio**: Local server API
-- **llama.cpp**: Server mode integration
-- **Text Generation WebUI**: API integration
-
-**Actions**:
-
-1. Implement local LLM discovery (check common ports, config files)
-2. Create Ollama provider adapter
-3. Create LM Studio provider adapter
-4. Implement generic OpenAI-compatible local server adapter
-5. Add local model enumeration (list available models)
-6. Create automatic capability detection for local models
-7. Implement local vs. remote distinction in UI and logging
-
-#### Step 3.4: Consent Manager
-
-**Objective**: Ensure explicit user consent for LLM usage.
-
-**Consent Scenarios**:
-
-- First-time use of any LLM
-- Switching from local to remote (or vice versa)
-- Sending potentially sensitive data to remote LLM
-- Using LLM to modify backend behavior
-- Cost implications for paid APIs
-
-**Actions**:
-
-1. Define consent event types and requirements
-2. Implement consent prompt UI components
-3. Create consent persistence (remember preferences)
-4. Add per-session vs. permanent consent options
-5. Implement consent audit logging
-6. Create consent revocation mechanism
-
-#### Step 3.5: Backend Auto-Selection
-
-**Objective**: Intelligently select the optimal backend when not specified.
-
-**Selection Criteria**:
-
-- Circuit size (qubit count, gate depth)
-- Required features (noise models, measurement types)
-- Available system resources
-- Historical performance data
-- User preferences and constraints
-
-**Actions**:
-
-1. Define the selection criteria framework
-2. Implement circuit analysis to extract requirements
-3. Create backend capability matching algorithm
-4. Integrate resource availability into selection
-5. Implement selection explanation generation
-6. Add LLM-assisted selection for complex cases
-7. Create selection override and feedback mechanism
-
-#### Step 3.6: Result Interpreter
-
-**Objective**: Transform raw results into meaningful insights.
-
-**Input Formats to Handle**:
-
-- CSV files (measurement results, statistics)
-- XLSX files (complex multi-sheet results)
-- JSON files (structured data)
-- Binary formats (backend-specific)
-
-**Output Formats**:
-
-- Human-readable markdown summaries
-- Structured JSON for programmatic access
-- Comparative tables
-- Statistical analysis
-
-**Tools & Technologies**:
-
-- **CSV**: Standard library
-- **XLSX**: excelize (qax-os/excelize)
-- **Data Analysis**: gonum for statistical operations
-
-**Actions**:
-
-1. Implement file format detection and parsing
-2. Create data normalization layer
-3. Implement statistical analysis functions (mean, variance, fidelity)
-4. Create insight generation templates
-5. Integrate LLM for natural language insight generation
-6. Implement visualization data preparation (for future UI)
-
-#### Step 3.7: Task Planner
-
-**Objective**: Analyze requests and create execution plans.
-
-**Planning Outputs**:
-
-- List of required steps
-- Resource estimates
-- Backend recommendations
-- Risk assessment
-- Time estimates
-
-**Actions**:
-
-1. Implement request parsing and intent detection
-2. Create task decomposition logic
-3. Implement resource estimation algorithms
-4. Add dependency resolution for multi-step tasks
-5. Integrate LLM for complex planning scenarios
-6. Create plan visualization for user approval
-7. Implement plan modification and re-planning
+- `--verbose` / `-v`: Increase output verbosity
+- `--config`: Specify configuration file path
+- `--backend`: Explicitly select backend
+- `--dry-run`: Show plan without executing
+- `--force`: Skip consent prompts (with warnings)
 
 ---
 
-### Phase 4: Advanced Features
+#### Step 1.5: State Machine Foundation
 
-**Duration**: 4 weeks  
-**Goal**: Implement multi-backend comparison, advanced execution control, and enhanced insights.
+**States to Define:**
 
-#### Step 4.1: Multi-Backend Execution
+```
+IDLE → PLANNING → READY → RUNNING → COMPLETED
+                    │        │
+                    │        ├──→ PAUSED → RUNNING (resume)
+                    │        │
+                    │        └──→ ABORTED
+                    │
+                    └──→ ERROR
+```
 
-**Objective**: Run simulations across multiple backends simultaneously.
+**State Transition Rules:**
 
-**Execution Modes**:
+- Only valid transitions allowed
+- Each transition logged with timestamp
+- State persisted for recovery
 
-- **Sequential**: Run on each backend one after another
-- **Parallel**: Run on all backends simultaneously (if resources allow)
-- **Smart**: Auto-select based on resources and priorities
+**Implementation Approach:**
 
-**Actions**:
-
-1. Extend pipeline to support multi-backend jobs
-2. Implement parallel execution with goroutines
-3. Create resource partitioning for parallel execution
-4. Implement result collection and synchronization
-5. Add per-backend progress tracking
-6. Handle partial failures gracefully
-
-#### Step 4.2: Comparison Engine
-
-**Objective**: Generate comparative analysis across backends.
-
-**Comparison Dimensions**:
-
-- Execution time
-- Result accuracy/fidelity
-- Resource utilization
-- Statistical distributions
-- Error rates
-
-**Actions**:
-
-1. Define comparison metrics and scoring
-2. Implement metric extraction from results
-3. Create comparison matrix generation
-4. Implement statistical significance testing
-5. Generate natural language comparison summaries
-6. Create structured comparison reports
-
-#### Step 4.3: Execution Control Enhancement
-
-**Objective**: Implement pause, resume, and abort with state preservation.
-
-**Control Operations**:
-
-- **Pause**: Suspend execution while preserving state
-- **Resume**: Continue from paused state
-- **Abort**: Graceful cancellation with cleanup
-- **Rollback**: Revert to previous checkpoint (where feasible)
-
-**Actions**:
-
-1. Implement checkpoint creation at stage boundaries
-2. Create state serialization for pause/resume
-3. Implement graceful abort with resource cleanup
-4. Add rollback capability using checkpoints
-5. Handle backend-specific control operations
-6. Create control operation timeout handling
-
-#### Step 4.4: Enhanced Insight Generation
-
-**Objective**: Provide deeper, more actionable insights.
-
-**Insight Types**:
-
-- **Descriptive**: What happened
-- **Diagnostic**: Why it happened
-- **Predictive**: What might happen with changes
-- **Prescriptive**: What to do next
-
-**Actions**:
-
-1. Implement insight categorization framework
-2. Create domain-specific insight templates (quantum-focused)
-3. Integrate LLM for advanced insight generation
-4. Implement recommendation generation
-5. Add confidence levels to insights
-6. Create insight export in multiple formats
-
-#### Step 4.5: Historical Analysis
-
-**Objective**: Learn from past executions.
-
-**Features**:
-
-- Execution history storage
-- Performance trending
-- Anomaly detection
-- Comparison with historical runs
-
-**Actions**:
-
-1. Implement execution history database (SQLite)
-2. Create history query API
-3. Implement trending analysis
-4. Add anomaly detection algorithms
-5. Create historical comparison reports
-6. Implement cleanup policies for old data
+- **Go:** Use a finite state machine library or implement custom
+- **Python:** Use transitions library or implement custom
 
 ---
 
-### Phase 5: Integration & Extension
+### Phase 2: Backend Integration & Abstraction
 
-**Duration**: 4 weeks  
-**Goal**: Implement agent.md support, plugin system, and extensibility framework.
+**Objective:** Create adapters for quantum backends with a unified interface.
 
-#### Step 5.1: proxima_agent.md Parser
+---
 
-**Objective**: Parse and interpret agent instruction files.
+#### Step 2.1: Define Backend Interface Contract
 
-**File Structure Concept**:
+**Abstract Interface Methods:**
+
+| Method                               | Purpose                        |
+| ------------------------------------ | ------------------------------ |
+| `get_name()`                         | Returns backend identifier     |
+| `get_version()`                      | Returns backend version        |
+| `get_capabilities()`                 | Returns feature dictionary     |
+| `get_resource_requirements(circuit)` | Estimates memory/compute needs |
+| `validate(circuit)`                  | Checks circuit compatibility   |
+| `execute(circuit, options)`          | Runs simulation                |
+| `get_result_schema()`                | Returns expected output format |
+
+**Capability Flags:**
+
+- `supports_density_matrix`: Boolean
+- `supports_state_vector`: Boolean
+- `supports_noise_models`: Boolean
+- `max_qubits`: Integer
+- `supports_gpu`: Boolean
+
+---
+
+#### Step 2.2: LRET Adapter Implementation
+
+**Integration Steps:**
+
+1. Add LRET framework-integration branch as dependency
+2. Create adapter class implementing the interface
+3. Map LRET's native API to unified interface
+4. Implement circuit translation layer (if needed)
+5. Handle LRET-specific error types
+6. Write adapter-specific unit tests
+
+**LRET-Specific Considerations:**
+
+- Framework integration branch features
+- Custom simulation modes
+- Result format normalization
+
+---
+
+#### Step 2.3: Cirq Adapter Implementation
+
+**Integration Steps:**
+
+1. Add Cirq as dependency via pip/poetry
+2. Create adapter class with dual simulator support
+3. Implement Density Matrix simulator path
+4. Implement State Vector simulator path
+5. Add simulator selection logic based on use case
+6. Normalize Cirq result objects to common format
+
+**Cirq Simulator Selection Logic:**
+
+- Use Density Matrix for: noise simulation, mixed states, smaller circuits
+- Use State Vector for: pure states, larger circuits (memory permitting)
+
+---
+
+#### Step 2.4: Qiskit Aer Adapter Implementation
+
+**Integration Steps:**
+
+1. Add qiskit-aer as dependency
+2. Create adapter class with dual simulator support
+3. Implement Density Matrix simulator path via AerSimulator
+4. Implement State Vector simulator path via AerSimulator
+5. Support Qiskit's transpilation pipeline
+6. Handle Qiskit-specific job patterns
+
+**Qiskit-Specific Features:**
+
+- Noise model integration
+- Backend options configuration
+- Shot-based vs. statevector execution
+
+---
+
+#### Step 2.5: Backend Registry & Discovery
+
+**Registry Responsibilities:**
+
+- Maintain list of available backends
+- Lazy-load adapters on demand
+- Report backend health status
+- Support dynamic backend registration
+
+**Discovery Mechanism:**
+
+1. Scan for installed quantum packages
+2. Verify each backend is functional
+3. Cache capabilities for quick access
+4. Re-scan on user request
+
+---
+
+#### Step 2.6: Unified Result Format
+
+**Common Result Schema:**
+
+```
+{
+  "backend": "string",
+  "simulator_type": "density_matrix | state_vector",
+  "execution_time_ms": "number",
+  "qubit_count": "number",
+  "result_type": "counts | statevector | density_matrix",
+  "data": { ... },
+  "metadata": { ... }
+}
+```
+
+**Result Normalization:**
+
+- Convert backend-specific formats to common schema
+- Preserve original data in metadata
+- Standardize probability representations
+
+---
+
+### Phase 3: Intelligence & Decision Systems
+
+**Objective:** Integrate LLM capabilities and intelligent decision-making.
+
+---
+
+#### Step 3.1: LLM Router Architecture
+
+**Components to Build:**
+
+1. **Provider Registry:** Tracks available LLM providers
+2. **Local LLM Detector:** Finds locally installed models
+3. **API Key Manager:** Securely stores and retrieves keys
+4. **Request Router:** Directs queries to appropriate provider
+5. **Consent Gate:** Enforces user approval before LLM calls
+
+**Supported Provider Types:**
+
+| Type              | Examples                     | Detection Method                |
+| ----------------- | ---------------------------- | ------------------------------- |
+| Remote API        | OpenAI, Anthropic, Google    | API key presence                |
+| Local Inference   | Ollama, LM Studio, llama.cpp | Process detection, socket check |
+| Local Model Files | GGUF, GGML files             | File system scan                |
+
+---
+
+#### Step 3.2: Local LLM Integration
+
+**Detection Strategies:**
+
+1. Check for running Ollama service (default port 11434)
+2. Check for LM Studio server (configurable port)
+3. Scan configured directories for model files
+4. Verify model compatibility and readiness
+
+**Local LLM Interface:**
+
+- Use OpenAI-compatible API format when available
+- Fall back to native API for specific runtimes
+- Support model selection from available local models
+
+**User Distinction Requirements:**
+
+- Clear labeling: "[LOCAL LLM]" vs "[REMOTE API]"
+- Separate consent prompts for each type
+- Log which provider handled each request
+
+---
+
+#### Step 3.3: Remote API Integration
+
+**Providers to Support:**
+
+1. **OpenAI:** GPT-4, GPT-4-turbo models
+2. **Anthropic:** Claude models
+3. **Google:** Gemini models
+4. **Custom:** User-defined OpenAI-compatible endpoints
+
+**API Key Management:**
+
+- Store encrypted in system keychain (keyring library)
+- Support environment variable fallback
+- Never log or display API keys
+- Validate keys on startup (optional)
+
+---
+
+#### Step 3.4: Consent Management System
+
+**Consent Types:**
+
+| Action                        | Consent Level                      |
+| ----------------------------- | ---------------------------------- |
+| Use local LLM                 | Explicit per-session or persistent |
+| Use remote API                | Explicit per-session or persistent |
+| Modify backend logic          | Always explicit                    |
+| Force execute (low resources) | Always explicit                    |
+| Execute untrusted agent.md    | Always explicit                    |
+
+**Consent Storage:**
+
+- Session consents: In-memory only
+- Persistent consents: Encrypted configuration file
+- Audit log: Record all consent decisions
+
+**Consent Prompt Format:**
+
+```
+╭─────────────────────────────────────────────────────╮
+│ CONSENT REQUIRED                                    │
+├─────────────────────────────────────────────────────┤
+│ Action: Use remote LLM (OpenAI GPT-4)               │
+│ Reason: Analyze simulation results                  │
+│ Data sent: Summary statistics (no raw data)         │
+├─────────────────────────────────────────────────────┤
+│ [Y] Approve this time                               │
+│ [A] Always approve this action                      │
+│ [N] Deny                                            │
+╰─────────────────────────────────────────────────────╯
+```
+
+---
+
+#### Step 3.5: Backend Auto-Selection Intelligence
+
+**Selection Algorithm:**
+
+1. **Parse User Query:** Extract circuit characteristics
+2. **Analyze Requirements:**
+   - Qubit count
+   - Gate types used
+   - Noise requirements
+   - Output type needed (counts vs. statevector)
+3. **Score Backends:** Rate each backend on:
+   - Feature compatibility (required features supported)
+   - Performance (historical execution times)
+   - Resource fit (memory requirements vs. available)
+4. **Select Best:** Choose highest-scoring backend
+5. **Explain Selection:** Generate human-readable justification
+
+**Explanation Template:**
+
+```
+Selected backend: Qiskit Aer (State Vector Simulator)
+Reason: Your circuit has 12 qubits with no noise requirements.
+        State vector simulation provides exact amplitudes.
+        Estimated memory: 128 MB (available: 8 GB)
+        Estimated time: ~2 seconds
+```
+
+---
+
+#### Step 3.6: Insight Engine
+
+**Purpose:** Transform raw simulation data into actionable insights.
+
+**Analysis Capabilities:**
+
+1. **Statistical Analysis:**
+
+   - Probability distributions
+   - Entropy calculations
+   - Fidelity metrics
+
+2. **Comparative Analysis:**
+
+   - Backend result differences
+   - Performance comparisons
+   - Accuracy assessments
+
+3. **Visualization Recommendations:**
+   - Suggest appropriate chart types
+   - Highlight significant patterns
+   - Flag anomalies
+
+**LLM-Assisted Interpretation:**
+
+- Feed summarized results to LLM
+- Request natural language explanations
+- Generate decision recommendations
+- Always with user consent
+
+---
+
+### Phase 4: Safety, Control & Transparency
+
+**Objective:** Implement resource monitoring, execution control, and transparency features.
+
+---
+
+#### Step 4.1: Memory Monitoring System
+
+**Implementation Using:**
+
+- **Python:** psutil library
+- **Go:** gopsutil library
+
+**Monitoring Metrics:**
+
+| Metric         | Description                | Threshold                     |
+| -------------- | -------------------------- | ----------------------------- |
+| Available RAM  | Free memory for allocation | Configurable (default: 500MB) |
+| Process Memory | Proxima's own usage        | Configurable (default: 2GB)   |
+| Swap Usage     | Virtual memory pressure    | Warning at 50%                |
+
+**Monitoring Workflow:**
+
+1. Check resources before execution starts
+2. Continuous monitoring during execution
+3. Trigger warnings at configurable thresholds
+4. Pause execution if critical levels reached
+5. Resume only with user consent
+
+---
+
+#### Step 4.2: Execution Timer & Progress Tracking
+
+**Timer Components:**
+
+1. **Global Timer:** Total execution time
+2. **Stage Timer:** Per-stage elapsed time
+3. **ETA Calculator:** Estimated time remaining
+
+**Display Format:**
+
+```
+╭─ Execution Status ──────────────────────────────────╮
+│ Overall: ██████████░░░░░░░░░░ 50% │ 2m 34s elapsed  │
+├─────────────────────────────────────────────────────┤
+│ ✓ Planning          │ 0.3s                          │
+│ ✓ Backend Init      │ 1.2s                          │
+│ → Executing Circuit │ 2m 32s (running...)           │
+│ ○ Result Analysis   │ pending                       │
+│ ○ Insight Generation│ pending                       │
+╰─────────────────────────────────────────────────────╯
+```
+
+**Progress Events:**
+
+- Stage start/complete
+- Percentage updates (for long operations)
+- Warning events
+- Error events
+
+---
+
+#### Step 4.3: Execution Control Implementation
+
+**Control Operations:**
+
+| Operation  | Implementation                                       |
+| ---------- | ---------------------------------------------------- |
+| **Start**  | Initialize resources, begin execution pipeline       |
+| **Abort**  | Immediate termination, cleanup resources, log reason |
+| **Pause**  | Suspend at next safe checkpoint, preserve state      |
+| **Resume** | Restore state, continue from checkpoint              |
+
+**Pause/Resume Mechanism:**
+
+1. Define safe checkpoint locations in execution flow
+2. At checkpoints, check for pause signal
+3. If paused, serialize current state to disk
+4. On resume, deserialize and continue
+
+**Abort Cleanup Checklist:**
+
+- Release backend resources
+- Close file handles
+- Save partial results (if any)
+- Log abort reason and state
+- Return to IDLE state
+
+---
+
+#### Step 4.4: State Visibility & Traceability
+
+**State Transition Logging:**
+
+```
+[2026-01-07 10:23:45] State: IDLE → PLANNING
+[2026-01-07 10:23:45] State: PLANNING → READY
+[2026-01-07 10:23:46] State: READY → RUNNING
+[2026-01-07 10:25:12] State: RUNNING → PAUSED (user request)
+[2026-01-07 10:26:30] State: PAUSED → RUNNING (resumed)
+[2026-01-07 10:28:45] State: RUNNING → COMPLETED
+```
+
+**Execution History:**
+
+- Persist last N executions
+- Include: start time, duration, backend, status, result summary
+- Queryable via CLI command
+
+---
+
+#### Step 4.5: Hardware Compatibility Checks
+
+**Checks to Perform:**
+
+1. **GPU Availability:** For GPU-accelerated backends
+2. **CUDA Version:** If GPU backend selected
+3. **CPU Features:** AVX support for certain optimizations
+4. **Memory Architecture:** 32-bit vs 64-bit limitations
+
+**Incompatibility Handling:**
+
+```
+╭─ Hardware Warning ──────────────────────────────────╮
+│ The selected backend (Qiskit Aer GPU) requires      │
+│ CUDA 11.0+, but CUDA 10.2 was detected.             │
+├─────────────────────────────────────────────────────┤
+│ Risks of forcing execution:                         │
+│ • Simulation may fail partway through               │
+│ • Results may be incorrect                          │
+│ • System instability possible                       │
+├─────────────────────────────────────────────────────┤
+│ [F] Force execute anyway (not recommended)          │
+│ [S] Switch to CPU backend (recommended)             │
+│ [C] Cancel                                          │
+╰─────────────────────────────────────────────────────╯
+```
+
+---
+
+### Phase 5: Advanced Features & agent.md Support
+
+**Objective:** Implement multi-backend comparison, pipeline planning, and agent.md support.
+
+---
+
+#### Step 5.1: Multi-Backend Comparison Framework
+
+**Comparison Workflow:**
+
+1. User specifies multiple backends or selects "compare all"
+2. Proxima validates circuit compatibility with each backend
+3. Execute same simulation on each backend (parallel if possible)
+4. Collect and normalize results
+5. Generate comparative analysis
+
+**Parallel Execution Strategy:**
+
+- Use process pools for CPU-bound backends
+- Respect memory constraints (may need sequential execution)
+- Track individual backend timings
+
+**Comparison Report Structure:**
+
+```
+╭─ Multi-Backend Comparison Report ───────────────────╮
+│ Circuit: 8-qubit Grover's Algorithm                 │
+│ Backends Compared: 3                                │
+├─────────────────────────────────────────────────────┤
+│ Backend          │ Time    │ Memory  │ Status       │
+├──────────────────┼─────────┼─────────┼──────────────┤
+│ LRET             │ 1.23s   │ 256 MB  │ ✓ Success    │
+│ Cirq (SV)        │ 0.89s   │ 128 MB  │ ✓ Success    │
+│ Qiskit Aer (SV)  │ 0.95s   │ 130 MB  │ ✓ Success    │
+├─────────────────────────────────────────────────────┤
+│ Result Consistency: 99.97% agreement                │
+│ Fastest: Cirq (State Vector)                        │
+│ Most Memory Efficient: Cirq (State Vector)          │
+╰─────────────────────────────────────────────────────╯
+```
+
+---
+
+#### Step 5.2: Pipeline Planning System
+
+**Planning Stages:**
+
+1. **Request Parsing:** Understand what user wants
+2. **Requirement Analysis:** Determine needed resources and backends
+3. **Dependency Resolution:** Order tasks by dependencies
+4. **Resource Allocation:** Assign backends and compute resources
+5. **Execution Plan Generation:** Create detailed step-by-step plan
+
+**Plan Representation (DAG):**
+
+```
+Parse Input → Validate Circuit → Select Backend(s)
+                                        │
+                    ┌───────────────────┼───────────────────┐
+                    ▼                   ▼                   ▼
+              Execute on         Execute on          Execute on
+                LRET              Cirq               Qiskit Aer
+                    │                   │                   │
+                    └───────────────────┼───────────────────┘
+                                        ▼
+                              Aggregate Results
+                                        │
+                                        ▼
+                              Generate Insights
+                                        │
+                                        ▼
+                              Export Report
+```
+
+**Plan Display Before Execution:**
+
+```
+╭─ Execution Plan ────────────────────────────────────╮
+│ The following steps will be executed:               │
+├─────────────────────────────────────────────────────┤
+│ 1. Parse and validate input circuit                 │
+│ 2. Initialize backends: LRET, Cirq                  │
+│ 3. Execute simulation on LRET                       │
+│ 4. Execute simulation on Cirq (parallel)            │
+│ 5. Compare and aggregate results                    │
+│ 6. Generate insight report                          │
+│ 7. Export to CSV                                    │
+├─────────────────────────────────────────────────────┤
+│ Estimated total time: 3-5 minutes                   │
+│ Estimated memory peak: 512 MB                       │
+├─────────────────────────────────────────────────────┤
+│ [P] Proceed   [M] Modify plan   [C] Cancel          │
+╰─────────────────────────────────────────────────────╯
+```
+
+---
+
+#### Step 5.3: proxima_agent.md Interpreter
+
+**File Format Specification:**
 
 ```markdown
 # proxima_agent.md
 
-## Task Definition
+## Metadata
 
-[Description of what to do]
+- version: 1.0
+- author: user
+- created: 2026-01-07
 
-## Backend Preferences
+## Configuration
 
-[Preferred backends and configurations]
+- default_backend: auto
+- parallel_execution: true
+- insight_level: detailed
 
-## Execution Parameters
+## Tasks
 
-[Specific parameters for the run]
+### Task: Run Quantum Simulation
 
-## Analysis Requirements
+- circuit_file: grover_8qubit.qasm
+- backends: [cirq, qiskit_aer]
+- compare_results: true
+- export_format: xlsx
 
-[What insights are needed]
+### Task: Analyze Results
+
+- use_llm: local_preferred
+- analysis_type: statistical
+- generate_recommendations: true
 ```
 
-**Actions**:
+**Interpreter Workflow:**
 
-1. Define the `proxima_agent.md` specification
-2. Implement markdown parser with section extraction
-3. Create instruction validator
-4. Map instructions to internal task representation
-5. Implement variable substitution and templates
-6. Add instruction conflict resolution
-7. Create helpful error messages for malformed files
+1. Parse markdown file using markdown parser
+2. Extract metadata and configuration
+3. Build task list from Task sections
+4. Validate each task against capabilities
+5. Generate execution plan
+6. Request user consent for sensitive operations
+7. Execute plan
 
-#### Step 5.2: Instruction Executor
+**Security Considerations:**
 
-**Objective**: Execute instructions from agent.md files.
-
-**Execution Model**:
-
-- File discovery (current directory, specified path)
-- Instruction parsing and validation
-- Execution plan generation
-- Supervised execution with user checkpoints
-
-**Actions**:
-
-1. Implement file discovery logic
-2. Create instruction-to-action mapping
-3. Implement execution plan generation from instructions
-4. Add user confirmation checkpoints
-5. Implement instruction logging and auditing
-6. Create dry-run mode for testing
-
-#### Step 5.3: Plugin System Foundation
-
-**Objective**: Create extensibility through plugins.
-
-**Plugin Types**:
-
-- **Backend Plugins**: Add new quantum backends
-- **Insight Plugins**: Custom analysis routines
-- **Format Plugins**: New input/output formats
-- **LLM Plugins**: Additional LLM providers
-
-**Tools & Technologies**:
-
-- **Plugin System**: hashicorp/go-plugin for process isolation
-
-**Actions**:
-
-1. Define plugin interfaces for each type
-2. Implement plugin discovery and loading
-3. Create plugin manifest format
-4. Implement plugin lifecycle management
-5. Add plugin configuration system
-6. Create plugin development documentation
-7. Implement plugin security sandboxing
-
-#### Step 5.4: Additional Backend Support
-
-**Objective**: Add support for more quantum backends.
-
-**Potential Backends**:
-
-- **PennyLane**: Quantum machine learning
-- **Amazon Braket**: Cloud quantum hardware
-- **Azure Quantum**: Microsoft quantum platform
-- **IonQ**: Trapped ion hardware
-
-**Actions**:
-
-1. Analyze target backend APIs
-2. Implement adapters using plugin framework
-3. Create backend-specific configuration schemas
-4. Add hardware vs. simulator distinction
-5. Implement credential management for cloud backends
-6. Add pricing/quota tracking for cloud services
-
-#### Step 5.5: Workflow Automation
-
-**Objective**: Support automated, repeatable workflows.
-
-**Workflow Features**:
-
-- Workflow definition files
-- Scheduled execution
-- Triggered execution (file changes, etc.)
-- Workflow templates
-
-**Actions**:
-
-1. Define workflow specification format
-2. Implement workflow parser and validator
-3. Create workflow execution engine
-4. Add scheduling capability
-5. Implement trigger monitoring
-6. Create workflow template library
+- Validate file integrity before parsing
+- Sandbox any file path references
+- Require explicit consent for LLM usage
+- Log all interpreted actions
 
 ---
 
-### Phase 6: Polish & UI
+#### Step 5.4: Result Export & Interpretation
 
-**Duration**: 3 weeks  
-**Goal**: Refine CLI experience and prepare for future UI development.
+**Export Formats:**
 
-#### Step 6.1: CLI Enhancement
+| Format | Use Case                         | Library                 |
+| ------ | -------------------------------- | ----------------------- |
+| CSV    | Data analysis, spreadsheets      | csv (stdlib)            |
+| XLSX   | Rich formatting, multiple sheets | openpyxl                |
+| JSON   | Programmatic access              | json (stdlib)           |
+| PDF    | Reports (future)                 | reportlab or weasyprint |
 
-**Objective**: Create a polished, professional CLI experience.
+**Insight Generation Pipeline:**
 
-**Enhancements**:
+1. Load raw results
+2. Apply statistical analysis
+3. Identify patterns and anomalies
+4. Generate natural language summary (with LLM if consented)
+5. Create visualizations (matplotlib, plotly)
+6. Compile into structured report
 
-- Rich progress displays
-- Interactive mode improvements
-- Command completion
-- Inline help and hints
-- Theming support
+**Human-Readable Insight Example:**
 
-**Tools & Technologies**:
+```
+╭─ Simulation Insights ───────────────────────────────╮
+│                                                     │
+│ Summary:                                            │
+│ The Grover's algorithm simulation successfully      │
+│ amplified the target state |101⟩ to 97.3%           │
+│ probability after 2 iterations, consistent with     │
+│ theoretical predictions.                            │
+│                                                     │
+│ Key Findings:                                       │
+│ • Target state probability: 97.3%                   │
+│ • Theoretical optimum: 97.8%                        │
+│ • Fidelity: 99.5%                                   │
+│ • All non-target states suppressed below 1%         │
+│                                                     │
+│ Recommendations:                                    │
+│ • Results are valid for algorithm verification      │
+│ • Consider noise simulation for hardware estimates  │
+│                                                     │
+╰─────────────────────────────────────────────────────╯
+```
 
-- **Progress Bars**: charmbracelet/bubbles progress component
-- **Tables**: charmbracelet/bubbles table component
-- **Completion**: spf13/cobra completion
+---
 
-**Actions**:
+#### Step 5.5: Additional Features (Inspired by OpenCode AI & Crush)
 
-1. Implement rich progress display with spinners and bars
-2. Add color theming with user customization
-3. Implement shell completion for bash, zsh, fish, PowerShell
-4. Create interactive confirmation dialogs
-5. Add inline help system with examples
-6. Implement command history and recall
+**Feature: Multi-Model Support**
 
-#### Step 6.2: Output Formatting
+- **Value:** Users can leverage different LLMs for different tasks
+- **Implementation:** Model router with task-to-model mapping
+- **Use Case:** Use fast model for quick analysis, powerful model for complex interpretation
 
-**Objective**: Professional, flexible output presentation.
+**Feature: Flexible LLM Switching**
 
-**Output Formats**:
+- **Value:** Switch between local and remote LLMs based on task sensitivity
+- **Implementation:** Runtime model switching via command or config
+- **Use Case:** Use local for sensitive data, remote for general queries
 
-- Rich terminal with colors and formatting
-- Plain text for piping
-- JSON for programmatic use
-- Markdown for documentation
+**Feature: Session Persistence**
 
-**Actions**:
+- **Value:** Resume previous work after restart
+- **Implementation:** Serialize session state to disk
+- **Use Case:** Long-running simulations, computer restarts
 
-1. Implement output format selection via flags
-2. Create rich terminal renderer
-3. Implement clean plain text formatter
-4. Add JSON output with schema
-5. Create markdown formatter
-6. Add output redirection handling
+**Feature: Plugin System**
 
-#### Step 6.3: Error Handling Refinement
+- **Value:** Extend Proxima without modifying core
+- **Implementation:** Plugin discovery and loading mechanism
+- **Use Case:** Custom backends, custom analysis modules
 
-**Objective**: Clear, actionable error messages.
+**Feature: Batch Execution**
 
-**Error Categories**:
+- **Value:** Run multiple simulations unattended
+- **Implementation:** Queue-based execution with notifications
+- **Use Case:** Parameter sweeps, overnight runs
 
-- User errors (invalid input)
-- Configuration errors
-- Backend errors
-- System errors
-- Network errors
+**Feature: Result Caching**
 
-**Actions**:
+- **Value:** Avoid redundant computations
+- **Implementation:** Content-addressed cache with configurable TTL
+- **Use Case:** Repeated simulations, iterative development
 
-1. Create error taxonomy with codes
-2. Implement error message templates
-3. Add suggested remediation for common errors
-4. Create error documentation links
-5. Implement error aggregation for batch operations
-6. Add debug mode with stack traces
+---
 
-#### Step 6.4: Documentation Generation
+### Phase 6: UI Enhancement & Production Hardening
 
-**Objective**: Comprehensive, up-to-date documentation.
+**Objective:** Polish the user experience and prepare for production deployment.
 
-**Documentation Types**:
+---
 
-- CLI reference (auto-generated)
-- Configuration reference
-- Backend guides
-- Tutorial series
-- API documentation (for plugins)
+#### Step 6.1: Terminal UI (TUI) Implementation
 
-**Tools & Technologies**:
+**Framework Options:**
 
-- **Site Generator**: Hugo or MkDocs
-- **API Docs**: godoc format
+- **Go:** Bubble Tea (bubbletea) with Lip Gloss for styling
+- **Python:** Textual or Rich
 
-**Actions**:
+**TUI Components to Build:**
 
-1. Implement auto-generation of CLI reference from Cobra
-2. Create configuration documentation generator
-3. Write backend integration guides
-4. Create step-by-step tutorials
-5. Set up documentation website
-6. Implement documentation versioning
+1. **Dashboard View:** Overview of system status, recent executions
+2. **Execution View:** Real-time progress, logs, timers
+3. **Configuration View:** Interactive settings management
+4. **Results Browser:** Navigate and inspect past results
+5. **Backend Manager:** View and configure backends
 
-#### Step 6.5: UI Groundwork (Future Preparation)
+**Design Principles (Inspired by Crush):**
 
-**Objective**: Lay foundation for future graphical UI.
+- Minimal, clean aesthetic
+- Responsive to terminal size
+- Keyboard-first navigation
+- Contextual help available
+- Consistent color theming
 
-**UI Approach Options**:
+---
 
-- **Web-based**: Svelte/React with Go backend
-- **Desktop**: Wails (Go + Web), Fyne, or Gio
-- **TUI Enhancement**: Advanced Bubble Tea interface
+#### Step 6.2: Error Handling & Recovery
 
-**Actions**:
+**Error Categories:**
 
-1. Design API layer for UI consumption
-2. Implement WebSocket support for real-time updates
-3. Create UI data models separate from internal models
-4. Design component hierarchy for future UI
-5. Document UI integration points
-6. Create UI mockups for key screens
+| Category       | Handling Strategy                    |
+| -------------- | ------------------------------------ |
+| User Error     | Clear message, suggest correction    |
+| Backend Error  | Retry logic, fallback backend option |
+| Resource Error | Pause, warn, wait for consent        |
+| System Error   | Log, notify, graceful degradation    |
 
-#### Step 6.6: Testing & Quality
+**Recovery Mechanisms:**
 
-**Objective**: Ensure reliability and maintainability.
+- Checkpoint-based recovery for long operations
+- Automatic retry with exponential backoff
+- Fallback backend selection on failure
+- Partial result preservation
 
-**Testing Types**:
+---
 
-- Unit tests
-- Integration tests
-- End-to-end tests
-- Performance benchmarks
+#### Step 6.3: Testing Strategy
 
-**Tools & Technologies**:
+**Test Levels:**
 
-- **Testing**: Standard Go testing with testify
-- **Mocking**: gomock or mockery
-- **E2E**: Custom test harness
+1. **Unit Tests:** Individual functions and methods
+2. **Integration Tests:** Component interactions
+3. **Backend Tests:** Adapter functionality with mock backends
+4. **End-to-End Tests:** Full workflow scenarios
+5. **Performance Tests:** Resource usage, execution time benchmarks
 
-**Actions**:
+**Testing Frameworks:**
 
-1. Achieve minimum 80% unit test coverage
-2. Create integration tests for each backend
-3. Implement E2E tests for common workflows
-4. Add performance benchmarks
-5. Set up continuous integration
-6. Create test documentation
+- **Python:** pytest with pytest-asyncio, pytest-mock
+- **Go:** testing package with testify
+
+**CI/CD Pipeline:**
+
+- Run tests on every pull request
+- Linting and formatting checks
+- Security scanning
+- Build artifacts for releases
+
+---
+
+#### Step 6.4: Documentation
+
+**Documentation Types:**
+
+1. **User Guide:** How to use Proxima
+2. **API Reference:** For programmatic usage
+3. **Developer Guide:** How to extend Proxima
+4. **Backend Guide:** How to add new backends
+5. **agent.md Reference:** File format specification
+
+**Documentation Tools:**
+
+- **Python:** Sphinx or MkDocs
+- **Go:** godoc with Hugo or MkDocs
+
+---
+
+#### Step 6.5: Packaging & Distribution
+
+**Distribution Methods:**
+
+1. **PyPI Package** (if Python): `pip install proxima-agent`
+2. **Homebrew Tap** (macOS): `brew install proxima`
+3. **Binary Releases** (all platforms): GitHub Releases
+4. **Container Image**: Docker Hub or GitHub Container Registry
+
+**Packaging Checklist:**
+
+- Version management (semantic versioning)
+- Changelog maintenance
+- License file inclusion
+- Dependency locking
 
 ---
 
 ## Phase Summaries & Usage Guidance
 
-### Phase 1 Summary: Foundation Core
+---
 
-**Features Implemented**:
+### Phase 1 Summary: Foundation
 
-- CLI framework with root and subcommands
-- Configuration system with multi-source support
-- State machine for execution tracking
-- Structured logging infrastructure
+**Features Implemented:**
 
-**New Capabilities**:
+- Project structure and development environment
+- Configuration system with hierarchical loading
+- Basic CLI with core commands
+- Logging infrastructure
+- State machine foundation
 
-- Run `proxima --help` to see available commands
-- Use `proxima config init` to create initial configuration
-- Use `proxima config show` to view current settings
-- Use `proxima config set <key> <value>` to modify settings
+**New Capabilities:**
 
-**How to Use**:
+- Initialize Proxima with custom configuration
+- View and modify settings
+- Basic command structure ready for extension
 
-1. **Initialize Configuration**:
+**Usage After Phase 1:**
 
-   - Run `proxima config init` to create the default configuration file
-   - Edit `~/.config/proxima/config.yaml` to customize settings
+```
+# Initialize Proxima
+proxima init
 
-2. **Check Status**:
+# View configuration
+proxima config show
 
-   - Run `proxima status` to see the current agent state
-   - State will show as `IDLE` when no operation is running
+# Set a configuration value
+proxima config set verbosity debug
 
-3. **Get Help**:
-   - Run `proxima --help` for command overview
-   - Run `proxima <command> --help` for command-specific help
+# Check version
+proxima version
+```
 
 ---
 
-### Phase 2 Summary: Execution Engine
+### Phase 2 Summary: Backend Integration
 
-**Features Implemented**:
+**Features Implemented:**
 
-- Backend adapters for LRET, Cirq, and Qiskit Aer
-- Pipeline manager with staged execution
-- Execution timer with per-stage tracking
-- Resource monitor with threshold alerts
-- Fail-safe controller with consent mechanism
+- LRET adapter with full simulation support
+- Cirq adapter (Density Matrix + State Vector)
+- Qiskit Aer adapter (Density Matrix + State Vector)
+- Backend registry and discovery
+- Unified result format
 
-**New Capabilities**:
+**New Capabilities:**
 
-- Run quantum simulations on multiple backends
-- See real-time execution progress and timing
-- Receive warnings when system resources are constrained
-- Provide explicit consent for risky operations
+- List available backends and their capabilities
+- Run simulations on any supported backend
+- Receive normalized results regardless of backend
 
-**How to Use**:
+**Usage After Phase 2:**
 
-1. **List Available Backends**:
+```
+# List available backends
+proxima backends list
 
-   - Run `proxima backends list` to see all registered backends
-   - Each backend shows its capabilities and current status
+# Show backend details
+proxima backends info cirq
 
-2. **Run a Simulation**:
+# Run a simulation on specific backend
+proxima run --backend qiskit_aer --circuit circuit.qasm
 
-   - Run `proxima run --backend cirq <circuit_file>` to execute on Cirq
-   - Use `--backend qiskit` or `--backend lret` for other backends
-   - Omit `--backend` to use auto-selection (Phase 3)
-
-3. **Monitor Execution**:
-
-   - Progress shows current stage and elapsed time
-   - Timer updates in real-time during execution
-
-4. **Handle Warnings**:
-   - If resources are low, a warning appears
-   - Type `y` to force continue, `n` to abort
-   - Review the explanation before proceeding
+# Run with automatic backend selection (placeholder)
+proxima run --circuit circuit.qasm
+```
 
 ---
 
-### Phase 3 Summary: Intelligence Layer
+### Phase 3 Summary: Intelligence Systems
 
-**Features Implemented**:
+**Features Implemented:**
 
-- LLM router with multi-provider support
-- Remote LLM integration (OpenAI, Anthropic, Google)
-- Local LLM integration (Ollama, LM Studio)
-- Consent manager for LLM usage
-- Backend auto-selection with explanation
-- Result interpreter with insight generation
-- Task planner with execution strategy
+- LLM Router with local/remote support
+- API key management for remote LLMs
+- Local LLM detection and integration
+- Backend auto-selection intelligence
+- Insight engine for result interpretation
+- Consent management system
 
-**New Capabilities**:
+**New Capabilities:**
 
-- Automatic backend selection based on task analysis
-- LLM-powered result interpretation
-- Natural language insights from raw data
-- Planning visibility before execution
+- Automatic backend selection with explanation
+- LLM-assisted result analysis (with consent)
+- Switch between local and remote LLMs
+- Human-readable insights from simulation data
 
-**How to Use**:
+**Usage After Phase 3:**
 
-1. **Configure LLM Providers**:
+```
+# Run with auto-selection (now functional)
+proxima run --circuit circuit.qasm
+# Output: Selected backend: Cirq (State Vector)
+#         Reason: 8-qubit pure state simulation...
 
-   - Run `proxima config set llm.openai.api_key <your_key>` for remote
-   - Run `proxima config set llm.local.enabled true` for local LLM
+# Get insights on results
+proxima analyze --results results.json --use-llm local
 
-2. **Auto-Select Backend**:
-
-   - Run `proxima run <circuit_file>` without `--backend` flag
-   - Proxima analyzes the circuit and selects optimal backend
-   - Selection rationale is displayed before execution
-
-3. **Get Insights**:
-
-   - After execution, insights are automatically generated
-   - Run `proxima results --format insights` for enhanced analysis
-   - Run `proxima results --llm local` to use local LLM for analysis
-
-4. **Control LLM Usage**:
-   - First LLM use triggers consent prompt
-   - Use `proxima config set llm.consent.remember true` to remember choice
-   - Use `--no-llm` flag to disable LLM for a specific run
+# Configure LLM settings
+proxima config set llm.provider openai
+proxima config set llm.local_path /path/to/ollama
+```
 
 ---
 
-### Phase 4 Summary: Advanced Features
+### Phase 4 Summary: Safety & Control
 
-**Features Implemented**:
+**Features Implemented:**
 
-- Multi-backend execution (sequential and parallel)
-- Comparison engine with structured analysis
-- Enhanced execution control (pause, resume, abort)
-- Advanced insight generation
-- Historical analysis and trending
+- Memory monitoring with configurable thresholds
+- Execution timer with stage tracking
+- Start/Abort/Pause/Resume operations
+- State visibility and transition logging
+- Hardware compatibility checks
+- Force execute with explicit consent
 
-**New Capabilities**:
+**New Capabilities:**
 
-- Run the same simulation on multiple backends at once
-- Get comparative analysis across backends
-- Pause and resume long-running simulations
-- View historical performance trends
+- Real-time execution progress display
+- Pause long-running simulations
+- Resume from checkpoints
+- Clear warnings before risky operations
+- Full execution history
 
-**How to Use**:
+**Usage After Phase 4:**
 
-1. **Multi-Backend Comparison**:
+```
+# Run with real-time progress
+proxima run --circuit circuit.qasm
+# Shows: ██████░░░░ 60% | 1m 23s elapsed
 
-   - Run `proxima run --backends cirq,qiskit,lret <circuit>` to compare
-   - Add `--parallel` for simultaneous execution
-   - View comparison table after completion
+# Pause execution (during run, press Ctrl+P)
+# Resume execution
+proxima resume --session latest
 
-2. **Execution Control**:
+# Abort execution (during run, press Ctrl+C)
+# View execution history
+proxima history
 
-   - Press `Ctrl+P` during execution to pause
-   - Run `proxima resume` to continue paused execution
-   - Press `Ctrl+C` for graceful abort
-   - Run `proxima rollback` to revert to last checkpoint
-
-3. **View History**:
-   - Run `proxima history list` to see past executions
-   - Run `proxima history compare <id1> <id2>` to compare runs
-   - Run `proxima history trends` to see performance over time
-
----
-
-### Phase 5 Summary: Integration & Extension
-
-**Features Implemented**:
-
-- proxima_agent.md parser and executor
-- Plugin system for extensibility
-- Additional backend support
-- Workflow automation
-
-**New Capabilities**:
-
-- Execute instructions from markdown files
-- Extend Proxima with custom plugins
-- Use cloud quantum services
-- Automate repetitive workflows
-
-**How to Use**:
-
-1. **Use agent.md Files**:
-
-   - Create `proxima_agent.md` in your project directory
-   - Run `proxima run --from-agent` to execute instructions
-   - Run `proxima run --from-agent --dry-run` to preview
-
-2. **Install Plugins**:
-
-   - Run `proxima plugins list` to see available plugins
-   - Run `proxima plugins install <plugin_name>` to install
-   - Plugins appear in their respective categories
-
-3. **Create Workflows**:
-   - Create workflow files in `.proxima/workflows/`
-   - Run `proxima workflow run <workflow_name>`
-   - Run `proxima workflow schedule <name> <cron>` for scheduling
+# Force execute despite warnings
+proxima run --circuit large_circuit.qasm --force
+```
 
 ---
 
-### Phase 6 Summary: Polish & UI
+### Phase 5 Summary: Advanced Features
 
-**Features Implemented**:
+**Features Implemented:**
 
-- Enhanced CLI with rich output
-- Professional output formatting
-- Refined error handling
-- Comprehensive documentation
-- UI groundwork for future development
+- Multi-backend comparison framework
+- Pipeline planning with DAG visualization
+- proxima_agent.md interpreter
+- Enhanced result export (CSV, XLSX)
+- Detailed insight generation
+- Plugin system foundation
+- Session persistence
+- Result caching
 
-**New Capabilities**:
+**New Capabilities:**
 
-- Beautiful terminal output with themes
-- Multiple output formats (rich, plain, JSON, markdown)
-- Clear error messages with remediation suggestions
-- Complete documentation website
+- Compare same simulation across multiple backends
+- Plan execution before running
+- Automate workflows via agent.md files
+- Export rich reports
+- Resume sessions after restart
 
-**How to Use**:
+**Usage After Phase 5:**
 
-1. **Customize Appearance**:
+```
+# Compare across backends
+proxima compare --circuit circuit.qasm --backends cirq,qiskit_aer,lret
 
-   - Run `proxima config set theme.name <theme>` to change theme
-   - Available themes: default, dark, light, minimal
-   - Run `proxima themes list` to see all options
+# Show execution plan
+proxima plan --circuit circuit.qasm --compare-all
 
-2. **Change Output Format**:
+# Execute from agent.md file
+proxima agent run proxima_agent.md
 
-   - Add `--output json` for JSON output
-   - Add `--output plain` for plain text (good for scripts)
-   - Add `--output md` for markdown
+# Export results
+proxima export --session latest --format xlsx --output report.xlsx
 
-3. **Get Help**:
-
-   - Visit the documentation website at the configured URL
-   - Run `proxima docs` to open documentation
-   - Error messages include links to relevant docs
-
-4. **Shell Completion**:
-   - Run `proxima completion bash > ~/.proxima-completion.bash`
-   - Source the file in your shell profile
-   - Available for bash, zsh, fish, and PowerShell
+# Resume previous session
+proxima session resume
+```
 
 ---
 
-## Additional Features Inspired by OpenCode AI & Crush
+### Phase 6 Summary: UI & Production
 
-### From OpenCode AI
+**Features Implemented:**
 
-#### 1. Multi-Model Support
+- Full Terminal UI (TUI)
+- Comprehensive error handling
+- Complete test coverage
+- Full documentation
+- Multiple distribution packages
 
-**Description**: Ability to use different AI models for different tasks within the same session.
+**New Capabilities:**
 
-**Value**: Different models excel at different tasks. GPT-4 might be better for planning while Claude excels at analysis.
+- Interactive dashboard
+- Visual execution monitoring
+- In-app configuration
+- Results browser
 
-**Implementation Path**: The LLM Router already supports this; extend with task-based model selection.
+**Usage After Phase 6:**
 
-#### 2. Context Window Management
+```
+# Launch interactive TUI
+proxima ui
 
-**Description**: Intelligent management of context sent to LLMs to stay within limits.
+# TUI provides:
+# - Dashboard with system overview
+# - Real-time execution monitoring
+# - Configuration management
+# - Results browsing and analysis
+# - Backend management
 
-**Value**: Prevents errors from exceeding token limits while maximizing relevant context.
-
-**Implementation Path**: Implement sliding window and summarization strategies in LLM Router.
-
-#### 3. Code Workspace Understanding
-
-**Description**: Deep understanding of project structure and relationships.
-
-**Value**: Better suggestions and fewer errors when modifying project files.
-
-**Implementation Path**: Implement AST parsing and dependency graph building.
-
-### From Crush (Charmbracelet)
-
-#### 1. Beautiful Terminal UI
-
-**Description**: Aesthetically pleasing terminal interface using Bubble Tea ecosystem.
-
-**Value**: Improved user experience and productivity through visual clarity.
-
-**Implementation Path**: Already planned using charmbracelet libraries.
-
-#### 2. Interactive Prompts
-
-**Description**: Rich interactive prompts for user input.
-
-**Value**: Better user guidance and reduced errors in input.
-
-**Implementation Path**: Use Huh library for form-based interactions.
-
-#### 3. Progress Visualization
-
-**Description**: Beautiful progress bars and spinners.
-
-**Value**: Clear feedback during long operations.
-
-**Implementation Path**: Already planned using Bubbles components.
-
-### Additional Proxima-Specific Features
-
-#### 1. Quantum Circuit Visualization
-
-**Description**: ASCII or graphical representation of quantum circuits.
-
-**Value**: Quick understanding of circuit structure without external tools.
-
-**Implementation Path**: Implement circuit-to-ASCII renderer.
-
-#### 2. Result Caching
-
-**Description**: Cache simulation results to avoid re-running identical simulations.
-
-**Value**: Time and resource savings for repeated experiments.
-
-**Implementation Path**: Implement content-addressed result storage.
-
-#### 3. Collaborative Sessions
-
-**Description**: Share execution sessions with team members (future).
-
-**Value**: Team collaboration on quantum experiments.
-
-**Implementation Path**: Implement session export/import and optional cloud sync.
+# Standard CLI remains available
+proxima run --circuit circuit.qasm
+```
 
 ---
 
-## Future UI Planning
+## Appendix
 
-### Vision
+### A. Technology Stack Summary
 
-Proxima will eventually have a clean, modern graphical interface that complements the CLI. The UI will not replace the CLI but provide an alternative for users who prefer visual interaction.
+| Component        | Python Option               | Go Option              |
+| ---------------- | --------------------------- | ---------------------- |
+| CLI Framework    | Typer, Click                | Cobra                  |
+| TUI Framework    | Textual, Rich               | Bubble Tea             |
+| Configuration    | Pydantic Settings, Dynaconf | Viper                  |
+| Logging          | Structlog, Loguru           | Zap, Zerolog           |
+| Async            | asyncio                     | goroutines             |
+| Testing          | pytest                      | testing + testify      |
+| State Machine    | transitions                 | custom or statemachine |
+| HTTP Client      | httpx, aiohttp              | net/http               |
+| Resource Monitor | psutil                      | gopsutil               |
+| Keyring          | keyring                     | go-keyring             |
 
-### UI Principles
+### B. Quantum Libraries Reference
 
-1. **Progressive Disclosure**: Show essential information first, details on demand
-2. **Real-time Updates**: Live progress and status updates
-3. **Accessibility**: Keyboard navigation, screen reader support
-4. **Consistency**: Match CLI mental models in UI
-5. **Performance**: Fast, responsive, minimal resource usage
+| Library    | Purpose                      | Documentation         |
+| ---------- | ---------------------------- | --------------------- |
+| Cirq       | Google's quantum framework   | quantumai.google/cirq |
+| Qiskit     | IBM's quantum SDK            | qiskit.org            |
+| Qiskit Aer | High-performance simulators  | qiskit.org/aer        |
+| LRET       | Custom framework integration | GitHub repository     |
 
-### Technology Options
+### C. LLM Integration Reference
 
-| Option                 | Pros                                  | Cons                    |
-| ---------------------- | ------------------------------------- | ----------------------- |
-| **Wails (Go + Web)**   | Native feel, Go backend, web frontend | Larger binary           |
-| **Fyne (Pure Go)**     | Native look, small binary             | Less flexible styling   |
-| **Tauri (Rust + Web)** | Small binary, secure                  | Different language      |
-| **Web Only**           | No installation, cross-platform       | Requires server running |
-
-### Planned UI Sections
-
-1. **Dashboard**: Overview of system status, recent runs, quick actions
-2. **Execution**: Run configuration, live progress, control buttons
-3. **Results**: Interactive result exploration, visualizations
-4. **History**: Past runs with search and comparison
-5. **Settings**: Configuration with visual editor
-6. **Backends**: Backend management and status
-
-### UI Development Timeline
-
-This is planned for after Phase 6, as a separate Phase 7:
-
-- **Month 1**: UI framework selection and prototype
-- **Month 2**: Core screens implementation
-- **Month 3**: Polish and integration testing
+| Provider  | API Style         | Local Option |
+| --------- | ----------------- | ------------ |
+| OpenAI    | REST API          | —            |
+| Anthropic | REST API          | —            |
+| Ollama    | OpenAI-compatible | Yes          |
+| LM Studio | OpenAI-compatible | Yes          |
+| llama.cpp | Native API        | Yes          |
 
 ---
 
-## Conclusion
+## Final Notes
 
-This guide provides a comprehensive roadmap for building Proxima from the ground up. By following the phased approach, developers can incrementally build a powerful, extensible quantum simulation agent that rivals existing solutions while offering unique capabilities tailored to the quantum computing domain.
+This document provides a comprehensive blueprint for building Proxima. Each phase builds upon the previous, allowing for incremental development and testing.
 
-The architecture emphasizes:
+**Key Success Factors:**
 
-- **Modularity**: Each component can be developed and tested independently
-- **Extensibility**: Plugin system allows community contributions
-- **Transparency**: Users always know what's happening and why
-- **Safety**: Fail-safes protect users from resource exhaustion and errors
-- **Intelligence**: LLM integration provides smart defaults and insights
+1. **Modularity:** Keep components loosely coupled
+2. **Transparency:** Never hide what Proxima is doing
+3. **Consent:** Always ask before sensitive operations
+4. **Extensibility:** Design for future backends and features
+5. **User Focus:** Prioritize clear communication and usability
 
-Begin with Phase 1 to establish the foundation, then progress through each phase to build the complete system. Each phase delivers usable functionality, allowing for iterative development and early feedback.
+**Next Steps:**
+
+1. Review this document thoroughly
+2. Set up development environment
+3. Begin Phase 1 implementation
+4. Iterate based on testing and feedback
 
 ---
 
-_Document Version: 1.0_  
-_Last Updated: January 7, 2026_  
-_Proxima Development Team_
+_Document generated for the Proxima AI Agent project. This is a living document—update as the project evolves._
