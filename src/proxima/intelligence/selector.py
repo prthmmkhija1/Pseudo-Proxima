@@ -1,0 +1,3 @@
+"""
+Backend auto-selection logic.
+"""

@@ -1,0 +1,28 @@
+# Default Proxima Configuration
+
+general:
+  verbosity: info
+  output_format: text
+  color_enabled: true
+
+backends:
+  default_backend: auto
+  parallel_execution: false
+  timeout_seconds: 300
+
+llm:
+  provider: none
+  model: ""
+  local_endpoint: ""
+  api_key_env_var: ""
+  require_consent: true
+
+resources:
+  memory_warn_threshold_mb: 4096
+  memory_critical_threshold_mb: 8192
+  max_execution_time_seconds: 3600
+
+consent:
+  auto_approve_local_llm: false
+  auto_approve_remote_llm: false
+  remember_decisions: false
