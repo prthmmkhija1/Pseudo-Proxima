@@ -6,7 +6,6 @@ import typer
 
 from proxima.backends.registry import BackendStatus, backend_registry
 
-
 app = typer.Typer(name="backends", help="Backend management")
 
 

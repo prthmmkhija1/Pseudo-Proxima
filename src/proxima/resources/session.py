@@ -13,11 +13,12 @@ import uuid
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 
 class SessionStatus(Enum):
     """Session lifecycle status."""
+
     CREATED = auto()
     RUNNING = auto()
     PAUSED = auto()
@@ -29,41 +30,44 @@ class SessionStatus(Enum):
 @dataclass
 class SessionMetadata:
     """Session metadata."""
+
     id: str
     created_at: float
     updated_at: float
     status: SessionStatus
-    name: Optional[str] = None
-    description: Optional[str] = None
-    tags: List[str] = field(default_factory=list)
+    name: str | None = None
+    description: str | None = None
+    tags: list[str] = field(default_factory=list)
 
 
 @dataclass
 class SessionCheckpoint:
     """Checkpoint within a session for recovery."""
+
     id: str
     timestamp: float
     stage: str
-    state: Dict[str, Any]
-    message: Optional[str] = None
+    state: dict[str, Any]
+    message: str | None = None
 
 
 @dataclass
 class Session:
     """Execution session with state and checkpoints."""
+
     metadata: SessionMetadata
-    config: Dict[str, Any] = field(default_factory=dict)
-    state: Dict[str, Any] = field(default_factory=dict)
-    checkpoints: List[SessionCheckpoint] = field(default_factory=list)
-    results: Dict[str, Any] = field(default_factory=dict)
-    logs: List[Dict[str, Any]] = field(default_factory=list)
+    config: dict[str, Any] = field(default_factory=dict)
+    state: dict[str, Any] = field(default_factory=dict)
+    checkpoints: list[SessionCheckpoint] = field(default_factory=list)
+    results: dict[str, Any] = field(default_factory=dict)
+    logs: list[dict[str, Any]] = field(default_factory=list)
 
     @classmethod
     def create(
         cls,
-        name: Optional[str] = None,
-        config: Optional[Dict[str, Any]] = None,
-    ) -> "Session":
+        name: str | None = None,
+        config: dict[str, Any] | None = None,
+    ) -> Session:
         """Create a new session."""
         session_id = str(uuid.uuid4())[:8]
         now = time.time()
@@ -87,8 +91,8 @@ class Session:
     def checkpoint(
         self,
         stage: str,
-        state: Dict[str, Any],
-        message: Optional[str] = None,
+        state: dict[str, Any],
+        message: str | None = None,
     ) -> SessionCheckpoint:
         """Create a checkpoint."""
         cp = SessionCheckpoint(
@@ -102,20 +106,22 @@ class Session:
         self.metadata.updated_at = time.time()
         return cp
 
-    def latest_checkpoint(self) -> Optional[SessionCheckpoint]:
+    def latest_checkpoint(self) -> SessionCheckpoint | None:
         """Get the most recent checkpoint."""
         return self.checkpoints[-1] if self.checkpoints else None
 
     def add_log(self, level: str, message: str, **extra: Any) -> None:
         """Add a log entry."""
-        self.logs.append({
-            "timestamp": time.time(),
-            "level": level,
-            "message": message,
-            **extra,
-        })
+        self.logs.append(
+            {
+                "timestamp": time.time(),
+                "level": level,
+                "message": message,
+                **extra,
+            }
+        )
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Serialize session to dict."""
         return {
             "metadata": {
@@ -144,7 +150,7 @@ class Session:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "Session":
+    def from_dict(cls, data: dict[str, Any]) -> Session:
         """Deserialize session from dict."""
         meta = data["metadata"]
         return cls(
@@ -177,19 +183,19 @@ class Session:
 class SessionManager:
     """Manages session lifecycle and persistence."""
 
-    def __init__(self, storage_dir: Optional[Path] = None) -> None:
+    def __init__(self, storage_dir: Path | None = None) -> None:
         self._storage_dir = storage_dir
-        self._current: Optional[Session] = None
-        self._sessions: Dict[str, Session] = {}
+        self._current: Session | None = None
+        self._sessions: dict[str, Session] = {}
 
     @property
-    def current(self) -> Optional[Session]:
+    def current(self) -> Session | None:
         return self._current
 
     def create(
         self,
-        name: Optional[str] = None,
-        config: Optional[Dict[str, Any]] = None,
+        name: str | None = None,
+        config: dict[str, Any] | None = None,
     ) -> Session:
         """Create and set current session."""
         session = Session.create(name=name, config=config)
@@ -197,7 +203,7 @@ class SessionManager:
         self._current = session
         return session
 
-    def get(self, session_id: str) -> Optional[Session]:
+    def get(self, session_id: str) -> Session | None:
         """Get session by ID."""
         if session_id in self._sessions:
             return self._sessions[session_id]
@@ -211,7 +217,7 @@ class SessionManager:
             return True
         return False
 
-    def save(self, session: Optional[Session] = None) -> bool:
+    def save(self, session: Session | None = None) -> bool:
         """Save session to storage."""
         session = session or self._current
         if not session or not self._storage_dir:
@@ -222,7 +228,7 @@ class SessionManager:
         path.write_text(json.dumps(session.to_dict(), indent=2))
         return True
 
-    def load(self, session_id: str) -> Optional[Session]:
+    def load(self, session_id: str) -> Session | None:
         """Load session from storage."""
         if not self._storage_dir:
             return None
@@ -239,7 +245,7 @@ class SessionManager:
         except Exception:
             return None
 
-    def list_sessions(self) -> List[SessionMetadata]:
+    def list_sessions(self) -> list[SessionMetadata]:
         """List all available sessions."""
         sessions = list(self._sessions.values())
 
@@ -269,7 +275,7 @@ class SessionManager:
 
         return session_id in self._sessions
 
-    def resume(self, session_id: str) -> Optional[Session]:
+    def resume(self, session_id: str) -> Session | None:
         """Resume a session from its last checkpoint."""
         session = self.get(session_id)
         if not session:

@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import numpy as np
 
 from proxima.backends.base import ExecutionResult, ResultType
 
 
-def normalize_counts(counts: Dict[str, int], *, little_endian: bool = True) -> Dict[str, float]:
+def normalize_counts(counts: dict[str, int], *, little_endian: bool = True) -> dict[str, float]:
     """Normalize measurement counts to probabilities.
 
     Args:
@@ -22,7 +22,7 @@ def normalize_counts(counts: Dict[str, int], *, little_endian: bool = True) -> D
     total = sum(counts.values())
     if total == 0:
         return {}
-    probabilities: Dict[str, float] = {}
+    probabilities: dict[str, float] = {}
     for bitstring, count in counts.items():
         key = bitstring if little_endian else bitstring[::-1]
         probabilities[key] = probabilities.get(key, 0.0) + count / total
@@ -67,7 +67,7 @@ def normalize_density_matrix(density_matrix: Any) -> np.ndarray:
     return arr
 
 
-def probabilities_from_statevector(statevector: np.ndarray) -> Dict[str, float]:
+def probabilities_from_statevector(statevector: np.ndarray) -> dict[str, float]:
     """Extract probabilities from a statevector.
 
     Args:
@@ -78,7 +78,7 @@ def probabilities_from_statevector(statevector: np.ndarray) -> Dict[str, float]:
     """
     probs = np.abs(statevector) ** 2
     n_qubits = int(np.log2(len(probs)))
-    result: Dict[str, float] = {}
+    result: dict[str, float] = {}
     for idx, p in enumerate(probs):
         if p > 1e-15:
             bitstring = format(idx, f"0{n_qubits}b")[::-1]  # little-endian
@@ -86,7 +86,7 @@ def probabilities_from_statevector(statevector: np.ndarray) -> Dict[str, float]:
     return dict(sorted(result.items()))
 
 
-def probabilities_from_density_matrix(density_matrix: np.ndarray) -> Dict[str, float]:
+def probabilities_from_density_matrix(density_matrix: np.ndarray) -> dict[str, float]:
     """Extract probabilities from a density matrix (diagonal).
 
     Args:
@@ -97,7 +97,7 @@ def probabilities_from_density_matrix(density_matrix: np.ndarray) -> Dict[str, f
     """
     diag = np.real(np.diag(density_matrix))
     n_qubits = int(np.log2(len(diag)))
-    result: Dict[str, float] = {}
+    result: dict[str, float] = {}
     for idx, p in enumerate(diag):
         if p > 1e-15:
             bitstring = format(idx, f"0{n_qubits}b")[::-1]  # little-endian
@@ -152,11 +152,11 @@ def normalize_result(result: ExecutionResult) -> ExecutionResult:
 
 
 def compare_probabilities(
-    probs_a: Dict[str, float],
-    probs_b: Dict[str, float],
+    probs_a: dict[str, float],
+    probs_b: dict[str, float],
     *,
     tolerance: float = 1e-6,
-) -> Tuple[bool, Dict[str, Any]]:
+) -> tuple[bool, dict[str, Any]]:
     """Compare two probability distributions.
 
     Args:
@@ -169,7 +169,7 @@ def compare_probabilities(
     """
     all_keys = set(probs_a.keys()) | set(probs_b.keys())
     max_diff = 0.0
-    differing: List[str] = []
+    differing: list[str] = []
     for key in all_keys:
         pa = probs_a.get(key, 0.0)
         pb = probs_b.get(key, 0.0)

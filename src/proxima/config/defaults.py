@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict, Any
-
+from typing import Any
 
 # Default configuration tree used when no files are present.
-DEFAULT_CONFIG: Dict[str, Any] = {
+DEFAULT_CONFIG: dict[str, Any] = {
     "general": {
         "verbosity": "info",
         "output_format": "text",

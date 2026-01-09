@@ -6,26 +6,24 @@ work to an injected callable (which can internally use local or remote LLMs).
 
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, Optional
+from collections.abc import Callable
+from typing import Any
 
 from proxima.core.state import ExecutionStateMachine
 from proxima.utils.logging import get_logger
 
-
-ExecuteFunction = Callable[[Dict[str, Any]], Any]
+ExecuteFunction = Callable[[dict[str, Any]], Any]
 
 
 class Executor:
     """Executes a prepared plan using a provided runner callable."""
 
-    def __init__(
-        self, state_machine: ExecutionStateMachine, runner: Optional[ExecuteFunction] = None
-    ):
+    def __init__(self, state_machine: ExecutionStateMachine, runner: ExecuteFunction | None = None):
         self.state_machine = state_machine
         self.runner = runner
         self.logger = get_logger("executor")
 
-    def run(self, plan: Dict[str, Any]) -> Any:
+    def run(self, plan: dict[str, Any]) -> Any:
         """Execute the plan; transitions the FSM accordingly."""
 
         self.state_machine.execute()

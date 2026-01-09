@@ -3,17 +3,16 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 import yaml
 
 from proxima.config.settings import Settings, config_service
 
-
 _LEVELS = ["critical", "error", "warning", "info", "debug"]
 
 
-def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
+def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
     merged = {**base}
     for key, value in override.items():
         if isinstance(value, dict) and isinstance(merged.get(key), dict):
@@ -35,8 +34,8 @@ def compute_verbosity(base_level: str, verbose: int, quiet: int) -> str:
 
 def load_settings_with_cli_overrides(
     *,
-    config_path: Optional[Path] = None,
-    cli_overrides: Optional[Dict[str, Any]] = None,
+    config_path: Path | None = None,
+    cli_overrides: dict[str, Any] | None = None,
 ) -> Settings:
     """Load settings and apply optional extra config file and CLI overrides."""
 

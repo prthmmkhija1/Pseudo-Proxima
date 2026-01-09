@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 # Check if textual is available
 try:
     import textual
+
     HAS_TEXTUAL = True
 except ImportError:
     HAS_TEXTUAL = False
@@ -25,22 +26,7 @@ pytestmark = pytest.mark.skipif(not HAS_TEXTUAL, reason="textual not installed")
 def test_imports():
     """Test that all TUI components can be imported."""
     print("\n=== Test: Imports ===")
-    
-    from proxima.tui import (
-        ProximaApp,
-        DashboardScreen,
-        ExecutionScreen,
-        ConfigurationScreen,
-        ResultsScreen,
-        BackendsScreen,
-        StatusPanel,
-        LogViewer,
-        ProgressBar,
-        BackendCard,
-        ResultsTable,
-        HelpModal,
-    )
-    
+
     print("  ProximaApp: OK")
     print("  DashboardScreen: OK")
     print("  ExecutionScreen: OK")
@@ -53,36 +39,27 @@ def test_imports():
     print("  BackendCard: OK")
     print("  ResultsTable: OK")
     print("  HelpModal: OK")
-    
+
     print("[PASS] All imports successful")
 
 
 def test_widget_creation():
     """Test widget instantiation."""
     print("\n=== Test: Widget Creation ===")
-    
+
     from proxima.tui.widgets import (
-        StatusPanel,
-        StatusItem,
-        StatusLevel,
-        LogViewer,
-        ProgressBar,
-        BackendCard,
         BackendInfo,
         BackendStatus,
-        ResultsTable,
-        HelpModal,
-        ConfigInput,
-        ConfigToggle,
-        ExecutionCard,
+        StatusItem,
+        StatusLevel,
     )
-    
+
     # StatusItem
     item = StatusItem("Test", "Value", StatusLevel.OK)
     assert item.label == "Test"
     assert item.level == StatusLevel.OK
     print("  StatusItem: OK")
-    
+
     # BackendInfo
     backend = BackendInfo(
         name="Test Backend",
@@ -92,62 +69,62 @@ def test_widget_creation():
     assert backend.name == "Test Backend"
     assert backend.status == BackendStatus.CONNECTED
     print("  BackendInfo: OK")
-    
+
     # StatusLevel enum
     assert StatusLevel.OK.value == "ok"
     assert StatusLevel.ERROR.value == "error"
     print("  StatusLevel: OK")
-    
+
     # BackendStatus enum
     assert BackendStatus.CONNECTED.value == "connected"
     assert BackendStatus.DISCONNECTED.value == "disconnected"
     print("  BackendStatus: OK")
-    
+
     print("[PASS] Widget creation successful")
 
 
 def test_screen_creation():
     """Test screen instantiation."""
     print("\n=== Test: Screen Creation ===")
-    
+
     from proxima.tui.screens import (
+        BackendsScreen,
+        ConfigurationScreen,
         DashboardScreen,
         ExecutionScreen,
-        ConfigurationScreen,
         ResultsScreen,
-        BackendsScreen,
     )
-    
+
     # Screens can be instantiated
     dashboard = DashboardScreen()
     assert dashboard is not None
     print("  DashboardScreen: OK")
-    
+
     execution = ExecutionScreen()
     assert execution is not None
     print("  ExecutionScreen: OK")
-    
+
     config = ConfigurationScreen()
     assert config is not None
     print("  ConfigurationScreen: OK")
-    
+
     results = ResultsScreen()
     assert results is not None
     print("  ResultsScreen: OK")
-    
+
     backends = BackendsScreen()
     assert backends is not None
     print("  BackendsScreen: OK")
-    
+
     print("[PASS] Screen creation successful")
 
 
 def test_app_creation():
     """Test app instantiation."""
     print("\n=== Test: App Creation ===")
-    
+
     from proxima.tui.app import ProximaApp
-    
+
     app = ProximaApp()
     assert app is not None
     assert app.TITLE == "Proxima Agent"
@@ -156,57 +133,56 @@ def test_app_creation():
     assert "configuration" in app.SCREENS
     assert "results" in app.SCREENS
     assert "backends" in app.SCREENS
-    
+
     print("  App title: Proxima Agent")
     print(f"  Screens registered: {list(app.SCREENS.keys())}")
     print("  Bindings configured: OK")
-    
+
     print("[PASS] App creation successful")
 
 
 def test_run_function():
     """Test run_tui function exists."""
     print("\n=== Test: Run Function ===")
-    
-    from proxima.tui.app import run_tui, main
-    
+
+    from proxima.tui.app import main, run_tui
+
     assert callable(run_tui)
     assert callable(main)
-    
+
     print("  run_tui: callable")
     print("  main: callable")
-    
+
     print("[PASS] Run function exists")
 
 
 def test_css_theme():
     """Test CSS theme is defined."""
     print("\n=== Test: CSS Theme ===")
-    
+
     from proxima.tui.app import PROXIMA_CSS
-    
+
     assert "$primary" in PROXIMA_CSS
     assert "$background" in PROXIMA_CSS
     assert "$success" in PROXIMA_CSS
     assert "$error" in PROXIMA_CSS
-    
+
     print("  Primary color: defined")
     print("  Background: defined")
     print("  Success color: defined")
     print("  Error color: defined")
-    
+
     print("[PASS] CSS theme defined")
 
 
 def test_keyboard_bindings():
     """Test keyboard bindings are configured."""
     print("\n=== Test: Keyboard Bindings ===")
-    
+
     from proxima.tui.app import ProximaApp
-    from proxima.tui.screens import BaseScreen
-    
+
     app = ProximaApp()
-    
+
     # Check app-level bindings
     binding_keys = [b.key for b in app.BINDINGS]
     assert "1" in binding_keys  # Dashboard
@@ -216,7 +192,7 @@ def test_keyboard_bindings():
     assert "5" in binding_keys  # Backends
     assert "q" in binding_keys  # Quit
     assert "question_mark" in binding_keys  # Help
-    
+
     print("  1 - Dashboard: OK")
     print("  2 - Execution: OK")
     print("  3 - Config: OK")
@@ -224,7 +200,7 @@ def test_keyboard_bindings():
     print("  5 - Backends: OK")
     print("  q - Quit: OK")
     print("  ? - Help: OK")
-    
+
     print("[PASS] Keyboard bindings configured")
 
 
@@ -233,7 +209,7 @@ def main():
     print("=" * 60)
     print("STEP 6.1: TERMINAL UI TESTS")
     print("=" * 60)
-    
+
     try:
         test_imports()
         test_widget_creation()
@@ -242,7 +218,7 @@ def main():
         test_run_function()
         test_css_theme()
         test_keyboard_bindings()
-        
+
         print("\n" + "=" * 60)
         print("ALL TESTS PASSED!")
         print("=" * 60)
@@ -259,16 +235,18 @@ def main():
         print("    - Consistent color theme")
         print("    - Contextual help (press ? for help)")
         print("\nTo run the TUI interactively:")
-        print("  python -c \"from src.proxima.tui import ProximaApp; ProximaApp().run()\"")
-        
+        print('  python -c "from src.proxima.tui import ProximaApp; ProximaApp().run()"')
+
     except AssertionError as e:
         print(f"\n[FAILED] {e}")
         import traceback
+
         traceback.print_exc()
         sys.exit(1)
     except Exception as e:
         print(f"\n[ERROR] {e}")
         import traceback
+
         traceback.print_exc()
         sys.exit(1)
 

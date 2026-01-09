@@ -2,12 +2,9 @@
 
 from __future__ import annotations
 
-from typing import List
-
 import typer
 
 from proxima.utils.logging import get_logger
-
 
 app = typer.Typer(name="compare", help="Run multi-backend comparison (stub)")
 
@@ -15,7 +12,7 @@ app = typer.Typer(name="compare", help="Run multi-backend comparison (stub)")
 @app.command()
 def main(
     ctx: typer.Context,
-    backends: List[str] = typer.Option(
+    backends: list[str] = typer.Option(
         ["cirq", "qiskit"], "--backend", "-b", help="Backends to compare"
     ),
     objective: str = typer.Argument("demo", help="Objective to compare"),

@@ -6,40 +6,41 @@ Provides extension points for plugins to hook into Proxima's execution flow.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Dict, List, Optional, TypeVar
+from typing import Any, TypeVar
 
 T = TypeVar("T")
 
 
 class HookType(str, Enum):
     """Available hook points in Proxima's execution flow."""
-    
+
     # Lifecycle hooks
     PRE_INIT = "pre_init"
     POST_INIT = "post_init"
     PRE_SHUTDOWN = "pre_shutdown"
-    
+
     # Execution hooks
     PRE_EXECUTE = "pre_execute"
     POST_EXECUTE = "post_execute"
     ON_ERROR = "on_error"
-    
+
     # Pipeline hooks
     PRE_STAGE = "pre_stage"
     POST_STAGE = "post_stage"
-    
+
     # Backend hooks
     PRE_BACKEND_INIT = "pre_backend_init"
     POST_BACKEND_INIT = "post_backend_init"
     PRE_BACKEND_RUN = "pre_backend_run"
     POST_BACKEND_RUN = "post_backend_run"
-    
+
     # LLM hooks
     PRE_LLM_REQUEST = "pre_llm_request"
     POST_LLM_RESPONSE = "post_llm_response"
-    
+
     # Result hooks
     PRE_EXPORT = "pre_export"
     POST_EXPORT = "post_export"
@@ -50,8 +51,9 @@ class HookType(str, Enum):
 @dataclass
 class HookContext:
     """Context passed to hook handlers."""
+
     hook_type: HookType
-    data: Dict[str, Any] = field(default_factory=dict)
+    data: dict[str, Any] = field(default_factory=dict)
     cancelled: bool = False
     result: Any = None
 
@@ -72,36 +74,35 @@ class HookContext:
         self.data[key] = value
 
 
-HookHandler = Callable[[HookContext], Optional[Any]]
+HookHandler = Callable[[HookContext], Any | None]
 
 
 @dataclass
 class RegisteredHook:
     """A registered hook handler."""
+
     handler: HookHandler
     priority: int = 0
-    name: Optional[str] = None
-    plugin_name: Optional[str] = None
+    name: str | None = None
+    plugin_name: str | None = None
 
 
 class HookManager:
     """Manages hook registration and execution."""
 
     def __init__(self) -> None:
-        self._hooks: Dict[HookType, List[RegisteredHook]] = {
-            ht: [] for ht in HookType
-        }
+        self._hooks: dict[HookType, list[RegisteredHook]] = {ht: [] for ht in HookType}
 
     def register(
         self,
         hook_type: HookType,
         handler: HookHandler,
         priority: int = 0,
-        name: Optional[str] = None,
-        plugin_name: Optional[str] = None,
+        name: str | None = None,
+        plugin_name: str | None = None,
     ) -> None:
         """Register a hook handler.
-        
+
         Args:
             hook_type: The type of hook to register for.
             handler: The handler function to call.
@@ -122,18 +123,18 @@ class HookManager:
     def unregister(
         self,
         hook_type: HookType,
-        handler: Optional[HookHandler] = None,
-        name: Optional[str] = None,
-        plugin_name: Optional[str] = None,
+        handler: HookHandler | None = None,
+        name: str | None = None,
+        plugin_name: str | None = None,
     ) -> int:
         """Unregister hook handlers.
-        
+
         Can unregister by handler function, name, or plugin name.
         Returns the number of handlers removed.
         """
         removed = 0
         hooks = self._hooks[hook_type]
-        
+
         to_remove = []
         for i, registered in enumerate(hooks):
             if handler and registered.handler is handler:
@@ -159,19 +160,19 @@ class HookManager:
     def trigger(
         self,
         hook_type: HookType,
-        data: Optional[Dict[str, Any]] = None,
+        data: dict[str, Any] | None = None,
     ) -> HookContext:
         """Trigger a hook and run all registered handlers.
-        
+
         Args:
             hook_type: The hook to trigger.
             data: Initial context data.
-            
+
         Returns:
             The HookContext after all handlers have run.
         """
         context = HookContext(hook_type=hook_type, data=data or {})
-        
+
         for registered in self._hooks[hook_type]:
             if context.cancelled:
                 break
@@ -181,27 +182,28 @@ class HookManager:
                     context.result = result
             except Exception as e:
                 # Store error but continue with other handlers
-                context.data.setdefault("errors", []).append({
-                    "handler": registered.name or str(registered.handler),
-                    "error": str(e),
-                })
+                context.data.setdefault("errors", []).append(
+                    {
+                        "handler": registered.name or str(registered.handler),
+                        "error": str(e),
+                    }
+                )
 
         return context
 
     async def trigger_async(
         self,
         hook_type: HookType,
-        data: Optional[Dict[str, Any]] = None,
+        data: dict[str, Any] | None = None,
     ) -> HookContext:
         """Trigger a hook asynchronously.
-        
+
         Handles both sync and async handlers.
         """
-        import asyncio
         import inspect
-        
+
         context = HookContext(hook_type=hook_type, data=data or {})
-        
+
         for registered in self._hooks[hook_type]:
             if context.cancelled:
                 break
@@ -212,14 +214,16 @@ class HookManager:
                 if result is not None:
                     context.result = result
             except Exception as e:
-                context.data.setdefault("errors", []).append({
-                    "handler": registered.name or str(registered.handler),
-                    "error": str(e),
-                })
+                context.data.setdefault("errors", []).append(
+                    {
+                        "handler": registered.name or str(registered.handler),
+                        "error": str(e),
+                    }
+                )
 
         return context
 
-    def get_handlers(self, hook_type: HookType) -> List[RegisteredHook]:
+    def get_handlers(self, hook_type: HookType) -> list[RegisteredHook]:
         """Get all handlers for a hook type."""
         return list(self._hooks[hook_type])
 
@@ -227,7 +231,7 @@ class HookManager:
         """Check if a hook type has any handlers."""
         return len(self._hooks[hook_type]) > 0
 
-    def clear(self, hook_type: Optional[HookType] = None) -> None:
+    def clear(self, hook_type: HookType | None = None) -> None:
         """Clear handlers for a hook type, or all hooks."""
         if hook_type:
             self._hooks[hook_type].clear()
@@ -237,7 +241,7 @@ class HookManager:
 
 
 # Global hook manager singleton
-_hook_manager: Optional[HookManager] = None
+_hook_manager: HookManager | None = None
 
 
 def get_hook_manager() -> HookManager:
@@ -252,15 +256,16 @@ def get_hook_manager() -> HookManager:
 def hook(
     hook_type: HookType,
     priority: int = 0,
-    name: Optional[str] = None,
+    name: str | None = None,
 ) -> Callable[[HookHandler], HookHandler]:
     """Decorator to register a function as a hook handler.
-    
+
     Example:
         @hook(HookType.PRE_EXECUTE, priority=10)
         def my_handler(ctx: HookContext) -> None:
             print(f"Pre-execute: {ctx.data}")
     """
+
     def decorator(func: HookHandler) -> HookHandler:
         get_hook_manager().register(
             hook_type=hook_type,
@@ -269,4 +274,5 @@ def hook(
             name=name or func.__name__,
         )
         return func
+
     return decorator

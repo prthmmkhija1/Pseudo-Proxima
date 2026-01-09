@@ -6,23 +6,23 @@ Provides extensibility through custom backends, LLM providers, and exporters.
 
 from proxima.plugins.base import (
     Plugin,
-    PluginType,
-    PluginMetadata,
     PluginError,
     PluginLoadError,
+    PluginMetadata,
+    PluginType,
     PluginValidationError,
+)
+from proxima.plugins.hooks import (
+    HookManager,
+    HookType,
+    get_hook_manager,
 )
 from proxima.plugins.loader import (
     PluginLoader,
     PluginRegistry,
-    get_plugin_registry,
     discover_plugins,
+    get_plugin_registry,
     load_plugin,
-)
-from proxima.plugins.hooks import (
-    HookType,
-    HookManager,
-    get_hook_manager,
 )
 
 __all__ = [

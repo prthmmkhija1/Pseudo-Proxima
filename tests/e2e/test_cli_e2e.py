@@ -9,11 +9,10 @@ from __future__ import annotations
 import subprocess
 import sys
 import tempfile
+from collections.abc import Generator
 from pathlib import Path
-from typing import Generator
 
 import pytest
-
 
 pytestmark = [pytest.mark.e2e, pytest.mark.slow]
 
@@ -29,7 +28,8 @@ def temp_dir() -> Generator[Path, None, None]:
 def sample_agent_file(temp_dir: Path) -> Path:
     """Create a sample agent file for testing."""
     agent_file = temp_dir / "proxima_agent.md"
-    agent_file.write_text("""# Proxima Agent File
+    agent_file.write_text(
+        """# Proxima Agent File
 
 ## Metadata
 - name: test-circuit
@@ -49,7 +49,8 @@ H 0
 CNOT 0 1
 MEASURE ALL
 ```
-""")
+"""
+    )
     return agent_file
 
 
@@ -146,7 +147,10 @@ class TestAgentFileWorkflow:
         """Dry run of an agent file should show planned execution."""
         result = subprocess.run(
             [
-                sys.executable, "-m", "proxima", "run",
+                sys.executable,
+                "-m",
+                "proxima",
+                "run",
                 str(sample_agent_file),
                 "--dry-run",
             ],
@@ -166,14 +170,19 @@ class TestResourceAwareness:
         """Running with resource check should validate resources."""
         # Create a minimal circuit file
         circuit_file = temp_dir / "circuit.py"
-        circuit_file.write_text("""
+        circuit_file.write_text(
+            """
 # Simple test circuit
 print("Circuit placeholder")
-""")
-        
+"""
+        )
+
         result = subprocess.run(
             [
-                sys.executable, "-m", "proxima", "run",
+                sys.executable,
+                "-m",
+                "proxima",
+                "run",
                 str(circuit_file),
                 "--check-resources",
             ],
@@ -192,8 +201,11 @@ class TestOutputFormats:
         """Using --format json should produce JSON output."""
         result = subprocess.run(
             [
-                sys.executable, "-m", "proxima",
-                "--format", "json",
+                sys.executable,
+                "-m",
+                "proxima",
+                "--format",
+                "json",
                 "--version",
             ],
             capture_output=True,
@@ -207,7 +219,9 @@ class TestOutputFormats:
         """Using --quiet should suppress verbose output."""
         result = subprocess.run(
             [
-                sys.executable, "-m", "proxima",
+                sys.executable,
+                "-m",
+                "proxima",
                 "--quiet",
                 "--version",
             ],
@@ -248,12 +262,16 @@ class TestErrorHandling:
         """Invalid backend should show clear error."""
         agent_file = temp_dir / "test.md"
         agent_file.write_text("# Test\nMinimal content")
-        
+
         result = subprocess.run(
             [
-                sys.executable, "-m", "proxima", "run",
+                sys.executable,
+                "-m",
+                "proxima",
+                "run",
                 str(agent_file),
-                "--backend", "invalid_backend_xyz",
+                "--backend",
+                "invalid_backend_xyz",
             ],
             capture_output=True,
             text=True,

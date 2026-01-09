@@ -9,7 +9,7 @@ visibility.
 from __future__ import annotations
 
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from transitions import Machine
 
@@ -27,7 +27,7 @@ class ExecutionState(str, Enum):
     ERROR = "ERROR"
 
 
-TRANSITIONS: List[Dict[str, Any]] = [
+TRANSITIONS: list[dict[str, Any]] = [
     {"trigger": "start", "source": ExecutionState.IDLE, "dest": ExecutionState.PLANNING},
     {"trigger": "plan_complete", "source": ExecutionState.PLANNING, "dest": ExecutionState.READY},
     {"trigger": "plan_failed", "source": ExecutionState.PLANNING, "dest": ExecutionState.ERROR},
@@ -54,10 +54,10 @@ class ExecutionStateMachine:
             Identifier to bind into logs for traceability.
     """
 
-    def __init__(self, execution_id: Optional[str] = None):
+    def __init__(self, execution_id: str | None = None):
         self.execution_id = execution_id
         self.logger = get_logger("state").bind(execution_id=execution_id)
-        self.history: List[str] = []
+        self.history: list[str] = []
 
         self._machine = Machine(
             model=self,
@@ -82,7 +82,7 @@ class ExecutionStateMachine:
     def state_enum(self) -> ExecutionState:
         return ExecutionState(self.state)
 
-    def snapshot(self) -> Dict[str, Any]:
+    def snapshot(self) -> dict[str, Any]:
         return {
             "execution_id": self.execution_id,
             "state": self.state,

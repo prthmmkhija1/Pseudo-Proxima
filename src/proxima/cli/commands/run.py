@@ -11,7 +11,6 @@ from proxima.core.planner import Planner
 from proxima.core.state import ExecutionStateMachine
 from proxima.utils.logging import get_logger
 
-
 app = typer.Typer(name="run", help="Execute a simulation")
 
 
@@ -39,5 +38,5 @@ def main(
     plan = planner.plan(objective)
     result: Any = {"status": "skipped", "reason": "dry-run"} if dry_run else executor.run(plan)
 
-    logger.info("run.finish", state=fsm.state, result=result)
-    typer.echo(f"State: {fsm.state}, Result: {result}")
+    logger.info("run.finish", state=fsm.state, result=result)  # type: ignore[attr-defined]
+    typer.echo(f"State: {fsm.state}, Result: {result}")  # type: ignore[attr-defined]

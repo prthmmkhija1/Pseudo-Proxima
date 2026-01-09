@@ -2,20 +2,20 @@
 Main CLI application definition.
 """
 
-import typer
 from pathlib import Path
-from typing import Optional
 
-from proxima.cli.commands import config as config_commands
-from proxima.cli.commands import run as run_commands
+import typer
+
+from proxima.cli import utils as cli_utils
+from proxima.cli.commands import agent as agent_commands
 from proxima.cli.commands import backends as backends_commands
 from proxima.cli.commands import compare as compare_commands
+from proxima.cli.commands import config as config_commands
 from proxima.cli.commands import history as history_commands
+from proxima.cli.commands import run as run_commands
 from proxima.cli.commands import session as session_commands
-from proxima.cli.commands import agent as agent_commands
 from proxima.cli.commands import ui as ui_commands
 from proxima.config.settings import config_service
-from proxima.cli import utils as cli_utils
 from proxima.utils.logging import configure_from_settings
 
 app = typer.Typer(
@@ -28,14 +28,14 @@ app = typer.Typer(
 @app.callback(invoke_without_command=True)
 def main(
     ctx: typer.Context,
-    config: Optional[Path] = typer.Option(None, "--config", "-c", help="Path to config YAML"),
-    backend: Optional[str] = typer.Option(
+    config: Path | None = typer.Option(None, "--config", "-c", help="Path to config YAML"),
+    backend: str | None = typer.Option(
         None, "--backend", "-b", help="Select backend (lret|cirq|qiskit|auto)"
     ),
-    output: Optional[str] = typer.Option(
+    output: str | None = typer.Option(
         None, "--output", "-o", help="Output format (text|json|rich)"
     ),
-    color: Optional[bool] = typer.Option(
+    color: bool | None = typer.Option(
         None, "--color/--no-color", help="Enable or disable color output"
     ),
     verbose: int = typer.Option(
@@ -48,8 +48,9 @@ def main(
     force: bool = typer.Option(False, "--force", "-f", help="Skip consent prompts"),
 ):
     """Global options and configuration bootstrap."""
+    from typing import Any
 
-    cli_overrides = {"general": {}, "backends": {}, "consent": {}}
+    cli_overrides: dict[str, Any] = {"general": {}, "backends": {}, "consent": {}}
 
     if backend:
         cli_overrides["backends"]["default_backend"] = backend

@@ -16,19 +16,19 @@ Design Principles:
 
 from .app import ProximaApp
 from .screens import (
+    BackendsScreen,
+    ConfigurationScreen,
     DashboardScreen,
     ExecutionScreen,
-    ConfigurationScreen,
     ResultsScreen,
-    BackendsScreen,
 )
 from .widgets import (
-    StatusPanel,
+    BackendCard,
+    HelpModal,
     LogViewer,
     ProgressBar,
-    BackendCard,
     ResultsTable,
-    HelpModal,
+    StatusPanel,
 )
 
 __all__ = [

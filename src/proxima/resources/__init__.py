@@ -1,52 +1,52 @@
 """Resource management modules."""
 
-from .timer import (
-    ExecutionTimer,
-    ProgressTracker,
-    ETACalculator,
-    StageInfo,
-    DisplayController,
-    DisplayUpdate,
-    UpdateReason,
-)
-from .monitor import (
-    ResourceMonitor,
-    MemoryMonitor,
-    CPUMonitor,
-    MemoryLevel,
-    MemoryThresholds,
-    MemorySnapshot,
-    MemoryAlert,
-    MemoryEstimator,
-    MemoryEstimate,
-    MemoryCheckResult,
-)
-from .control import (
-    ExecutionController,
-    ControlState,
-    ControlSignal,
-    ControlEvent,
-    CheckpointData,
-    CheckpointManager,
-    AbortException,
-    PauseException,
-)
 from .consent import (
-    ConsentManager,
-    ConsentLevel,
-    ConsentRecord,
+    CATEGORY_CONFIGS,
     ConsentCategory,
     ConsentCategoryConfig,
-    ConsentResponse,
-    ConsentRequest,
     ConsentCheckResult,
-    ConsentPrompt,
-    DefaultConsentPrompt,
     ConsentDeniedException,
+    ConsentLevel,
+    ConsentManager,
+    ConsentPrompt,
+    ConsentRecord,
+    ConsentRequest,
+    ConsentResponse,
+    DefaultConsentPrompt,
     requires_consent,
-    CATEGORY_CONFIGS,
+)
+from .control import (
+    AbortException,
+    CheckpointData,
+    CheckpointManager,
+    ControlEvent,
+    ControlSignal,
+    ControlState,
+    ExecutionController,
+    PauseException,
+)
+from .monitor import (
+    CPUMonitor,
+    MemoryAlert,
+    MemoryCheckResult,
+    MemoryEstimate,
+    MemoryEstimator,
+    MemoryLevel,
+    MemoryMonitor,
+    MemorySnapshot,
+    MemoryThresholds,
+    ResourceMonitor,
 )
 from .session import Session, SessionManager, SessionStatus
+from .timer import (
+    DisplayController,
+    DisplayUpdate,
+    ETACalculator,
+    ExecutionTimer,
+    ProgressTracker,
+    StageInfo,
+    UpdateReason,
+)
 
 __all__ = [
     # Timer (Step 4.2)

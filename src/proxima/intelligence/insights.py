@@ -15,8 +15,9 @@ Insight Categories:
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 
 from proxima.backends.base import ExecutionResult, ResultType
 
@@ -27,12 +28,12 @@ class StatisticalMetrics:
 
     total_shots: int = 0
     unique_states: int = 0
-    dominant_state: Optional[str] = None
+    dominant_state: str | None = None
     dominant_probability: float = 0.0
     entropy: float = 0.0
     mean_probability: float = 0.0
     variance: float = 0.0
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -40,11 +41,11 @@ class InsightReport:
     """Structured insight object returned by the engine."""
 
     summary: str
-    key_findings: List[str]
+    key_findings: list[str]
     metrics: StatisticalMetrics
-    recommendations: List[str]
-    visualizations: List[str]
-    raw_data: Dict[str, Any] = field(default_factory=dict)
+    recommendations: list[str]
+    visualizations: list[str]
+    raw_data: dict[str, Any] = field(default_factory=dict)
 
 
 class InsightEngine:
@@ -52,7 +53,7 @@ class InsightEngine:
 
     def __init__(
         self,
-        llm_synthesizer: Optional[Callable[[str], str]] = None,
+        llm_synthesizer: Callable[[str], str] | None = None,
     ) -> None:
         """
         Args:
@@ -92,7 +93,7 @@ class InsightEngine:
             return self._analyze_amplitudes(result.data)
         return StatisticalMetrics()
 
-    def _analyze_counts(self, counts: Dict[str, int]) -> StatisticalMetrics:
+    def _analyze_counts(self, counts: dict[str, int]) -> StatisticalMetrics:
         if not counts:
             return StatisticalMetrics()
 
@@ -116,17 +117,15 @@ class InsightEngine:
             variance=variance,
         )
 
-    def _analyze_amplitudes(self, data: Dict[str, Any]) -> StatisticalMetrics:
+    def _analyze_amplitudes(self, data: dict[str, Any]) -> StatisticalMetrics:
         """Placeholder for statevector/density matrix analysis."""
         return StatisticalMetrics(metadata={"note": "amplitude analysis not yet implemented"})
 
     # -------------------------------------------------------------------------
     # Pattern Detection
     # -------------------------------------------------------------------------
-    def _pattern_detection(
-        self, result: ExecutionResult, metrics: StatisticalMetrics
-    ) -> List[str]:
-        findings: List[str] = []
+    def _pattern_detection(self, result: ExecutionResult, metrics: StatisticalMetrics) -> list[str]:
+        findings: list[str] = []
 
         if metrics.dominant_probability >= 0.9:
             findings.append(
@@ -156,9 +155,9 @@ class InsightEngine:
         self,
         result: ExecutionResult,
         metrics: StatisticalMetrics,
-        patterns: List[str],
-    ) -> List[str]:
-        recs: List[str] = []
+        patterns: list[str],
+    ) -> list[str]:
+        recs: list[str] = []
 
         if metrics.total_shots and metrics.total_shots < 1000:
             recs.append("Consider increasing shot count for more precise statistics.")
@@ -179,15 +178,15 @@ class InsightEngine:
     # -------------------------------------------------------------------------
     def _build_visualizations(
         self, result: ExecutionResult, metrics: StatisticalMetrics
-    ) -> List[str]:
-        visuals: List[str] = []
+    ) -> list[str]:
+        visuals: list[str] = []
 
         if result.result_type == ResultType.COUNTS and result.data.get("counts"):
             visuals.append(self._ascii_histogram(result.data["counts"]))
 
         return visuals
 
-    def _ascii_histogram(self, counts: Dict[str, int], width: int = 40) -> str:
+    def _ascii_histogram(self, counts: dict[str, int], width: int = 40) -> str:
         if not counts:
             return "(No data to display)"
         max_val = max(counts.values())
@@ -204,7 +203,7 @@ class InsightEngine:
         self,
         result: ExecutionResult,
         metrics: StatisticalMetrics,
-        patterns: List[str],
+        patterns: list[str],
     ) -> str:
         parts = [
             f"Execution on backend '{result.backend}' completed in "
@@ -220,7 +219,7 @@ class InsightEngine:
     # Optional LLM Synthesis
     # -------------------------------------------------------------------------
     def _llm_enhance_summary(
-        self, base_summary: str, metrics: StatisticalMetrics, patterns: List[str]
+        self, base_summary: str, metrics: StatisticalMetrics, patterns: list[str]
     ) -> str:
         prompt = (
             "You are a quantum computing assistant. Given the following execution summary "
@@ -236,4 +235,3 @@ class InsightEngine:
 
 
 insight_engine = InsightEngine()
-

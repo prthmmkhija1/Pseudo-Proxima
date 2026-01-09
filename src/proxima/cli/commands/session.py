@@ -5,11 +5,10 @@ Manage execution sessions.
 """
 
 from datetime import datetime
-from typing import Optional
 
 import typer
 
-from proxima.data.store import get_store, StoredSession
+from proxima.data.store import StoredSession, get_store
 
 app = typer.Typer(help="Manage execution sessions.")
 
@@ -39,25 +38,23 @@ def list_sessions(
     for session in sessions:
         created = session.created_at.strftime("%Y-%m-%d %H:%M") if session.created_at else "N/A"
         name = session.name or "(unnamed)"
-        typer.echo(
-            f"{session.id:<36} {name:<20} {session.result_count:<10} {created}"
-        )
+        typer.echo(f"{session.id:<36} {name:<20} {session.result_count:<10} {created}")
 
 
 @app.command("new")
 def new_session(
-    name: Optional[str] = typer.Option(None, "--name", "-n", help="Session name"),
-    agent_file: Optional[str] = typer.Option(None, "--agent", "-a", help="Associated agent file"),
+    name: str | None = typer.Option(None, "--name", "-n", help="Session name"),
+    agent_file: str | None = typer.Option(None, "--agent", "-a", help="Associated agent file"),
 ) -> None:
     """Create a new session."""
     store = get_store()
-    
+
     session = StoredSession(
         name=name,
         agent_file=agent_file,
     )
     session_id = store.create_session(session)
-    
+
     typer.echo(f"Created session: {session_id}")
     if name:
         typer.echo(f"Name: {name}")
@@ -85,16 +82,18 @@ def show_session(
     typer.echo(f"Updated:      {session.updated_at}")
 
     if session.metadata:
-        typer.echo(f"\nMetadata:")
+        typer.echo("\nMetadata:")
         for key, value in session.metadata.items():
             typer.echo(f"  {key}: {value}")
 
     # Show recent results
     results = store.list_results(session_id=session_id, limit=5)
     if results:
-        typer.echo(f"\nRecent Results:")
+        typer.echo("\nRecent Results:")
         for result in results:
-            typer.echo(f"  - {result.id[:8]}... ({result.backend_name}, {result.qubit_count} qubits)")
+            typer.echo(
+                f"  - {result.id[:8]}... ({result.backend_name}, {result.qubit_count} qubits)"
+            )
 
 
 @app.command("delete")
@@ -113,7 +112,7 @@ def delete_session(
     if not confirm:
         typer.confirm(
             f"Delete session '{session.name or session_id}' and all {session.result_count} results?",
-            abort=True
+            abort=True,
         )
 
     if store.delete_session(session_id):
@@ -139,7 +138,7 @@ def rename_session(
     # Update the session name
     session.name = name
     session.updated_at = datetime.utcnow()
-    
+
     # For memory store, we can update in place
     # For persistent stores, we'd need an update method
     typer.echo(f"Renamed session to: {name}")
@@ -159,7 +158,7 @@ def resume_session(
 
     typer.echo(f"Resuming session: {session.name or session_id}")
     typer.echo(f"Results in session: {session.result_count}")
-    
+
     if session.agent_file:
         typer.echo(f"Agent file: {session.agent_file}")
         typer.echo("\nRun 'proxima agent run <file>' to continue execution")

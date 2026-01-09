@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Literal
+from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, Field, ValidationError
@@ -70,11 +70,11 @@ class Settings(BaseModel):
     consent: ConsentSettings
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "Settings":
+    def from_dict(cls, data: dict[str, Any]) -> Settings:
         return cls.model_validate(data)
 
 
-def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
+def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
     """Recursively merge override into base, returning a new dict."""
 
     result = {**base}
@@ -86,14 +86,14 @@ def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any
     return result
 
 
-def _load_yaml(path: Path) -> Dict[str, Any]:
+def _load_yaml(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {}
     try:
         with path.open("r", encoding="utf-8") as handle:
             return yaml.safe_load(handle) or {}
     except yaml.YAMLError as exc:  # pragma: no cover - unlikely with safe_load
-        raise ValueError(f"Failed to parse YAML config at {path}: {exc}")
+        raise ValueError(f"Failed to parse YAML config at {path}: {exc}") from exc
 
 
 def _ensure_dir(path: Path) -> None:
@@ -118,14 +118,14 @@ def _parse_scalar(value: str) -> Any:
     return trimmed
 
 
-def _set_nested(target: Dict[str, Any], path: List[str], value: Any) -> None:
+def _set_nested(target: dict[str, Any], path: list[str], value: Any) -> None:
     current = target
     for key in path[:-1]:
         current = current.setdefault(key, {})
     current[path[-1]] = value
 
 
-def _get_nested(data: Dict[str, Any], path: List[str]) -> Any:
+def _get_nested(data: dict[str, Any], path: list[str]) -> Any:
     current: Any = data
     for key in path:
         if not isinstance(current, dict) or key not in current:
@@ -144,7 +144,7 @@ class ConfigService:
         self.project_config_path = self.root_dir / PROJECT_CONFIG_FILENAME
         self.user_config_path = USER_CONFIG_PATH
 
-    def load(self, cli_overrides: Optional[Dict[str, Any]] = None) -> Settings:
+    def load(self, cli_overrides: dict[str, Any] | None = None) -> Settings:
         data = DEFAULT_CONFIG
 
         file_chain = [
@@ -163,7 +163,7 @@ class ConfigService:
         try:
             return Settings.from_dict(data)
         except ValidationError as exc:
-            raise ValueError(f"Invalid configuration: {exc}")
+            raise ValueError(f"Invalid configuration: {exc}") from exc
 
     def save(self, settings: Settings, scope: Literal["user", "project"] = "user") -> Path:
         target = self.user_config_path if scope == "user" else self.project_config_path
@@ -184,7 +184,7 @@ class ConfigService:
             yaml.safe_dump(current_data, handle, sort_keys=False)
         return target
 
-    def get_value(self, key_path: str, cli_overrides: Optional[Dict[str, Any]] = None) -> Any:
+    def get_value(self, key_path: str, cli_overrides: dict[str, Any] | None = None) -> Any:
         data = self.load(cli_overrides=cli_overrides).model_dump()
         parts = self._normalize_key_path(key_path)
         return _get_nested(data, parts)
@@ -194,8 +194,8 @@ class ConfigService:
         if target.exists():
             target.unlink()
 
-    def _env_overrides(self) -> Dict[str, Any]:
-        overrides: Dict[str, Any] = {}
+    def _env_overrides(self) -> dict[str, Any]:
+        overrides: dict[str, Any] = {}
         prefix = f"{self.env_prefix}_"
         for key, raw_value in os.environ.items():
             if not key.startswith(prefix):
@@ -205,14 +205,14 @@ class ConfigService:
             _set_nested(overrides, path_segments, _parse_scalar(raw_value))
         return overrides
 
-    def _normalize_env_key(self, key: str) -> List[str]:
+    def _normalize_env_key(self, key: str) -> list[str]:
         if "__" in key:
             segments = key.split("__")
         else:
             segments = key.split("_")
         return [segment.lower() for segment in segments if segment]
 
-    def _normalize_key_path(self, key_path: str) -> List[str]:
+    def _normalize_key_path(self, key_path: str) -> list[str]:
         if not key_path:
             raise ValueError("Key path cannot be empty")
         return [segment.strip() for segment in key_path.split(".") if segment.strip()]
@@ -226,7 +226,7 @@ config_service = ConfigService()
 
 
 # Convenience singleton for global settings access
-_cached_settings: Optional[Settings] = None
+_cached_settings: Settings | None = None
 
 
 def get_settings() -> Settings:
@@ -255,5 +255,5 @@ class FlatSettings:
         return self._settings.general.storage_backend
 
     @property
-    def data_dir(self) -> Optional[str]:
+    def data_dir(self) -> str | None:
         return self._settings.general.data_dir or None

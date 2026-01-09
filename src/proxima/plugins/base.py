@@ -9,11 +9,12 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, ClassVar, Optional, Type
+from typing import Any, ClassVar
 
 
 class PluginType(str, Enum):
     """Types of plugins supported by Proxima."""
+
     BACKEND = "backend"
     LLM_PROVIDER = "llm_provider"
     EXPORTER = "exporter"
@@ -23,22 +24,26 @@ class PluginType(str, Enum):
 
 class PluginError(Exception):
     """Base exception for plugin errors."""
+
     pass
 
 
 class PluginLoadError(PluginError):
     """Raised when a plugin fails to load."""
+
     pass
 
 
 class PluginValidationError(PluginError):
     """Raised when a plugin fails validation."""
+
     pass
 
 
 @dataclass
 class PluginMetadata:
     """Metadata for a plugin."""
+
     name: str
     version: str
     plugin_type: PluginType
@@ -47,7 +52,7 @@ class PluginMetadata:
     homepage: str = ""
     requires: list[str] = field(default_factory=list)
     provides: list[str] = field(default_factory=list)
-    config_schema: Optional[dict[str, Any]] = None
+    config_schema: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert metadata to dictionary."""
@@ -81,7 +86,7 @@ class PluginMetadata:
 
 class Plugin(ABC):
     """Base class for all Proxima plugins.
-    
+
     To create a plugin:
     1. Subclass Plugin or a specific plugin type (BackendPlugin, etc.)
     2. Define the METADATA class variable
@@ -91,7 +96,7 @@ class Plugin(ABC):
 
     METADATA: ClassVar[PluginMetadata]
 
-    def __init__(self, config: Optional[dict[str, Any]] = None) -> None:
+    def __init__(self, config: dict[str, Any] | None = None) -> None:
         """Initialize the plugin with optional configuration."""
         self._config = config or {}
         self._enabled = True
@@ -156,7 +161,7 @@ class BackendPlugin(Plugin):
     METADATA: ClassVar[PluginMetadata]
 
     @abstractmethod
-    def get_backend_class(self) -> Type[Any]:
+    def get_backend_class(self) -> type[Any]:
         """Return the backend adapter class."""
         ...
 
@@ -180,7 +185,7 @@ class LLMProviderPlugin(Plugin):
     METADATA: ClassVar[PluginMetadata]
 
     @abstractmethod
-    def get_provider_class(self) -> Type[Any]:
+    def get_provider_class(self) -> type[Any]:
         """Return the LLM provider class."""
         ...
 
@@ -190,7 +195,7 @@ class LLMProviderPlugin(Plugin):
         ...
 
     @abstractmethod
-    def get_api_key_env_var(self) -> Optional[str]:
+    def get_api_key_env_var(self) -> str | None:
         """Return the environment variable name for API key, or None."""
         ...
 

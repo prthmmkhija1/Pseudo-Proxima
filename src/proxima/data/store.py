@@ -11,19 +11,21 @@ import json
 import sqlite3
 import uuid
 from abc import ABC, abstractmethod
+from collections.abc import Generator
 from contextlib import contextmanager
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Any, Generator, Optional
+from typing import Any
 
 from pydantic import BaseModel, Field
 
-from proxima.config.settings import get_settings, FlatSettings
+from proxima.config.settings import FlatSettings, get_settings
 
 
 class StorageBackend(str, Enum):
     """Available storage backends."""
+
     JSON = "json"
     SQLITE = "sqlite"
     MEMORY = "memory"
@@ -31,17 +33,18 @@ class StorageBackend(str, Enum):
 
 class StoredResult(BaseModel):
     """Model for a stored simulation result."""
+
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     session_id: str
     backend_name: str
-    circuit_name: Optional[str] = None
+    circuit_name: str | None = None
     qubit_count: int
     shots: int
     timestamp: datetime = Field(default_factory=datetime.utcnow)
     execution_time_ms: float
     memory_used_mb: float
     counts: dict[str, int] = Field(default_factory=dict)
-    statevector: Optional[list[complex]] = None
+    statevector: list[complex] | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     class Config:
@@ -53,11 +56,12 @@ class StoredResult(BaseModel):
 
 class StoredSession(BaseModel):
     """Model for a stored session."""
+
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    name: Optional[str] = None
+    name: str | None = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
-    agent_file: Optional[str] = None
+    agent_file: str | None = None
     result_count: int = 0
     metadata: dict[str, Any] = Field(default_factory=dict)
 
@@ -71,15 +75,15 @@ class ResultStore(ABC):
         ...
 
     @abstractmethod
-    def get_result(self, result_id: str) -> Optional[StoredResult]:
+    def get_result(self, result_id: str) -> StoredResult | None:
         """Retrieve a result by ID."""
         ...
 
     @abstractmethod
     def list_results(
         self,
-        session_id: Optional[str] = None,
-        backend_name: Optional[str] = None,
+        session_id: str | None = None,
+        backend_name: str | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[StoredResult]:
@@ -97,7 +101,7 @@ class ResultStore(ABC):
         ...
 
     @abstractmethod
-    def get_session(self, session_id: str) -> Optional[StoredSession]:
+    def get_session(self, session_id: str) -> StoredSession | None:
         """Retrieve a session by ID."""
         ...
 
@@ -132,13 +136,13 @@ class MemoryStore(ResultStore):
             session.updated_at = datetime.utcnow()
         return result.id
 
-    def get_result(self, result_id: str) -> Optional[StoredResult]:
+    def get_result(self, result_id: str) -> StoredResult | None:
         return self._results.get(result_id)
 
     def list_results(
         self,
-        session_id: Optional[str] = None,
-        backend_name: Optional[str] = None,
+        session_id: str | None = None,
+        backend_name: str | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[StoredResult]:
@@ -162,7 +166,7 @@ class MemoryStore(ResultStore):
         self._sessions[session.id] = session
         return session.id
 
-    def get_session(self, session_id: str) -> Optional[StoredSession]:
+    def get_session(self, session_id: str) -> StoredSession | None:
         return self._sessions.get(session_id)
 
     def list_sessions(self, limit: int = 50) -> list[StoredSession]:
@@ -174,9 +178,7 @@ class MemoryStore(ResultStore):
         if session_id in self._sessions:
             del self._sessions[session_id]
             # Delete associated results
-            to_delete = [
-                rid for rid, r in self._results.items() if r.session_id == session_id
-            ]
+            to_delete = [rid for rid, r in self._results.items() if r.session_id == session_id]
             for rid in to_delete:
                 del self._results[rid]
             return True
@@ -190,7 +192,7 @@ class MemoryStore(ResultStore):
 class JSONStore(ResultStore):
     """JSON file-based result storage."""
 
-    def __init__(self, storage_dir: Optional[Path] = None) -> None:
+    def __init__(self, storage_dir: Path | None = None) -> None:
         self.storage_dir = storage_dir or Path.home() / ".proxima" / "results"
         self.storage_dir.mkdir(parents=True, exist_ok=True)
         self._sessions_file = self.storage_dir / "sessions.json"
@@ -251,7 +253,7 @@ class JSONStore(ResultStore):
             self._save_sessions()
         return result.id
 
-    def get_result(self, result_id: str) -> Optional[StoredResult]:
+    def get_result(self, result_id: str) -> StoredResult | None:
         path = self._result_path(result_id)
         if path.exists():
             return self._deserialize_result(path.read_text())
@@ -259,8 +261,8 @@ class JSONStore(ResultStore):
 
     def list_results(
         self,
-        session_id: Optional[str] = None,
-        backend_name: Optional[str] = None,
+        session_id: str | None = None,
+        backend_name: str | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[StoredResult]:
@@ -296,7 +298,7 @@ class JSONStore(ResultStore):
         self._save_sessions()
         return session.id
 
-    def get_session(self, session_id: str) -> Optional[StoredSession]:
+    def get_session(self, session_id: str) -> StoredSession | None:
         return self._sessions.get(session_id)
 
     def list_sessions(self, limit: int = 50) -> list[StoredSession]:
@@ -338,7 +340,7 @@ class SQLiteStore(ResultStore):
         result_count INTEGER DEFAULT 0,
         metadata TEXT DEFAULT '{}'
     );
-    
+
     CREATE TABLE IF NOT EXISTS results (
         id TEXT PRIMARY KEY,
         session_id TEXT NOT NULL,
@@ -354,13 +356,13 @@ class SQLiteStore(ResultStore):
         metadata TEXT DEFAULT '{}',
         FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
     );
-    
+
     CREATE INDEX IF NOT EXISTS idx_results_session ON results(session_id);
     CREATE INDEX IF NOT EXISTS idx_results_backend ON results(backend_name);
     CREATE INDEX IF NOT EXISTS idx_results_timestamp ON results(timestamp DESC);
     """
 
-    def __init__(self, db_path: Optional[Path] = None) -> None:
+    def __init__(self, db_path: Path | None = None) -> None:
         self.db_path = db_path or Path.home() / ".proxima" / "results.db"
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
@@ -384,13 +386,13 @@ class SQLiteStore(ResultStore):
             self._conn.rollback()
             raise
 
-    def _serialize_complex_list(self, values: Optional[list[complex]]) -> Optional[str]:
+    def _serialize_complex_list(self, values: list[complex] | None) -> str | None:
         """Serialize complex numbers to JSON."""
         if values is None:
             return None
         return json.dumps([{"real": c.real, "imag": c.imag} for c in values])
 
-    def _deserialize_complex_list(self, data: Optional[str]) -> Optional[list[complex]]:
+    def _deserialize_complex_list(self, data: str | None) -> list[complex] | None:
         """Deserialize complex numbers from JSON."""
         if data is None:
             return None
@@ -401,7 +403,7 @@ class SQLiteStore(ResultStore):
         with self._transaction() as cursor:
             cursor.execute(
                 """
-                INSERT OR REPLACE INTO results 
+                INSERT OR REPLACE INTO results
                 (id, session_id, backend_name, circuit_name, qubit_count, shots,
                  timestamp, execution_time_ms, memory_used_mb, counts, statevector, metadata)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -431,10 +433,8 @@ class SQLiteStore(ResultStore):
             )
         return result.id
 
-    def get_result(self, result_id: str) -> Optional[StoredResult]:
-        cursor = self._conn.execute(
-            "SELECT * FROM results WHERE id = ?", (result_id,)
-        )
+    def get_result(self, result_id: str) -> StoredResult | None:
+        cursor = self._conn.execute("SELECT * FROM results WHERE id = ?", (result_id,))
         row = cursor.fetchone()
         if row:
             return self._row_to_result(row)
@@ -459,8 +459,8 @@ class SQLiteStore(ResultStore):
 
     def list_results(
         self,
-        session_id: Optional[str] = None,
-        backend_name: Optional[str] = None,
+        session_id: str | None = None,
+        backend_name: str | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[StoredResult]:
@@ -474,7 +474,7 @@ class SQLiteStore(ResultStore):
             params.append(backend_name)
         query += " ORDER BY timestamp DESC LIMIT ? OFFSET ?"
         params.extend([limit, offset])
-        
+
         cursor = self._conn.execute(query, params)
         return [self._row_to_result(row) for row in cursor.fetchall()]
 
@@ -486,7 +486,7 @@ class SQLiteStore(ResultStore):
             if not row:
                 return False
             session_id = row["session_id"]
-            
+
             cursor.execute("DELETE FROM results WHERE id = ?", (result_id,))
             # Update session count
             cursor.execute(
@@ -517,10 +517,8 @@ class SQLiteStore(ResultStore):
             )
         return session.id
 
-    def get_session(self, session_id: str) -> Optional[StoredSession]:
-        cursor = self._conn.execute(
-            "SELECT * FROM sessions WHERE id = ?", (session_id,)
-        )
+    def get_session(self, session_id: str) -> StoredSession | None:
+        cursor = self._conn.execute("SELECT * FROM sessions WHERE id = ?", (session_id,))
         row = cursor.fetchone()
         if row:
             return StoredSession(
@@ -560,12 +558,12 @@ class SQLiteStore(ResultStore):
         self._conn.close()
 
 
-def create_store(backend: Optional[StorageBackend] = None) -> ResultStore:
+def create_store(backend: StorageBackend | None = None) -> ResultStore:
     """Factory function to create a result store based on settings."""
     raw_settings = get_settings()
     settings = FlatSettings(raw_settings)
     backend = backend or StorageBackend(settings.storage_backend)
-    
+
     if backend == StorageBackend.MEMORY:
         return MemoryStore()
     elif backend == StorageBackend.JSON:
@@ -579,7 +577,7 @@ def create_store(backend: Optional[StorageBackend] = None) -> ResultStore:
 
 
 # Convenience singleton for default store
-_default_store: Optional[ResultStore] = None
+_default_store: ResultStore | None = None
 
 
 def get_store() -> ResultStore:

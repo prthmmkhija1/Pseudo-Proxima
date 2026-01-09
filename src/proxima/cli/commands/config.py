@@ -10,7 +10,6 @@ import yaml
 
 from proxima.config.settings import config_service
 
-
 app = typer.Typer(name="config", help="Configuration management")
 
 

@@ -31,7 +31,7 @@ def launch(
         raise typer.Exit(1)
 
     typer.echo("Launching Proxima TUI...")
-    
+
     try:
         app = ProximaApp()
         app.run()

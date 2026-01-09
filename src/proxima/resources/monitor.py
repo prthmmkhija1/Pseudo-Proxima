@@ -9,12 +9,12 @@ Provides:
 
 from __future__ import annotations
 
-import time
+import logging
 import threading
+import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import Callable, Dict, List, Optional, Tuple
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -23,13 +23,15 @@ logger = logging.getLogger(__name__)
 # Memory Levels (Step 4.1 Thresholds)
 # =============================================================================
 
+
 class MemoryLevel(Enum):
     """Memory usage threshold levels as per Step 4.1."""
-    OK = auto()        # Below 60%
-    INFO = auto()      # 60% of available
-    WARNING = auto()   # 80% of available
+
+    OK = auto()  # Below 60%
+    INFO = auto()  # 60% of available
+    WARNING = auto()  # 80% of available
     CRITICAL = auto()  # 95% of available
-    ABORT = auto()     # Out of memory imminent
+    ABORT = auto()  # Out of memory imminent
 
     def __str__(self) -> str:
         return self.name
@@ -38,6 +40,7 @@ class MemoryLevel(Enum):
 @dataclass
 class MemoryThresholds:
     """Configurable memory thresholds (percentage of available)."""
+
     info_percent: float = 60.0
     warning_percent: float = 80.0
     critical_percent: float = 95.0
@@ -60,9 +63,11 @@ class MemoryThresholds:
 # Memory Snapshot and History
 # =============================================================================
 
+
 @dataclass
 class MemorySnapshot:
     """Point-in-time memory measurement."""
+
     timestamp: float
     used_mb: float
     available_mb: float
@@ -81,6 +86,7 @@ class MemorySnapshot:
 @dataclass
 class MemoryAlert:
     """Alert when memory threshold is crossed."""
+
     timestamp: float
     previous_level: MemoryLevel
     current_level: MemoryLevel
@@ -92,29 +98,32 @@ class MemoryAlert:
 # Memory Estimator (Pre-Execution Check)
 # =============================================================================
 
+
 @dataclass
 class MemoryEstimate:
     """Estimated memory requirement for an operation."""
+
     operation: str
     estimated_mb: float
     confidence: float  # 0-1
-    breakdown: Dict[str, float] = field(default_factory=dict)
+    breakdown: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass
 class MemoryCheckResult:
     """Result of pre-execution memory check."""
+
     sufficient: bool
     available_mb: float
     required_mb: float
     shortfall_mb: float
-    warning_message: Optional[str] = None
-    recommendation: Optional[str] = None
+    warning_message: str | None = None
+    recommendation: str | None = None
 
 
 class MemoryEstimator:
     """Estimate memory requirements for quantum simulations.
-    
+
     Memory estimation formulas (approximate):
     - State vector: 2^n * 16 bytes (complex128)
     - Density matrix: 2^(2n) * 16 bytes (complex128)
@@ -128,7 +137,7 @@ class MemoryEstimator:
     def estimate_statevector(num_qubits: int) -> MemoryEstimate:
         """Estimate memory for state vector simulation."""
         # 2^n complex numbers, 16 bytes each (complex128)
-        base_bytes = (2 ** num_qubits) * 16
+        base_bytes = (2**num_qubits) * 16
         base_mb = base_bytes / (1024 * 1024)
         estimated_mb = base_mb * MemoryEstimator.OVERHEAD_MULTIPLIER
 
@@ -183,7 +192,7 @@ AlertCallback = Callable[[MemoryAlert], None]
 
 class MemoryMonitor:
     """Enhanced memory monitor with thresholds, alerts, and continuous monitoring.
-    
+
     Implements Step 4.1 requirements:
     - Continuous monitoring thread/task
     - Threshold configuration (INFO/WARNING/CRITICAL/ABORT)
@@ -194,7 +203,7 @@ class MemoryMonitor:
 
     def __init__(
         self,
-        thresholds: Optional[MemoryThresholds] = None,
+        thresholds: MemoryThresholds | None = None,
         sample_interval: float = 1.0,
         history_size: int = 1000,
     ) -> None:
@@ -202,15 +211,15 @@ class MemoryMonitor:
         self.sample_interval = sample_interval
         self.history_size = history_size
 
-        self._history: List[MemorySnapshot] = []
-        self._alerts: List[MemoryAlert] = []
-        self._callbacks: List[AlertCallback] = []
+        self._history: list[MemorySnapshot] = []
+        self._alerts: list[MemoryAlert] = []
+        self._callbacks: list[AlertCallback] = []
         self._current_level: MemoryLevel = MemoryLevel.OK
         self._peak_mb: float = 0.0
 
         # Monitoring thread
         self._running = False
-        self._thread: Optional[threading.Thread] = None
+        self._thread: threading.Thread | None = None
         self._lock = threading.Lock()
 
     # -------------------------------------------------------------------------
@@ -238,6 +247,7 @@ class MemoryMonitor:
         """Take a memory sample and check thresholds."""
         try:
             import psutil
+
             mem = psutil.virtual_memory()
             used_mb = mem.used / (1024 * 1024)
             available_mb = mem.available / (1024 * 1024)
@@ -266,7 +276,7 @@ class MemoryMonitor:
             # Update history
             self._history.append(snapshot)
             if len(self._history) > self.history_size:
-                self._history = self._history[-self.history_size:]
+                self._history = self._history[-self.history_size :]
 
             # Update peak
             self._peak_mb = max(self._peak_mb, used_mb)
@@ -306,10 +316,15 @@ class MemoryMonitor:
         )
 
         logger.log(
-            logging.CRITICAL if current == MemoryLevel.ABORT else
-            logging.ERROR if current == MemoryLevel.CRITICAL else
-            logging.WARNING if current == MemoryLevel.WARNING else
-            logging.INFO,
+            (
+                logging.CRITICAL
+                if current == MemoryLevel.ABORT
+                else (
+                    logging.ERROR
+                    if current == MemoryLevel.CRITICAL
+                    else logging.WARNING if current == MemoryLevel.WARNING else logging.INFO
+                )
+            ),
             message,
         )
 
@@ -360,7 +375,7 @@ class MemoryMonitor:
         operation_name: str = "execution",
     ) -> MemoryCheckResult:
         """Pre-execution memory check as per Step 4.1.
-        
+
         Steps:
         1. Get current available memory
         2. Compare requirement vs available
@@ -408,11 +423,9 @@ class MemoryMonitor:
         backend_name: str,
         simulator_type: str,
         num_qubits: int,
-    ) -> Tuple[MemoryCheckResult, MemoryEstimate]:
+    ) -> tuple[MemoryCheckResult, MemoryEstimate]:
         """Check if enough memory for a specific backend execution."""
-        estimate = MemoryEstimator.estimate_for_backend(
-            backend_name, simulator_type, num_qubits
-        )
+        estimate = MemoryEstimator.estimate_for_backend(backend_name, simulator_type, num_qubits)
         result = self.check_memory_for_execution(
             required_mb=estimate.estimated_mb,
             operation_name=f"{backend_name}/{simulator_type}/{num_qubits}q",
@@ -434,16 +447,16 @@ class MemoryMonitor:
             return self._peak_mb
 
     @property
-    def latest(self) -> Optional[MemorySnapshot]:
+    def latest(self) -> MemorySnapshot | None:
         with self._lock:
             return self._history[-1] if self._history else None
 
     @property
-    def alerts(self) -> List[MemoryAlert]:
+    def alerts(self) -> list[MemoryAlert]:
         with self._lock:
             return list(self._alerts)
 
-    def get_history(self, last_n: Optional[int] = None) -> List[MemorySnapshot]:
+    def get_history(self, last_n: int | None = None) -> list[MemorySnapshot]:
         """Get memory history."""
         with self._lock:
             if last_n:
@@ -457,7 +470,7 @@ class MemoryMonitor:
             self._alerts.clear()
             self._peak_mb = 0.0
 
-    def summary(self) -> Dict:
+    def summary(self) -> dict:
         """Get monitoring summary."""
         with self._lock:
             latest = self._history[-1] if self._history else None
@@ -493,9 +506,11 @@ class MemoryMonitor:
 # CPU Monitor
 # =============================================================================
 
+
 @dataclass
 class CPUSnapshot:
     """Point-in-time CPU measurement."""
+
     timestamp: float
     percent: float
 
@@ -505,20 +520,23 @@ class CPUMonitor:
 
     def __init__(self, sample_interval: float = 0.5) -> None:
         self.sample_interval = sample_interval
-        self._history: List[CPUSnapshot] = []
+        self._history: list[CPUSnapshot] = []
 
     def sample(self) -> float:
         """Take a CPU sample, return percent used."""
         try:
             import psutil
+
             cpu_percent = psutil.cpu_percent(interval=0.1)
         except ImportError:
             cpu_percent = 0.0
 
-        self._history.append(CPUSnapshot(
-            timestamp=time.time(),
-            percent=cpu_percent,
-        ))
+        self._history.append(
+            CPUSnapshot(
+                timestamp=time.time(),
+                percent=cpu_percent,
+            )
+        )
         return cpu_percent
 
     @property
@@ -532,9 +550,11 @@ class CPUMonitor:
 # Combined Resource Monitor
 # =============================================================================
 
+
 @dataclass
 class ResourceSnapshot:
     """Combined resource snapshot."""
+
     timestamp: float
     memory: MemorySnapshot
     cpu_percent: float
@@ -545,7 +565,7 @@ class ResourceMonitor:
 
     def __init__(
         self,
-        memory_thresholds: Optional[MemoryThresholds] = None,
+        memory_thresholds: MemoryThresholds | None = None,
         sample_interval: float = 1.0,
     ) -> None:
         self.memory = MemoryMonitor(
@@ -553,7 +573,7 @@ class ResourceMonitor:
             sample_interval=sample_interval,
         )
         self.cpu = CPUMonitor(sample_interval=sample_interval)
-        self._history: List[ResourceSnapshot] = []
+        self._history: list[ResourceSnapshot] = []
 
     def sample(self) -> ResourceSnapshot:
         """Take combined sample."""
@@ -585,15 +605,15 @@ class ResourceMonitor:
         backend_name: str,
         simulator_type: str,
         num_qubits: int,
-    ) -> Tuple[MemoryCheckResult, MemoryEstimate]:
+    ) -> tuple[MemoryCheckResult, MemoryEstimate]:
         """Check resources for execution."""
         return self.memory.check_for_backend(backend_name, simulator_type, num_qubits)
 
     @property
-    def latest(self) -> Optional[ResourceSnapshot]:
+    def latest(self) -> ResourceSnapshot | None:
         return self._history[-1] if self._history else None
 
-    def summary(self) -> Dict:
+    def summary(self) -> dict:
         """Combined summary."""
         mem_summary = self.memory.summary()
         return {

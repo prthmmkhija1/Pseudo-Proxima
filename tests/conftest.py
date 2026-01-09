@@ -1,15 +1,15 @@
 """Step 6.2: Testing Strategy - Pytest Configuration and Fixtures.
 
 Test Pyramid:
-        
+
            E2E       10%
-        
-        
+
+
         Integration  30%
-        
-    
+
+
           Unit           60%
-    
+
 
 Test Categories:
 | Category    | Focus                 | Tools              |
@@ -21,14 +21,14 @@ Test Categories:
 """
 
 import asyncio
-import os
 import sys
 import tempfile
 import time
+from collections.abc import Generator
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Generator, List, Optional
-from unittest.mock import AsyncMock, MagicMock, patch
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -37,27 +37,23 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 # Import comprehensive mock strategies
 from tests.mocks import (
-    MockDataFactory,
-    MockQuantumBackend,
     MockBackendRegistry,
-    MockLLMProvider,
-    MockLLMResponse,
-    MockSystemResources,
-    MockPsutil,
-    MockFileSystem,
     MockConsentManager,
+    MockDataFactory,
+    MockFileSystem,
+    MockLLMProvider,
     MockPipelineHandler,
-    mock_psutil,
-    mock_llm_http_responses,
-    create_low_memory_scenario,
+    MockQuantumBackend,
     create_high_cpu_scenario,
     create_low_disk_scenario,
+    create_low_memory_scenario,
+    mock_psutil,
 )
-
 
 # =============================================================================
 # PYTEST CONFIGURATION
 # =============================================================================
+
 
 def pytest_configure(config):
     """Configure pytest with custom markers."""
@@ -73,15 +69,17 @@ def pytest_configure(config):
 def pytest_collection_modifyitems(config, items):
     """Modify test collection based on markers."""
     run_all = config.getoption("--run-all", default=False)
-    
+
     skip_slow = pytest.mark.skip(reason="Skipping slow tests (use --run-slow)")
     skip_network = pytest.mark.skip(reason="Skipping network tests (use --run-network)")
-    
+
     for item in items:
         if not run_all:
             if "slow" in item.keywords and not config.getoption("--run-slow", default=False):
                 item.add_marker(skip_slow)
-            if "requires_network" in item.keywords and not config.getoption("--run-network", default=False):
+            if "requires_network" in item.keywords and not config.getoption(
+                "--run-network", default=False
+            ):
                 item.add_marker(skip_network)
 
 
@@ -89,12 +87,15 @@ def pytest_addoption(parser):
     """Add custom command line options."""
     parser.addoption("--run-slow", action="store_true", default=False, help="Run slow tests")
     parser.addoption("--run-network", action="store_true", default=False, help="Run network tests")
-    parser.addoption("--run-all", action="store_true", default=False, help="Run all tests including slow/network")
+    parser.addoption(
+        "--run-all", action="store_true", default=False, help="Run all tests including slow/network"
+    )
 
 
 # =============================================================================
 # COMMON FIXTURES
 # =============================================================================
+
 
 @pytest.fixture(scope="session")
 def project_root() -> Path:
@@ -123,7 +124,7 @@ def temp_file(temp_dir) -> Generator[Path, None, None]:
 
 
 @pytest.fixture
-def sample_config() -> Dict[str, Any]:
+def sample_config() -> dict[str, Any]:
     """Provide sample configuration for tests."""
     return {
         "version": "1.0.0",
@@ -148,7 +149,7 @@ def sample_config() -> Dict[str, Any]:
 
 
 @pytest.fixture
-def sample_circuit_data() -> Dict[str, Any]:
+def sample_circuit_data() -> dict[str, Any]:
     """Provide sample quantum circuit data for tests."""
     return {
         "name": "test_circuit",
@@ -163,7 +164,7 @@ def sample_circuit_data() -> Dict[str, Any]:
 
 
 @pytest.fixture
-def sample_execution_result() -> Dict[str, Any]:
+def sample_execution_result() -> dict[str, Any]:
     """Provide sample execution result for tests."""
     return {
         "id": "exec-001",
@@ -183,6 +184,7 @@ def sample_execution_result() -> Dict[str, Any]:
 # MOCK FIXTURES
 # =============================================================================
 
+
 @pytest.fixture
 def mock_backend():
     """Provide a mock backend for testing."""
@@ -190,11 +192,13 @@ def mock_backend():
     backend.name = "mock_backend"
     backend.backend_type = "simulator"
     backend.is_connected.return_value = True
-    backend.execute = AsyncMock(return_value={
-        "status": "success",
-        "counts": {"00": 512, "11": 512},
-        "duration_ms": 10.5,
-    })
+    backend.execute = AsyncMock(
+        return_value={
+            "status": "success",
+            "counts": {"00": 512, "11": 512},
+            "duration_ms": 10.5,
+        }
+    )
     return backend
 
 
@@ -202,10 +206,12 @@ def mock_backend():
 def mock_executor():
     """Provide a mock executor for testing."""
     executor = MagicMock()
-    executor.run = AsyncMock(return_value={
-        "success": True,
-        "results": [{"id": "1", "status": "completed"}],
-    })
+    executor.run = AsyncMock(
+        return_value={
+            "success": True,
+            "results": [{"id": "1", "status": "completed"}],
+        }
+    )
     return executor
 
 
@@ -244,6 +250,7 @@ def mock_file_system(temp_dir):
 # ASYNC FIXTURES
 # =============================================================================
 
+
 @pytest.fixture
 def event_loop():
     """Create an event loop for async tests."""
@@ -267,18 +274,20 @@ async def async_mock_backend():
 # DATA FIXTURES
 # =============================================================================
 
+
 @dataclass
 class MockReportData:
     """Mock report data for testing exports."""
+
     title: str = "Test Report"
-    summary: Dict[str, Any] = field(default_factory=lambda: {"total": 10, "passed": 8})
-    raw_results: List[Dict] = field(default_factory=list)
-    comparison: Dict[str, Any] = field(default_factory=dict)
-    insights: List[str] = field(default_factory=list)
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    summary: dict[str, Any] = field(default_factory=lambda: {"total": 10, "passed": 8})
+    raw_results: list[dict] = field(default_factory=list)
+    comparison: dict[str, Any] = field(default_factory=dict)
+    insights: list[str] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
     generated_at: float = field(default_factory=time.time)
-    
-    def to_dict(self) -> Dict[str, Any]:
+
+    def to_dict(self) -> dict[str, Any]:
         return {
             "title": self.title,
             "summary": self.summary,
@@ -310,24 +319,26 @@ def mock_report_data() -> MockReportData:
 # HELPER FUNCTIONS
 # =============================================================================
 
+
 class TestHelper:
     """Helper utilities for tests."""
-    
+
     @staticmethod
-    def create_temp_config(temp_dir: Path, content: Dict[str, Any]) -> Path:
+    def create_temp_config(temp_dir: Path, content: dict[str, Any]) -> Path:
         """Create a temporary config file."""
         import json
+
         config_path = temp_dir / "config.json"
         config_path.write_text(json.dumps(content, indent=2))
         return config_path
-    
+
     @staticmethod
     def create_temp_agent_file(temp_dir: Path, content: str) -> Path:
         """Create a temporary agent.md file."""
         agent_path = temp_dir / "agent.md"
         agent_path.write_text(content)
         return agent_path
-    
+
     @staticmethod
     def wait_for_condition(condition_fn, timeout: float = 5.0, interval: float = 0.1) -> bool:
         """Wait for a condition to become true."""
@@ -337,9 +348,9 @@ class TestHelper:
                 return True
             time.sleep(interval)
         return False
-    
+
     @staticmethod
-    def assert_dict_subset(subset: Dict, full: Dict) -> None:
+    def assert_dict_subset(subset: dict, full: dict) -> None:
         """Assert that subset is contained in full dict."""
         for key, value in subset.items():
             assert key in full, f"Key '{key}' not found in dict"
@@ -356,6 +367,7 @@ def test_helper() -> TestHelper:
 # PERFORMANCE FIXTURES
 # =============================================================================
 
+
 @pytest.fixture
 def benchmark_data():
     """Provide data for benchmark tests."""
@@ -369,20 +381,21 @@ def benchmark_data():
 @pytest.fixture
 def timing():
     """Provide timing context manager."""
+
     class Timer:
         def __init__(self):
             self.start_time = None
             self.end_time = None
             self.elapsed_ms = 0
-        
+
         def __enter__(self):
             self.start_time = time.perf_counter()
             return self
-        
+
         def __exit__(self, *args):
             self.end_time = time.perf_counter()
             self.elapsed_ms = (self.end_time - self.start_time) * 1000
-    
+
     return Timer
 
 
@@ -390,11 +403,13 @@ def timing():
 # CLI FIXTURES FOR E2E TESTS
 # =============================================================================
 
+
 @pytest.fixture
 def cli_runner():
     """Provide a CLI test runner."""
     try:
         from click.testing import CliRunner
+
         return CliRunner()
     except ImportError:
         pytest.skip("click not installed")
@@ -403,6 +418,7 @@ def cli_runner():
 # =============================================================================
 # COMPREHENSIVE MOCK FIXTURES (from tests/mocks.py)
 # =============================================================================
+
 
 @pytest.fixture
 def mock_quantum_backend() -> MockQuantumBackend:
@@ -478,8 +494,7 @@ def mock_consent_deny() -> MockConsentManager:
 def mock_consent_with_sensitive_ops() -> MockConsentManager:
     """Provide mock consent manager with sensitive operations defined."""
     return MockConsentManager(
-        auto_approve=True,
-        require_consent_for=["send_to_remote_llm", "export_results"]
+        auto_approve=True, require_consent_for=["send_to_remote_llm", "export_results"]
     )
 
 
@@ -490,13 +505,13 @@ def mock_pipeline_handler() -> MockPipelineHandler:
 
 
 @pytest.fixture
-def bell_state_counts() -> Dict[str, int]:
+def bell_state_counts() -> dict[str, int]:
     """Provide Bell state measurement counts."""
     return MockDataFactory.bell_state_counts()
 
 
 @pytest.fixture
-def ghz_state_counts() -> Dict[str, int]:
+def ghz_state_counts() -> dict[str, int]:
     """Provide GHZ state measurement counts (3 qubits)."""
     return MockDataFactory.ghz_state_counts(num_qubits=3)
 
@@ -511,4 +526,3 @@ def random_state_vector():
 def random_density_matrix():
     """Provide a random valid density matrix."""
     return MockDataFactory.density_matrix(num_qubits=2)
-

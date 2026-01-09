@@ -7,32 +7,32 @@ Phase 3: Intelligence & Decision Systems
 - Insight engine for result interpretation
 """
 
-from proxima.intelligence.llm_router import (
-    LLMRouter,
-    LLMRequest,
-    LLMResponse,
-    LLMProvider,
-    ProviderRegistry,
-    OpenAIProvider,
-    AnthropicProvider,
-    OllamaProvider,
-    LMStudioProvider,
-    LocalLLMDetector,
-    APIKeyManager,
-    ConsentGate,
-    build_router,
-    ProviderName,
-)
-from proxima.intelligence.selector import (
-    BackendSelector,
-    SelectionResult,
-    SelectionInput,
-    BackendScore,
-)
 from proxima.intelligence.insights import (
     InsightEngine,
     InsightReport,
     StatisticalMetrics,
+)
+from proxima.intelligence.llm_router import (
+    AnthropicProvider,
+    APIKeyManager,
+    ConsentGate,
+    LLMProvider,
+    LLMRequest,
+    LLMResponse,
+    LLMRouter,
+    LMStudioProvider,
+    LocalLLMDetector,
+    OllamaProvider,
+    OpenAIProvider,
+    ProviderName,
+    ProviderRegistry,
+    build_router,
+)
+from proxima.intelligence.selector import (
+    BackendScore,
+    BackendSelector,
+    SelectionInput,
+    SelectionResult,
 )
 
 __all__ = [

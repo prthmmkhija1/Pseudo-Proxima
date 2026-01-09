@@ -13,18 +13,17 @@ import importlib
 import importlib.metadata
 import importlib.util
 import sys
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Type
+from typing import Any
 
 from proxima.plugins.base import (
     Plugin,
     PluginError,
     PluginLoadError,
-    PluginMetadata,
     PluginType,
     PluginValidationError,
 )
-
 
 # Entry point group names
 ENTRY_POINT_GROUPS = {
@@ -40,12 +39,10 @@ class PluginRegistry:
     """Central registry for all loaded plugins."""
 
     def __init__(self) -> None:
-        self._plugins: Dict[str, Plugin] = {}
-        self._by_type: Dict[PluginType, Dict[str, Plugin]] = {
-            pt: {} for pt in PluginType
-        }
-        self._load_callbacks: List[Callable[[Plugin], None]] = []
-        self._unload_callbacks: List[Callable[[Plugin], None]] = []
+        self._plugins: dict[str, Plugin] = {}
+        self._by_type: dict[PluginType, dict[str, Plugin]] = {pt: {} for pt in PluginType}
+        self._load_callbacks: list[Callable[[Plugin], None]] = []
+        self._unload_callbacks: list[Callable[[Plugin], None]] = []
 
     def register(self, plugin: Plugin) -> None:
         """Register a plugin instance."""
@@ -55,9 +52,7 @@ class PluginRegistry:
         # Validate before registering
         errors = plugin.validate()
         if errors:
-            raise PluginValidationError(
-                f"Plugin '{name}' validation failed: {'; '.join(errors)}"
-            )
+            raise PluginValidationError(f"Plugin '{name}' validation failed: {'; '.join(errors)}")
 
         if name in self._plugins:
             raise PluginError(f"Plugin '{name}' is already registered")
@@ -105,19 +100,19 @@ class PluginRegistry:
         del self._by_type[plugin.plugin_type][name]
         return True
 
-    def get(self, name: str) -> Optional[Plugin]:
+    def get(self, name: str) -> Plugin | None:
         """Get a plugin by name."""
         return self._plugins.get(name)
 
-    def get_by_type(self, plugin_type: PluginType) -> Dict[str, Plugin]:
+    def get_by_type(self, plugin_type: PluginType) -> dict[str, Plugin]:
         """Get all plugins of a specific type."""
         return dict(self._by_type[plugin_type])
 
-    def list_all(self) -> List[Plugin]:
+    def list_all(self) -> list[Plugin]:
         """List all registered plugins."""
         return list(self._plugins.values())
 
-    def list_names(self) -> List[str]:
+    def list_names(self) -> list[str]:
         """List all registered plugin names."""
         return list(self._plugins.keys())
 
@@ -144,23 +139,21 @@ class PluginLoader:
 
     def __init__(self, registry: PluginRegistry) -> None:
         self.registry = registry
-        self._plugin_dirs: List[Path] = []
+        self._plugin_dirs: list[Path] = []
 
     def add_plugin_dir(self, path: Path) -> None:
         """Add a directory to search for plugins."""
         if path.is_dir():
             self._plugin_dirs.append(path)
 
-    def load_from_entry_points(self, plugin_type: Optional[PluginType] = None) -> int:
+    def load_from_entry_points(self, plugin_type: PluginType | None = None) -> int:
         """Load plugins from installed package entry points.
-        
+
         Returns the number of plugins loaded.
         """
         loaded = 0
         groups = (
-            [ENTRY_POINT_GROUPS[plugin_type]]
-            if plugin_type
-            else list(ENTRY_POINT_GROUPS.values())
+            [ENTRY_POINT_GROUPS[plugin_type]] if plugin_type else list(ENTRY_POINT_GROUPS.values())
         )
 
         for group in groups:
@@ -184,9 +177,9 @@ class PluginLoader:
 
         return loaded
 
-    def load_from_directory(self, directory: Optional[Path] = None) -> int:
+    def load_from_directory(self, directory: Path | None = None) -> int:
         """Load plugins from a directory.
-        
+
         Looks for Python files or packages with a `Plugin` class.
         Returns the number of plugins loaded.
         """
@@ -218,13 +211,13 @@ class PluginLoader:
 
         return loaded
 
-    def load_from_class(self, plugin_class: Type[Plugin], config: Optional[dict] = None) -> Plugin:
+    def load_from_class(self, plugin_class: type[Plugin], config: dict | None = None) -> Plugin:
         """Load a plugin from a class directly."""
         plugin = plugin_class(config)
         self.registry.register(plugin)
         return plugin
 
-    def _load_from_file(self, path: Path) -> Optional[Plugin]:
+    def _load_from_file(self, path: Path) -> Plugin | None:
         """Load a plugin from a Python file."""
         module_name = f"proxima_plugin_{path.stem}"
         spec = importlib.util.spec_from_file_location(module_name, path)
@@ -237,12 +230,11 @@ class PluginLoader:
 
         return self._find_plugin_in_module(module)
 
-    def _load_from_package(self, path: Path) -> Optional[Plugin]:
+    def _load_from_package(self, path: Path) -> Plugin | None:
         """Load a plugin from a package directory."""
         module_name = f"proxima_plugin_{path.name}"
         spec = importlib.util.spec_from_file_location(
-            module_name, path / "__init__.py",
-            submodule_search_locations=[str(path)]
+            module_name, path / "__init__.py", submodule_search_locations=[str(path)]
         )
         if not spec or not spec.loader:
             return None
@@ -253,7 +245,7 @@ class PluginLoader:
 
         return self._find_plugin_in_module(module)
 
-    def _find_plugin_in_module(self, module: Any) -> Optional[Plugin]:
+    def _find_plugin_in_module(self, module: Any) -> Plugin | None:
         """Find and instantiate a Plugin class in a module."""
         # Look for a class named 'Plugin' or any subclass of Plugin
         for name in dir(module):
@@ -269,8 +261,8 @@ class PluginLoader:
 
 
 # Global registry singleton
-_registry: Optional[PluginRegistry] = None
-_loader: Optional[PluginLoader] = None
+_registry: PluginRegistry | None = None
+_loader: PluginLoader | None = None
 
 
 def get_plugin_registry() -> PluginRegistry:
@@ -290,12 +282,12 @@ def get_plugin_loader() -> PluginLoader:
 
 
 def discover_plugins(
-    plugin_type: Optional[PluginType] = None,
+    plugin_type: PluginType | None = None,
     include_entry_points: bool = True,
-    plugin_dirs: Optional[List[Path]] = None,
+    plugin_dirs: list[Path] | None = None,
 ) -> int:
     """Discover and load plugins from all sources.
-    
+
     Returns the total number of plugins loaded.
     """
     loader = get_plugin_loader()
@@ -312,6 +304,6 @@ def discover_plugins(
     return loaded
 
 
-def load_plugin(plugin_class: Type[Plugin], config: Optional[dict] = None) -> Plugin:
+def load_plugin(plugin_class: type[Plugin], config: dict | None = None) -> Plugin:
     """Load a single plugin from a class."""
     return get_plugin_loader().load_from_class(plugin_class, config)

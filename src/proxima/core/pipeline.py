@@ -30,10 +30,11 @@ from __future__ import annotations
 import asyncio
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum, auto
-from typing import Any, Callable, Dict, List, Optional, TypeVar, Union
+from typing import Any, TypeVar
 
 import structlog
 
@@ -49,7 +50,7 @@ T = TypeVar("T")
 
 class PipelineStage(Enum):
     """Stages in the data flow pipeline."""
-    
+
     IDLE = auto()
     PARSING = auto()
     PLANNING = auto()
@@ -67,15 +68,15 @@ class PipelineStage(Enum):
 @dataclass
 class StageResult:
     """Result of a pipeline stage execution."""
-    
+
     stage: PipelineStage
     success: bool
     data: Any = None
-    error: Optional[str] = None
+    error: str | None = None
     duration_ms: float = 0.0
     timestamp: float = field(default_factory=time.time)
-    
-    def to_dict(self) -> Dict[str, Any]:
+
+    def to_dict(self) -> dict[str, Any]:
         return {
             "stage": self.stage.name,
             "success": self.success,
@@ -89,53 +90,53 @@ class StageResult:
 @dataclass
 class PipelineContext:
     """Context passed through the pipeline."""
-    
+
     # Execution metadata
     execution_id: str = field(default_factory=lambda: str(uuid.uuid4())[:8])
     started_at: float = field(default_factory=time.time)
-    
+
     # Input data
     user_input: str = ""
-    input_params: Dict[str, Any] = field(default_factory=dict)
-    
+    input_params: dict[str, Any] = field(default_factory=dict)
+
     # Execution plan
-    plan: Optional[Dict[str, Any]] = None
-    selected_backends: List[str] = field(default_factory=list)
-    
+    plan: dict[str, Any] | None = None
+    selected_backends: list[str] = field(default_factory=list)
+
     # Resource info
     resource_check_passed: bool = False
-    resource_warnings: List[str] = field(default_factory=list)
-    
+    resource_warnings: list[str] = field(default_factory=list)
+
     # Consent
     consent_granted: bool = False
-    consent_details: Dict[str, bool] = field(default_factory=dict)
-    
+    consent_details: dict[str, bool] = field(default_factory=dict)
+
     # Execution results
-    backend_results: Dict[str, Any] = field(default_factory=dict)
-    
+    backend_results: dict[str, Any] = field(default_factory=dict)
+
     # Analysis
-    insights: List[str] = field(default_factory=list)
-    comparison: Optional[Dict[str, Any]] = None
-    
+    insights: list[str] = field(default_factory=list)
+    comparison: dict[str, Any] | None = None
+
     # Export
-    export_path: Optional[str] = None
-    export_format: Optional[str] = None
-    
+    export_path: str | None = None
+    export_format: str | None = None
+
     # Stage tracking
-    stage_results: List[StageResult] = field(default_factory=list)
+    stage_results: list[StageResult] = field(default_factory=list)
     current_stage: PipelineStage = PipelineStage.IDLE
-    
+
     @property
     def elapsed_ms(self) -> float:
         """Get total elapsed time in milliseconds."""
         return (time.time() - self.started_at) * 1000
-    
+
     def add_stage_result(self, result: StageResult) -> None:
         """Add a stage result to the history."""
         self.stage_results.append(result)
         self.current_stage = result.stage
-    
-    def to_dict(self) -> Dict[str, Any]:
+
+    def to_dict(self) -> dict[str, Any]:
         """Convert context to dictionary."""
         return {
             "execution_id": self.execution_id,
@@ -158,10 +159,10 @@ class PipelineContext:
 
 class PipelineHandler:
     """Base class for pipeline stage handlers."""
-    
+
     def __init__(self, stage: PipelineStage):
         self.stage = stage
-    
+
     async def execute(self, ctx: PipelineContext) -> StageResult:
         """Execute the stage. Override in subclasses."""
         raise NotImplementedError
@@ -169,10 +170,10 @@ class PipelineHandler:
 
 class ParseHandler(PipelineHandler):
     """Parse user input into structured format."""
-    
+
     def __init__(self):
         super().__init__(PipelineStage.PARSING)
-    
+
     async def execute(self, ctx: PipelineContext) -> StageResult:
         start = time.time()
         try:
@@ -182,16 +183,16 @@ class ParseHandler(PipelineHandler):
                 "type": "simulation",  # Default type
                 "parameters": ctx.input_params,
             }
-            
+
             # Detect backend hints
             input_lower = ctx.user_input.lower()
             if "compare" in input_lower:
                 parsed["type"] = "comparison"
             elif "analyze" in input_lower:
                 parsed["type"] = "analysis"
-            
+
             ctx.plan = parsed
-            
+
             return StageResult(
                 stage=self.stage,
                 success=True,
@@ -209,10 +210,10 @@ class ParseHandler(PipelineHandler):
 
 class PlanHandler(PipelineHandler):
     """Create execution plan based on parsed input."""
-    
+
     def __init__(self):
         super().__init__(PipelineStage.PLANNING)
-    
+
     async def execute(self, ctx: PipelineContext) -> StageResult:
         start = time.time()
         try:
@@ -223,18 +224,18 @@ class PlanHandler(PipelineHandler):
                 backends = ["cirq", "qiskit-aer"]  # Default comparison
             else:
                 backends = ["cirq"]  # Default single backend
-            
+
             ctx.selected_backends = backends
-            
+
             plan = {
                 "execution_type": ctx.plan.get("type", "simulation") if ctx.plan else "simulation",
                 "backends": backends,
                 "parallel": len(backends) > 1,
                 "estimated_time_s": len(backends) * 5,  # Rough estimate
             }
-            
+
             ctx.plan = {**(ctx.plan or {}), **plan}
-            
+
             return StageResult(
                 stage=self.stage,
                 success=True,
@@ -252,32 +253,32 @@ class PlanHandler(PipelineHandler):
 
 class ResourceCheckHandler(PipelineHandler):
     """Check system resources before execution."""
-    
+
     def __init__(self, memory_threshold_mb: int = 1024):
         super().__init__(PipelineStage.RESOURCE_CHECK)
         self.memory_threshold_mb = memory_threshold_mb
-    
+
     async def execute(self, ctx: PipelineContext) -> StageResult:
         start = time.time()
         try:
             import psutil
-            
+
             memory = psutil.virtual_memory()
             available_mb = memory.available // (1024 * 1024)
-            
+
             warnings = []
             if available_mb < self.memory_threshold_mb:
                 warnings.append(
                     f"Low memory: {available_mb}MB available "
                     f"(threshold: {self.memory_threshold_mb}MB)"
                 )
-            
+
             if memory.percent > 90:
                 warnings.append(f"High memory usage: {memory.percent}%")
-            
+
             ctx.resource_check_passed = len(warnings) == 0 or available_mb > 512
             ctx.resource_warnings = warnings
-            
+
             return StageResult(
                 stage=self.stage,
                 success=ctx.resource_check_passed,
@@ -310,21 +311,21 @@ class ResourceCheckHandler(PipelineHandler):
 
 class ConsentHandler(PipelineHandler):
     """Handle user consent for sensitive operations."""
-    
+
     def __init__(
         self,
         require_consent: bool = True,
         auto_approve: bool = False,
-        consent_callback: Optional[Callable[[str], bool]] = None,
+        consent_callback: Callable[[str], bool] | None = None,
     ):
         super().__init__(PipelineStage.CONSENT)
         self.require_consent = require_consent
         self.auto_approve = auto_approve
         self.consent_callback = consent_callback
-    
+
     async def execute(self, ctx: PipelineContext) -> StageResult:
         start = time.time()
-        
+
         if not self.require_consent or self.auto_approve:
             ctx.consent_granted = True
             ctx.consent_details = {"auto_approved": True}
@@ -334,14 +335,14 @@ class ConsentHandler(PipelineHandler):
                 data={"auto_approved": True},
                 duration_ms=(time.time() - start) * 1000,
             )
-        
+
         try:
             # Check if consent is needed
             needs_consent = []
-            
+
             if ctx.resource_warnings:
                 needs_consent.append("resource_warnings")
-            
+
             if not needs_consent:
                 ctx.consent_granted = True
                 ctx.consent_details = {"no_consent_needed": True}
@@ -351,7 +352,7 @@ class ConsentHandler(PipelineHandler):
                     data={"no_consent_needed": True},
                     duration_ms=(time.time() - start) * 1000,
                 )
-            
+
             # Request consent via callback
             if self.consent_callback:
                 consent_message = f"Consent required for: {', '.join(needs_consent)}"
@@ -359,10 +360,10 @@ class ConsentHandler(PipelineHandler):
             else:
                 # Default: grant consent (in production, this should prompt user)
                 granted = True
-            
+
             ctx.consent_granted = granted
-            ctx.consent_details = {item: granted for item in needs_consent}
-            
+            ctx.consent_details = dict.fromkeys(needs_consent, granted)
+
             return StageResult(
                 stage=self.stage,
                 success=granted,
@@ -381,19 +382,19 @@ class ConsentHandler(PipelineHandler):
 
 class ExecutionHandler(PipelineHandler):
     """Execute simulation on selected backends."""
-    
-    def __init__(self, backend_executor: Optional[Callable] = None):
+
+    def __init__(self, backend_executor: Callable | None = None):
         super().__init__(PipelineStage.EXECUTING)
         self.backend_executor = backend_executor
-    
+
     async def execute(self, ctx: PipelineContext) -> StageResult:
         start = time.time()
         try:
             results = {}
-            
+
             for backend in ctx.selected_backends:
                 backend_start = time.time()
-                
+
                 if self.backend_executor:
                     # Use provided executor
                     result = await self.backend_executor(backend, ctx)
@@ -406,11 +407,11 @@ class ExecutionHandler(PipelineHandler):
                         "counts": {"00": 500, "11": 500},
                         "duration_ms": (time.time() - backend_start) * 1000,
                     }
-                
+
                 results[backend] = result
-            
+
             ctx.backend_results = results
-            
+
             return StageResult(
                 stage=self.stage,
                 success=True,
@@ -428,16 +429,16 @@ class ExecutionHandler(PipelineHandler):
 
 class CollectionHandler(PipelineHandler):
     """Collect and normalize results from backends."""
-    
+
     def __init__(self):
         super().__init__(PipelineStage.COLLECTING)
-    
+
     async def execute(self, ctx: PipelineContext) -> StageResult:
         start = time.time()
         try:
             # Normalize results from different backends
             normalized = {}
-            
+
             for backend, result in ctx.backend_results.items():
                 normalized[backend] = {
                     "backend": backend,
@@ -446,9 +447,9 @@ class CollectionHandler(PipelineHandler):
                     "duration_ms": result.get("duration_ms", 0),
                     "metadata": result.get("metadata", {}),
                 }
-            
+
             ctx.backend_results = normalized
-            
+
             return StageResult(
                 stage=self.stage,
                 success=True,
@@ -466,17 +467,17 @@ class CollectionHandler(PipelineHandler):
 
 class AnalysisHandler(PipelineHandler):
     """Generate insights from results."""
-    
-    def __init__(self, insight_generator: Optional[Callable] = None):
+
+    def __init__(self, insight_generator: Callable | None = None):
         super().__init__(PipelineStage.ANALYZING)
         self.insight_generator = insight_generator
-    
+
     async def execute(self, ctx: PipelineContext) -> StageResult:
         start = time.time()
         try:
             insights = []
             comparison = None
-            
+
             # Generate basic insights
             for backend, result in ctx.backend_results.items():
                 counts = result.get("counts", {})
@@ -487,13 +488,10 @@ class AnalysisHandler(PipelineHandler):
                         f"{backend}: Dominant state '{dominant[0]}' with "
                         f"{dominant[1]/total*100:.1f}% probability"
                     )
-            
+
             # Generate comparison if multiple backends
             if len(ctx.backend_results) > 1:
-                times = {
-                    k: v.get("duration_ms", 0)
-                    for k, v in ctx.backend_results.items()
-                }
+                times = {k: v.get("duration_ms", 0) for k, v in ctx.backend_results.items()}
                 fastest = min(times.items(), key=lambda x: x[1])
                 comparison = {
                     "fastest_backend": fastest[0],
@@ -501,15 +499,15 @@ class AnalysisHandler(PipelineHandler):
                     "speedup": max(times.values()) / fastest[1] if fastest[1] > 0 else 1.0,
                 }
                 insights.append(f"Fastest backend: {fastest[0]} ({fastest[1]:.1f}ms)")
-            
+
             # Use custom insight generator if provided
             if self.insight_generator:
                 custom_insights = await self.insight_generator(ctx.backend_results)
                 insights.extend(custom_insights)
-            
+
             ctx.insights = insights
             ctx.comparison = comparison
-            
+
             return StageResult(
                 stage=self.stage,
                 success=True,
@@ -527,20 +525,20 @@ class AnalysisHandler(PipelineHandler):
 
 class ExportHandler(PipelineHandler):
     """Export results to file."""
-    
+
     def __init__(self, export_dir: str = "./results"):
         super().__init__(PipelineStage.EXPORTING)
         self.export_dir = export_dir
-    
+
     async def execute(self, ctx: PipelineContext) -> StageResult:
         start = time.time()
         try:
             import json
             import os
-            
+
             # Create export directory
             os.makedirs(self.export_dir, exist_ok=True)
-            
+
             # Generate export data
             export_data = {
                 "execution_id": ctx.execution_id,
@@ -552,18 +550,18 @@ class ExportHandler(PipelineHandler):
                 "comparison": ctx.comparison,
                 "duration_ms": ctx.elapsed_ms,
             }
-            
+
             # Determine format
             fmt = ctx.export_format or "json"
             filename = f"{ctx.execution_id}_{int(time.time())}.{fmt}"
             filepath = os.path.join(self.export_dir, filename)
-            
+
             if fmt == "json":
                 with open(filepath, "w") as f:
                     json.dump(export_data, f, indent=2, default=str)
-            
+
             ctx.export_path = filepath
-            
+
             return StageResult(
                 stage=self.stage,
                 success=True,
@@ -587,12 +585,12 @@ class ExportHandler(PipelineHandler):
 class DataFlowPipeline:
     """
     Orchestrates the complete data flow pipeline.
-    
+
     Usage:
         pipeline = DataFlowPipeline()
         result = await pipeline.run("simulate bell state", backend="cirq")
     """
-    
+
     def __init__(
         self,
         require_consent: bool = True,
@@ -601,7 +599,7 @@ class DataFlowPipeline:
         memory_threshold_mb: int = 1024,
     ):
         # Configure handlers
-        self.handlers: Dict[PipelineStage, PipelineHandler] = {
+        self.handlers: dict[PipelineStage, PipelineHandler] = {
             PipelineStage.PARSING: ParseHandler(),
             PipelineStage.PLANNING: PlanHandler(),
             PipelineStage.RESOURCE_CHECK: ResourceCheckHandler(memory_threshold_mb),
@@ -611,7 +609,7 @@ class DataFlowPipeline:
             PipelineStage.ANALYZING: AnalysisHandler(),
             PipelineStage.EXPORTING: ExportHandler(export_dir),
         }
-        
+
         # Pipeline stage order
         self.stage_order = [
             PipelineStage.PARSING,
@@ -623,28 +621,28 @@ class DataFlowPipeline:
             PipelineStage.ANALYZING,
             PipelineStage.EXPORTING,
         ]
-        
+
         # Callbacks
-        self._on_stage_start: Optional[Callable[[PipelineStage, PipelineContext], None]] = None
-        self._on_stage_complete: Optional[Callable[[StageResult, PipelineContext], None]] = None
-        self._on_pipeline_complete: Optional[Callable[[PipelineContext], None]] = None
-    
+        self._on_stage_start: Callable[[PipelineStage, PipelineContext], None] | None = None
+        self._on_stage_complete: Callable[[StageResult, PipelineContext], None] | None = None
+        self._on_pipeline_complete: Callable[[PipelineContext], None] | None = None
+
     def on_stage_start(self, callback: Callable[[PipelineStage, PipelineContext], None]) -> None:
         """Register callback for stage start events."""
         self._on_stage_start = callback
-    
+
     def on_stage_complete(self, callback: Callable[[StageResult, PipelineContext], None]) -> None:
         """Register callback for stage completion events."""
         self._on_stage_complete = callback
-    
+
     def on_pipeline_complete(self, callback: Callable[[PipelineContext], None]) -> None:
         """Register callback for pipeline completion."""
         self._on_pipeline_complete = callback
-    
+
     def set_handler(self, stage: PipelineStage, handler: PipelineHandler) -> None:
         """Replace a stage handler."""
         self.handlers[stage] = handler
-    
+
     async def run(
         self,
         user_input: str,
@@ -652,11 +650,11 @@ class DataFlowPipeline:
     ) -> PipelineContext:
         """
         Run the complete pipeline.
-        
+
         Args:
             user_input: User's input command/query
             **params: Additional parameters (backend, format, etc.)
-        
+
         Returns:
             PipelineContext with all results
         """
@@ -665,41 +663,41 @@ class DataFlowPipeline:
             user_input=user_input,
             input_params=params,
         )
-        
+
         logger.info(
             "pipeline_started",
             execution_id=ctx.execution_id,
             input=user_input[:50],
         )
-        
+
         try:
             # Execute each stage in order
             for stage in self.stage_order:
                 handler = self.handlers.get(stage)
                 if not handler:
                     continue
-                
+
                 # Notify stage start
                 if self._on_stage_start:
                     self._on_stage_start(stage, ctx)
-                
+
                 logger.debug("stage_starting", stage=stage.name)
-                
+
                 # Execute stage
                 result = await handler.execute(ctx)
                 ctx.add_stage_result(result)
-                
+
                 # Notify stage complete
                 if self._on_stage_complete:
                     self._on_stage_complete(result, ctx)
-                
+
                 logger.debug(
                     "stage_completed",
                     stage=stage.name,
                     success=result.success,
                     duration_ms=result.duration_ms,
                 )
-                
+
                 # Stop on failure
                 if not result.success:
                     ctx.current_stage = PipelineStage.FAILED
@@ -718,25 +716,27 @@ class DataFlowPipeline:
                     execution_id=ctx.execution_id,
                     duration_ms=ctx.elapsed_ms,
                 )
-        
+
         except asyncio.CancelledError:
             ctx.current_stage = PipelineStage.ABORTED
             logger.warning("pipeline_aborted", execution_id=ctx.execution_id)
             raise
-        
+
         except Exception as e:
             ctx.current_stage = PipelineStage.FAILED
-            ctx.add_stage_result(StageResult(
-                stage=ctx.current_stage,
-                success=False,
-                error=str(e),
-            ))
+            ctx.add_stage_result(
+                StageResult(
+                    stage=ctx.current_stage,
+                    success=False,
+                    error=str(e),
+                )
+            )
             logger.exception("pipeline_error", execution_id=ctx.execution_id)
-        
+
         finally:
             if self._on_pipeline_complete:
                 self._on_pipeline_complete(ctx)
-        
+
         return ctx
 
 
@@ -753,13 +753,13 @@ async def run_simulation(
 ) -> PipelineContext:
     """
     Convenience function to run a simulation.
-    
+
     Args:
         user_input: Simulation description
         backend: Backend to use
         export: Whether to export results
         **kwargs: Additional parameters
-    
+
     Returns:
         Pipeline context with results
     """
@@ -767,23 +767,23 @@ async def run_simulation(
         require_consent=kwargs.pop("require_consent", False),
         auto_approve_consent=kwargs.pop("auto_approve", True),
     )
-    
+
     return await pipeline.run(user_input, backend=backend, **kwargs)
 
 
 async def compare_backends(
     user_input: str,
-    backends: List[str],
+    backends: list[str],
     **kwargs: Any,
 ) -> PipelineContext:
     """
     Compare execution across multiple backends.
-    
+
     Args:
         user_input: Simulation description
         backends: List of backends to compare
         **kwargs: Additional parameters
-    
+
     Returns:
         Pipeline context with comparison results
     """
@@ -791,25 +791,25 @@ async def compare_backends(
         require_consent=kwargs.pop("require_consent", False),
         auto_approve_consent=kwargs.pop("auto_approve", True),
     )
-    
+
     # Set backends in params
     kwargs["backends"] = backends
-    
+
     # Override planning handler to use specified backends
     class MultiBackendPlanHandler(PlanHandler):
-        def __init__(self, target_backends: List[str]):
+        def __init__(self, target_backends: list[str]):
             super().__init__()
             self.target_backends = target_backends
-        
+
         async def execute(self, ctx: PipelineContext) -> StageResult:
             result = await super().execute(ctx)
             ctx.selected_backends = self.target_backends
             if ctx.plan:
                 ctx.plan["backends"] = self.target_backends
             return result
-    
+
     pipeline.set_handler(PipelineStage.PLANNING, MultiBackendPlanHandler(backends))
-    
+
     return await pipeline.run(user_input, **kwargs)
 
 

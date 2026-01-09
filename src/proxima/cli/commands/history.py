@@ -4,12 +4,9 @@ History CLI commands.
 Browse and manage execution history.
 """
 
-from datetime import datetime
-from typing import Optional
-
 import typer
 
-from proxima.data.store import get_store, StoredSession, StoredResult
+from proxima.data.store import get_store
 
 app = typer.Typer(help="Browse and manage execution history.")
 
@@ -24,8 +21,8 @@ def history_callback(ctx: typer.Context) -> None:
 @app.command("list")
 def list_history(
     limit: int = typer.Option(20, "--limit", "-n", help="Maximum entries to show"),
-    session_id: Optional[str] = typer.Option(None, "--session", "-s", help="Filter by session"),
-    backend: Optional[str] = typer.Option(None, "--backend", "-b", help="Filter by backend"),
+    session_id: str | None = typer.Option(None, "--session", "-s", help="Filter by session"),
+    backend: str | None = typer.Option(None, "--backend", "-b", help="Filter by backend"),
 ) -> None:
     """List execution history entries."""
     store = get_store()
@@ -39,7 +36,9 @@ def list_history(
         typer.echo("No execution history found.")
         return
 
-    typer.echo(f"\n{'ID':<36} {'Backend':<12} {'Qubits':<8} {'Shots':<8} {'Time':<12} {'Timestamp'}")
+    typer.echo(
+        f"\n{'ID':<36} {'Backend':<12} {'Qubits':<8} {'Shots':<8} {'Time':<12} {'Timestamp'}"
+    )
     typer.echo("-" * 100)
 
     for result in results:
@@ -75,12 +74,12 @@ def show_result(
     typer.echo(f"Timestamp:      {result.timestamp}")
 
     if result.counts:
-        typer.echo(f"\nMeasurement Counts:")
+        typer.echo("\nMeasurement Counts:")
         for state, count in sorted(result.counts.items()):
             typer.echo(f"  {state}: {count}")
 
     if result.metadata:
-        typer.echo(f"\nMetadata:")
+        typer.echo("\nMetadata:")
         for key, value in result.metadata.items():
             typer.echo(f"  {key}: {value}")
 
@@ -111,7 +110,7 @@ def delete_result(
 @app.command("clear")
 def clear_history(
     confirm: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation"),
-    session_id: Optional[str] = typer.Option(None, "--session", "-s", help="Clear only this session"),
+    session_id: str | None = typer.Option(None, "--session", "-s", help="Clear only this session"),
 ) -> None:
     """Clear execution history."""
     store = get_store()
@@ -119,7 +118,7 @@ def clear_history(
     if session_id:
         if not confirm:
             typer.confirm(f"Clear all results for session {session_id}?", abort=True)
-        
+
         results = store.list_results(session_id=session_id, limit=1000)
         deleted = 0
         for result in results:
@@ -129,7 +128,7 @@ def clear_history(
     else:
         if not confirm:
             typer.confirm("Clear ALL execution history?", abort=True)
-        
+
         results = store.list_results(limit=10000)
         deleted = 0
         for result in results:
@@ -141,12 +140,12 @@ def clear_history(
 @app.command("export")
 def export_history(
     output_path: str = typer.Argument(..., help="Output file path (CSV or JSON)"),
-    session_id: Optional[str] = typer.Option(None, "--session", "-s", help="Export only this session"),
+    session_id: str | None = typer.Option(None, "--session", "-s", help="Export only this session"),
     format: str = typer.Option("csv", "--format", "-f", help="Output format (csv|json)"),
 ) -> None:
     """Export execution history to file."""
-    import json
     import csv
+    import json
     from pathlib import Path
 
     store = get_store()
@@ -157,7 +156,7 @@ def export_history(
         return
 
     output = Path(output_path)
-    
+
     if format.lower() == "json":
         data = [
             {
@@ -179,15 +178,32 @@ def export_history(
     else:
         with output.open("w", newline="") as f:
             writer = csv.writer(f)
-            writer.writerow([
-                "id", "session_id", "backend_name", "circuit_name",
-                "qubit_count", "shots", "execution_time_ms", "memory_used_mb", "timestamp"
-            ])
+            writer.writerow(
+                [
+                    "id",
+                    "session_id",
+                    "backend_name",
+                    "circuit_name",
+                    "qubit_count",
+                    "shots",
+                    "execution_time_ms",
+                    "memory_used_mb",
+                    "timestamp",
+                ]
+            )
             for r in results:
-                writer.writerow([
-                    r.id, r.session_id, r.backend_name, r.circuit_name,
-                    r.qubit_count, r.shots, r.execution_time_ms, r.memory_used_mb,
-                    r.timestamp.isoformat() if r.timestamp else ""
-                ])
+                writer.writerow(
+                    [
+                        r.id,
+                        r.session_id,
+                        r.backend_name,
+                        r.circuit_name,
+                        r.qubit_count,
+                        r.shots,
+                        r.execution_time_ms,
+                        r.memory_used_mb,
+                        r.timestamp.isoformat() if r.timestamp else "",
+                    ]
+                )
 
     typer.echo(f"Exported {len(results)} results to {output_path}")
