@@ -1,0 +1,58 @@
+site_name: Proxima Agent Docs
+site_description: Documentation for the Proxima quantum/LLM orchestration agent
+site_url: https://example.com/proxima
+repo_url: https://github.com/example/proxima
+repo_name: proxima
+
+nav:
+  - Home: index.md
+  - Getting Started:
+      - Installation: getting-started/installation.md
+      - Quickstart: getting-started/quickstart.md
+      - Configuration: getting-started/configuration.md
+  - User Guide:
+      - Running Simulations: user-guide/running-simulations.md
+      - Comparing Backends: user-guide/comparing-backends.md
+      - Using LLM: user-guide/using-llm.md
+      - Agent Files: user-guide/agent-files.md
+  - Developer Guide:
+      - Architecture: developer-guide/architecture.md
+      - Adding Backends: developer-guide/adding-backends.md
+      - Contributing: developer-guide/contributing.md
+      - Testing: developer-guide/testing.md
+  - API Reference: api-reference/index.md
+
+theme:
+  name: material
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - content.code.copy
+    - toc.integrate
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            show_source: false
+            members_order: alphabetical
+            separate_signature: true
+            docstring_style: google
+
+markdown_extensions:
+  - admonition
+  - codehilite
+  - toc:
+      permalink: true
+  - footnotes
+  - tables
+  - tasklist
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/example/proxima
+    - icon: fontawesome/solid/book
+      link: https://example.com/proxima
