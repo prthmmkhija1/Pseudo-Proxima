@@ -4,7 +4,7 @@
 # =============================================================================
 
 # Stage 1: Build stage
-FROM python:3.11-slim as builder
+FROM python:3.14-slim as builder
 
 # Set build arguments
 ARG PROXIMA_VERSION=0.1.0
@@ -42,7 +42,7 @@ RUN pip install -e ".[all]"
 # =============================================================================
 # Stage 2: Production runtime
 # =============================================================================
-FROM python:3.11-slim as runtime
+FROM python:3.14-slim as runtime
 
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1 \
