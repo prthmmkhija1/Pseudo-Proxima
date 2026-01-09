@@ -733,9 +733,7 @@ class DefaultTaskExecutor:
             asyncio.set_event_loop(loop)
 
         try:
-            report = loop.run_until_complete(
-                comparator.compare(adapters, circuit, options)
-            )
+            report = loop.run_until_complete(comparator.compare(adapters, circuit, options))
             return {
                 "task_type": "backend_comparison",
                 "success": True,
