@@ -251,533 +251,698 @@ Proxima is an independent implementation, not a fork or derivative.
 
 ## 📚 Complete Usage Guide - Step by Step
 
-### Step 1: Installation & Setup
+> **🎯 Goal**: This guide will walk you through installing and using Proxima to run quantum simulations - designed for beginners with no technical background required!
 
-**Option A: Using pip (Easiest)**
+---
+
+### 🚀 **Step 1: Installing Proxima on Your Computer**
+
+**What You Need:**
+- A computer running Windows, macOS, or Linux
+- Internet connection
+- Python 3.11 or higher (check by opening terminal and typing: `python --version`)
+
+**Installation Methods:**
+
+**Method 1: Quick Install (Recommended)**
+
+1. **Open your terminal/command prompt**
+   - Windows: Press `Win + R`, type `cmd`, press Enter
+   - Mac: Press `Cmd + Space`, type `terminal`, press Enter
+   - Linux: Press `Ctrl + Alt + T`
+
+2. **Install Proxima with all features**
+   ```bash
+   pip install proxima-agent[all]
+   ```
+   💡 **What this does**: Downloads Proxima and all its dependencies (takes 1-2 minutes)
+
+3. **Initialize Proxima**
+   ```bash
+   proxima init
+   ```
+   💡 **What this does**: Creates configuration files in your home directory (`~/.proxima/`)
+   
+   **Expected output**: ✅ Configuration initialized successfully!
+
+4. **Verify installation**
+   ```bash
+   proxima version
+   ```
+   **Expected output**: `Proxima version X.X.X`
+
+**Method 2: Install from Source (Advanced)**
 
 ```bash
-# Install Proxima with all features
-pip install proxima-agent[all]
-
-# Initialize configuration
-proxima init
-
-# Verify installation
-proxima version
-proxima backends list
-```
-
-**Option B: Clone from GitHub**
-
-```bash
-# Clone the repository
+# Download the code
 git clone https://github.com/prthmmkhija1/Pseudo-Proxima.git
 cd Pseudo-Proxima
 
-# Install in development mode
+# Install in development mode  
 pip install -e ".[all]"
 
 # Verify
 proxima version
 ```
 
+**✅ Success Check**: If you see a version number, you're ready to continue!
+
 ---
 
-### Step 2: Check Available Backends
+### 🔍 **Step 2: Understanding Backends**
+
+**What is a Backend?**
+- A backend is like a quantum computer simulator
+- Each backend has different capabilities (speed, accuracy, features)
+- Proxima supports: **Cirq**, **Qiskit**, and **LRET**
+
+**See Available Backends:**
 
 ```bash
-# List all quantum backends
 proxima backends list
+```
 
-# Check details of a specific backend
+**What You'll See:**
+- ✅ = Backend is installed and ready to use
+- ❌ = Backend not installed (can be added)
+- Details like max qubits, features, version
+
+**Get Detailed Information:**
+
+```bash
+# Learn about Cirq
 proxima backends info cirq
+
+# Learn about Qiskit
 proxima backends info qiskit
 ```
 
-**What you'll see:**
+**Installing Missing Backends:**
+```bash
+# Install Cirq
+pip install cirq
 
-- ✅ Available backends (Cirq, Qiskit, LRET)
-- Backend capabilities (max qubits, noise support, GPU support)
-- Version information
+# Install Qiskit
+pip install qiskit qiskit-aer
+```
 
 ---
 
-### Step 3: Run Your First Quantum Simulation
+### 🎮 **Step 3: Running Your First Quantum Simulation**
 
-**Basic Circuit Execution:**
+**Let's Create a "Bell State" (entangled qubits):**
 
 ```bash
-# Run on Cirq backend (automatic)
 proxima run --backend cirq "2-qubit bell state"
-
-# Run on Qiskit backend
-proxima run --backend qiskit "3-qubit GHZ state"
-
-# Let Proxima choose the best backend automatically
-proxima run --backend auto "quantum circuit"
 ```
 
-**What happens:**
+**Breaking Down the Command:**
+- `proxima run` → Run a simulation
+- `--backend cirq` → Use the Cirq simulator  
+- `"2-qubit bell state"` → What to simulate (plain English!)
 
-1. ⏱️ Timer starts showing elapsed time
-2. 🔍 Backend validates your circuit
-3. 💾 Checks memory/CPU resources
-4. ✅ Asks for your consent
-5. 🚀 Executes the simulation
-6. 📊 Shows results with insights
+**What Happens:**
+
+1. **⏱️ Timer starts** - Shows elapsed time
+2. **🔍 Validation** - Checks if your request makes sense
+3. **💾 Resource check** - Ensures enough memory available
+4. **❓ Consent** - Asks "Proceed? (y/n)" → Type `y` and press Enter
+5. **🚀 Execution** - Runs the simulation
+6. **📊 Results** - Shows measurements with explanations
+
+**Example Output:**
+```
+⏱️ Elapsed: 2.3s
+💾 Memory: 45% used
+✅ Simulation complete!
+
+Results:
+|00⟩: 50.2% ████████████████
+|11⟩: 49.8% ████████████████
+
+💡 Insight: Perfect entanglement! Measuring one qubit instantly determines the other.
+```
+
+**Try More Examples:**
+
+```bash
+# 3-qubit entangled state
+proxima run --backend cirq "3-qubit GHZ state"
+
+# Let Proxima auto-select the best backend
+proxima run --backend auto "quantum teleportation"
+
+# Simple single-qubit circuit
+proxima run --backend qiskit "hadamard gate on 1 qubit"
+```
 
 ---
 
-### Step 4: Compare Multiple Backends
+### ⚖️ **Step 4: Comparing Different Backends**
+
+**Why Compare?**
+- See which backend is fastest
+- Check accuracy differences
+- Find the best tool for your needs
+
+**Compare Two Backends:**
 
 ```bash
-# Compare Cirq vs Qiskit performance
 proxima compare --backends cirq,qiskit "bell state"
-
-# Compare all available backends
-proxima compare --backends cirq,qiskit,lret "entanglement circuit"
-
-# Compare with custom shots
-proxima compare --backends cirq,qiskit --shots 2048 "teleportation"
 ```
 
-**What you get:**
+**Output Example:**
 
-- ⚡ Execution time for each backend
-- 💾 Memory usage comparison
-- 📈 Result agreement percentage
-- 🏆 Recommended backend with explanation
+| Backend | Execution Time | Memory | Accuracy |
+|---------|---------------|--------|----------|
+| Cirq    | 1.2s          | 45 MB  | Reference |
+| Qiskit  | 1.5s          | 52 MB  | 99.8% match |
+
+🏆 **Recommendation**: Cirq (faster)
+
+**Compare All Backends:**
+
+```bash
+proxima compare --backends cirq,qiskit,lret "ghz state"
+```
+
+**More Accurate Comparison (more measurements):**
+
+```bash
+proxima compare --backends cirq,qiskit --shots 4096 "bell state"
+```
+💡 More shots = more accurate but slower
 
 ---
 
-### Step 5: Use the Terminal UI (TUI)
+### 🖥️ **Step 5: Using the Visual Interface (TUI)**
+
+**What is TUI?**
+- TUI = Terminal User Interface
+- A colorful, interactive way to use Proxima
+- No need to remember commands!
+
+**Launch TUI:**
 
 ```bash
-# Launch interactive TUI
-proxima ui launch
-
-# Or just
 proxima ui
 ```
 
-**TUI Features:**
+**Navigation:**
+- Press **1** → Dashboard (overview)
+- Press **2** → Execution (watch simulations run)
+- Press **3** → Configuration (change settings)
+- Press **4** → Results (view past runs)
+- Press **5** → Backends (compare features)
+- Press **?** → Help
+- Press **q** → Quit
 
-- **Screen 1 (Dashboard)**: Overview of all backends and recent runs
-- **Screen 2 (Execution)**: Real-time execution progress
-- **Screen 3 (Configuration)**: Edit settings interactively
-- **Screen 4 (Results)**: View past results with visualizations
-- **Screen 5 (Backends)**: Compare backend capabilities
-
-**Keyboard shortcuts:**
-
-- `1-5`: Switch between screens
-- `q`: Quit
-- `?`: Help menu
+**Features:**
+- Real-time progress bars
+- Color-coded status
+- Resource monitoring
+- Interactive menus
 
 ---
 
-### Step 6: Use Agent Files (proxima_agent.md)
+### 📝 **Step 6: Creating Task Lists (Agent Files)**
 
-Create a file called `my_experiment.md`:
+**What are Agent Files?**
+- Write multiple tasks in one file
+- Proxima executes them automatically
+- Perfect for overnight experiments
+
+**Create `my_experiment.md`:**
 
 ```markdown
-# Quantum Experiment
+# My Quantum Experiment
 
-## Task 1: Circuit Execution
-
+## Task 1: Create Bell State
 - backend: cirq
 - shots: 1024
-- circuit: bell state preparation
+- circuit: 2-qubit bell state
 
-## Task 2: Backend Comparison
-
+## Task 2: Compare Backends
 - compare: cirq, qiskit
-- circuit: same as Task 1
+- circuit: bell state
 - shots: 2048
 
 ## Task 3: Export Results
-
 - format: json
 - output: results.json
 ```
 
-Then run:
+**Run the Agent File:**
 
 ```bash
 proxima agent run my_experiment.md
 ```
 
-**What happens:**
-
-- Proxima reads all tasks from the file
-- Executes them sequentially
-- Asks consent before each task
-- Generates combined report at the end
-
----
-
-### Step 7: Control Execution Flow
-
-**Pause and Resume:**
-
-```bash
-# Start a long-running simulation
-proxima run --backend qiskit "complex 10-qubit circuit" &
-
-# Pause it (in another terminal or using Ctrl+Z)
-proxima session pause <session-id>
-
-# Resume later
-proxima session resume <session-id>
-
-# Abort if needed
-proxima session abort <session-id>
-```
-
-**Rollback Feature:**
-
-```bash
-# If something goes wrong, rollback to last checkpoint
-proxima session rollback <session-id>
-```
+**What Happens:**
+1. Shows preview of all tasks
+2. Asks for confirmation
+3. Executes tasks sequentially
+4. Generates final report
 
 ---
 
-### Step 8: Work with LLM (AI Integration)
+### ⏯️ **Step 7: Controlling Running Simulations**
 
-**Local LLM (Ollama):**
-
-```bash
-# Run with local LLM for insights
-proxima run --llm ollama --backend cirq "bell state"
-```
-
-**Remote LLM (OpenAI/Anthropic):**
+**Start a Background Simulation:**
 
 ```bash
-# Set API key
-export OPENAI_API_KEY="your-api-key"
-
-# Run with AI-powered insights
-proxima run --llm openai --backend cirq "quantum circuit"
-
-# Proxima will ask consent before using remote LLM
+proxima run --backend qiskit "10-qubit circuit" &
 ```
 
-**What LLM does:**
+**List Running Simulations:**
 
-- Explains circuit behavior in plain English
-- Suggests optimizations
-- Interprets measurement results
-- Recommends best practices
+```bash
+proxima session list
+```
+
+Output: `ID: abc123 | Status: RUNNING | Backend: qiskit`
+
+**Pause a Simulation:**
+
+```bash
+proxima session pause abc123
+```
+
+**Resume Later:**
+
+```bash
+proxima session resume abc123
+```
+
+**Stop Completely:**
+
+```bash
+proxima session abort abc123
+```
+
+**Rollback (Undo):**
+
+```bash
+proxima session rollback abc123
+```
+💡 Like Ctrl+Z for quantum simulations!
 
 ---
 
-### Step 9: Export and Analyze Results
+### 🤖 **Step 8: Using AI Explanations (LLM)**
 
-**Export in Multiple Formats:**
+**What is LLM?**
+- AI that explains quantum results in plain English
+- Two options: Local (free) or Remote (powerful)
 
+**Option 1: Local AI (Ollama - Free & Private)**
+
+1. Install Ollama from [ollama.ai](https://ollama.ai)
+2. Download model: `ollama pull llama2`
+3. Run with AI:
+   ```bash
+   proxima run --llm ollama --backend cirq "bell state"
+   ```
+
+**What AI Explains:**
+- Circuit behavior in simple terms
+- Why you got specific results
+- Optimization suggestions
+- Real-world applications
+
+**Option 2: Remote AI (OpenAI/Anthropic)**
+
+1. Get API key from [OpenAI](https://openai.com)
+2. Set key:
+   ```bash
+   export OPENAI_API_KEY="your-key-here"  # Mac/Linux
+   set OPENAI_API_KEY=your-key-here       # Windows
+   ```
+3. Run:
+   ```bash
+   proxima run --llm openai --backend cirq "teleportation"
+   ```
+
+⚠️ **Privacy**: Proxima asks permission before sending data to remote AI
+
+---
+
+### 💾 **Step 9: Saving and Exporting Results**
+
+**Export Formats:**
+
+**JSON (for programmers):**
 ```bash
-# Export as JSON
 proxima run --backend cirq "bell state" --export json --output results.json
+```
 
-# Export as CSV
+**CSV (opens in Excel):**
+```bash
 proxima run --backend cirq "bell state" --export csv --output data.csv
+```
 
-# Export as HTML report
+**HTML (opens in browser):**
+```bash
 proxima run --backend cirq "bell state" --export html --output report.html
+```
 
-# Export as Excel (with multiple sheets)
+**Excel (multiple sheets):**
+```bash
 proxima run --backend cirq "bell state" --export xlsx --output analysis.xlsx
 ```
 
 **View Past Results:**
 
 ```bash
-# List execution history
+# List all past runs
 proxima history list
 
-# Show details of specific run
-proxima history show <run-id>
+# See specific run details
+proxima history show abc123
 
-# Export history to file
+# Export entire history
 proxima history export --format json --output history.json
 ```
 
 ---
 
-### Step 10: Configuration Management
+### ⚙️ **Step 10: Customizing Settings**
 
-**View Configuration:**
+**View Current Settings:**
 
 ```bash
-# Show current configuration
 proxima config show
-
-# Show specific setting
-proxima config get backends.default_backend
 ```
 
-**Update Configuration:**
+**Common Customizations:**
 
+**Set Default Backend:**
 ```bash
-# Set default backend
 proxima config set backends.default_backend cirq
-
-# Set memory threshold
-proxima config set resources.memory_threshold 0.85
-
-# Enable dry-run mode by default
-proxima config set general.dry_run true
 ```
 
-**Configuration File Location:**
+**Adjust Memory Warnings:**
+```bash
+proxima config set resources.memory_threshold 0.7
+```
+- Lower = more cautious (old computers)
+- Higher = more aggressive (powerful machines)
 
-- User config: `~/.proxima/config.yaml`
-- Project config: `./proxima.yaml`
+**Change Auto-Approval:**
+```bash
+proxima config set general.auto_approve false
+```
+- `true` = Always ask (safer)
+- `false` = Auto-run (faster)
+
+**Reset to Defaults:**
+```bash
+proxima config reset
+```
+
+**Config File Locations:**
+- User: `~/.proxima/config.yaml`
+- Project: `./proxima.yaml`
 
 ---
 
-### Step 11: Advanced Features
+### 🔬 **Step 11: Advanced Features**
 
-**Dry Run Mode (Plan without executing):**
+**Dry Run (Test Without Executing):**
 
 ```bash
-# See what would happen without running
 proxima run --dry-run --backend cirq "bell state"
 ```
+💡 See what would happen without running
 
-**Force Mode (Skip consent prompts):**
+**Force Mode (Skip Confirmations):**
 
 ```bash
-# Auto-approve all operations (use carefully!)
-proxima run --force --backend qiskit "circuit"
+proxima run --force --backend cirq "circuit"
 ```
+⚠️ Use carefully - no safety prompts!
 
-**Verbose Output:**
+**Verbose Logging:**
 
 ```bash
-# Show detailed logs
 proxima -vvv run --backend cirq "bell state"
-
-# Or quiet mode
-proxima --quiet run --backend cirq "bell state"
 ```
+- `-v` = Some details
+- `-vv` = More details
+- `-vvv` = Everything
 
-**Custom Output Format:**
+**Quiet Mode:**
 
 ```bash
-# JSON output (for scripting)
-proxima --output json backends list
-
-# Rich formatted output
-proxima --output rich run --backend cirq "bell state"
+proxima --quiet run --backend cirq "circuit"
 ```
+
+**Custom Shots:**
+
+```bash
+proxima run --backend cirq --shots 8192 "bell state"
+```
+- Quick tests: 256-512
+- Normal: 1024-2048
+- High accuracy: 4096-8192
 
 ---
 
-### Step 12: Monitor Resources
+### 📊 **Step 12: Resource Monitoring**
 
-**Real-time Monitoring:**
+**Real-Time Monitoring:**
 
 ```bash
-# Show resource usage while running
 proxima run --backend qiskit "large circuit" --monitor
 ```
 
-**Resource Thresholds:**
-Proxima automatically warns you at:
+**Display:**
+```
+💾 Memory: 45% [█████-----]
+🖥️ CPU: 78% [███████---]
+⏱️ Time: 5.2s
+```
 
-- 60% memory usage: ⚠️ Warning
-- 80% memory usage: ⚠️ Strong warning
-- 95% memory usage: 🛑 Critical - execution may be blocked
+**Automatic Warnings:**
+- 60% memory: ⚠️ Warning
+- 80% memory: ⚠️ Strong warning
+- 95% memory: 🛑 Critical (blocked)
+
+**If Warnings Appear:**
+1. Close other programs
+2. Use smaller circuits
+3. Reduce shots
+4. Try different backend
 
 ---
 
-### Step 13: Session Management
+### 🔧 **Step 13: Troubleshooting**
 
-**List Active Sessions:**
+**Problem: "Backend not found"**
 
+Solution:
+```bash
+pip install cirq              # For Cirq
+pip install qiskit qiskit-aer # For Qiskit
+```
+
+**Problem: "Out of memory"**
+
+Solutions:
+- Reduce circuit size
+- Lower shots: `--shots 256`
+- Close other programs
+- Adjust threshold: `proxima config set resources.memory_threshold 0.7`
+
+**Problem: "Permission denied"**
+
+Solution:
+```bash
+chmod 755 ~/.proxima  # Mac/Linux
+```
+
+**Problem: Simulation stuck**
+
+Solution:
 ```bash
 proxima session list
+proxima session abort abc123
 ```
 
-**Session Details:**
-
+**Check Logs:**
 ```bash
-proxima session status <session-id>
-```
-
-**Session Persistence:**
-All sessions are automatically saved to `~/.proxima/sessions/` and can be resumed after restart.
-
----
-
-### Step 14: Plugin System (Advanced)
-
-**Create Custom Plugins:**
-
-```python
-# ~/.proxima/plugins/my_plugin.py
-from proxima.plugins.base import BasePlugin
-
-class MyPlugin(BasePlugin):
-    def on_execution_start(self, context):
-        print("Execution starting!")
-
-    def on_execution_complete(self, context, result):
-        print(f"Done! Result: {result}")
-```
-
-**Enable Plugin:**
-
-```yaml
-# ~/.proxima/config.yaml
-plugins:
-  enabled:
-    - my_plugin
-  search_paths:
-    - ~/.proxima/plugins
+cat ~/.proxima/logs/proxima.log  # Mac/Linux
+type %USERPROFILE%\.proxima\logs\proxima.log  # Windows
 ```
 
 ---
 
-### Step 15: Troubleshooting
+### 📖 **Step 14: Command Reference**
 
-**Common Issues:**
-
-1. **Backend not available:**
-
+**Core Commands:**
 ```bash
-# Install missing backend
-pip install cirq  # For Cirq
-pip install qiskit qiskit-aer  # For Qiskit
+proxima init            # Setup
+proxima version         # Version info
+proxima --help          # All commands
 ```
 
-2. **Memory errors:**
-
+**Backends:**
 ```bash
-# Lower memory threshold
-proxima config set resources.memory_threshold 0.7
+proxima backends list   # List all
+proxima backends info NAME  # Details
+proxima backends test NAME  # Test
 ```
 
-3. **Permission errors:**
-
+**Running:**
 ```bash
-# Check config directory permissions
-chmod 755 ~/.proxima
+proxima run [OPTIONS] "DESCRIPTION"
+  --backend NAME        # cirq/qiskit/lret/auto
+  --shots NUMBER        # Measurements (default: 1024)
+  --export FORMAT       # json/csv/html/xlsx
+  --output FILE         # Output filename
+  --llm NAME            # ollama/openai/anthropic
+  --monitor             # Show resources
+  --dry-run             # Test only
+  --force               # Skip prompts
 ```
 
-4. **View logs:**
-
+**Comparison:**
 ```bash
-# Check log file
-cat ~/.proxima/logs/proxima.log
-
-# Or with verbose mode
-proxima -vvv run --backend cirq "circuit"
+proxima compare --backends cirq,qiskit "DESCRIPTION"
+  --shots NUMBER
+  --export FORMAT
 ```
 
----
-
-### 📖 Full Command Reference
-
+**Configuration:**
 ```bash
-# Core Commands
-proxima init                          # Initialize configuration
-proxima version                       # Show version
-proxima run [OPTIONS] DESCRIPTION     # Run simulation
-proxima compare [OPTIONS]             # Compare backends
+proxima config show         # View all
+proxima config get KEY      # Get one
+proxima config set KEY VAL  # Set one
+proxima config reset        # Reset
+```
 
-# Backend Management
-proxima backends list                 # List all backends
-proxima backends info NAME            # Backend details
-proxima backends test NAME            # Test backend
+**History:**
+```bash
+proxima history list       # All runs
+proxima history show ID    # One run
+proxima history export     # Save
+proxima history clear      # Delete
+```
 
-# Configuration
-proxima config show                   # View config
-proxima config get KEY                # Get setting
-proxima config set KEY VALUE          # Set setting
-proxima config reset                  # Reset to defaults
+**Sessions:**
+```bash
+proxima session list       # Active
+proxima session status ID  # Check
+proxima session pause ID   # Pause
+proxima session resume ID  # Resume
+proxima session abort ID   # Stop
+```
 
-# Agent Files
-proxima agent run FILE                # Execute agent.md file
-proxima agent validate FILE           # Validate agent.md
-proxima agent preview FILE            # Preview execution plan
-
-# History
-proxima history list                  # Show past runs
-proxima history show ID               # Run details
-proxima history export [OPTIONS]      # Export history
-proxima history clear                 # Clear history
-
-# Sessions
-proxima session list                  # Active sessions
-proxima session status ID             # Session details
-proxima session pause ID              # Pause session
-proxima session resume ID             # Resume session
-proxima session abort ID              # Abort session
-proxima session rollback ID           # Rollback session
-
-# UI
-proxima ui launch                     # Launch TUI
-proxima ui check                      # Check TUI dependencies
-
-# Global Options
---config PATH                         # Config file path
---backend NAME                        # Select backend
---output FORMAT                       # Output format (text/json/rich)
---verbose, -v                         # Verbose output (stackable: -vvv)
---quiet, -q                           # Quiet mode
---dry-run                             # Plan only
---force, -f                           # Skip confirmations
+**UI & Agent:**
+```bash
+proxima ui                    # Launch TUI
+proxima agent run FILE        # Run tasks
+proxima agent validate FILE   # Check file
 ```
 
 ---
 
-### 🎯 Example Workflows
+### 🎯 **Step 15: Real-World Examples**
 
-**Workflow 1: Quick Experiment**
+**Beginner: Quick Test**
 
 ```bash
-proxima run --backend auto "3-qubit GHZ state"
+proxima backends list
+proxima run --backend auto "bell state"
 ```
 
-**Workflow 2: Detailed Comparison**
+**Intermediate: Backend Comparison**
 
 ```bash
-proxima compare --backends cirq,qiskit --shots 4096 "bell state" --export html --output comparison.html
+proxima compare --backends cirq,qiskit "ghz state" --shots 2048
+proxima run --backend cirq "ghz state" --export html --output report.html
 ```
 
-**Workflow 3: Batch Processing with Agent File**
+**Advanced: Full Experiment**
 
 ```bash
-# Create experiment.md with multiple tasks
-proxima agent run experiment.md --export json --output results.json
+# Create experiment.md with tasks
+proxima agent preview experiment.md
+proxima agent run experiment.md --llm ollama
+proxima history export --format xlsx --output results.xlsx
 ```
 
-**Workflow 4: Production Pipeline**
+**Production: Pipeline**
 
 ```bash
-# 1. Dry run to validate
+# Test first
 proxima run --dry-run --backend cirq "circuit"
 
-# 2. Execute with monitoring
-proxima run --backend cirq "circuit" --monitor --export xlsx --output prod_results.xlsx
+# Run with monitoring
+proxima run --backend cirq "circuit" --monitor --shots 8192
 
-# 3. Review in TUI
+# Export results
+proxima run --backend cirq "circuit" --export xlsx --output data.xlsx
+
+# Review in TUI
 proxima ui
 ```
 
 ---
 
-### 🆘 Getting Help
+### 💡 **Quick Success Tips**
 
-- **Documentation**: Full docs at `docs/` or run `mkdocs serve`
-- **Command help**: `proxima --help` or `proxima COMMAND --help`
-- **GitHub Issues**: https://github.com/prthmmkhija1/Pseudo-Proxima/issues
-- **Examples**: See `examples/` directory in the repo
+1. **Start small** - Begin with 2-3 qubit circuits
+2. **Use auto mode** - `--backend auto` lets Proxima choose
+3. **Save work** - Always use `--export` for important results
+4. **Monitor resources** - Add `--monitor` for long runs
+5. **Try dry-run** - Use `--dry-run` to test commands first
+6. **Use AI** - `--llm ollama` explains results for free
+7. **Keep history** - Don't clear history, it tracks progress
+8. **Use agent files** - Write task lists for complex experiments
+9. **Explore TUI** - Visual interface makes everything easier
+10. **Ask for help** - Use `proxima COMMAND --help` anytime
 
 ---
 
-**🎉 You're now ready to use Proxima for quantum simulations!**
+### 🆘 **Getting Help**
+
+**Built-in:**
+```bash
+proxima --help          # All commands
+proxima run --help      # Specific command
+proxima ui              # Visual guides
+```
+
+**Documentation:**
+- Full docs: `docs/` folder
+- Local: Run `mkdocs serve` → http://localhost:8000
+
+**Community:**
+- [GitHub Issues](https://github.com/prthmmkhija1/Pseudo-Proxima/issues)
+- Examples: `examples/` directory
+- Discussions: GitHub Discussions
+
+**Example Files:**
+- `examples/basic_circuits.md`
+- `examples/comparison_workflows.md`
+- `examples/advanced_features.md`
+
+---
+
+## 🎉 **You're Ready!**
+
+You now have everything needed to use Proxima effectively:
+- ✅ Installation completed
+- ✅ Backend concepts understood
+- ✅ Basic commands learned
+- ✅ Advanced features available
+- ✅ Troubleshooting guide ready
+
+**Your First Command:**
+```bash
+proxima run --backend auto "bell state"
+```
+
+Happy quantum computing! 🚀🔬
+
