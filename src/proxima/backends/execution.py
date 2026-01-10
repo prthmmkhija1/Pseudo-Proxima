@@ -6,10 +6,11 @@ import asyncio
 import functools
 import random
 import time
+from collections.abc import Callable, Generator
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Any, Callable, Generator, TypeVar
+from typing import Any, TypeVar
 
 from proxima.backends.base import ExecutionResult
 from proxima.backends.exceptions import (
@@ -37,9 +38,7 @@ class TimeoutConfig:
 
 
 @contextmanager
-def execution_timeout(
-    seconds: float, operation: str = "execution"
-) -> Generator[None, None, None]:
+def execution_timeout(seconds: float, operation: str = "execution") -> Generator[None, None, None]:
     """Context manager for synchronous timeout (thread-based).
 
     Note: This uses a signal-based approach on Unix, falls back to
@@ -358,9 +357,7 @@ def execute_batch(
     start_time = time.perf_counter()
 
     if config.parallel and config.max_workers > 1:
-        batch_result = _execute_batch_parallel(
-            execute_fn, circuits, options, config, backend_name
-        )
+        batch_result = _execute_batch_parallel(execute_fn, circuits, options, config, backend_name)
     else:
         batch_result = _execute_batch_sequential(
             execute_fn, circuits, options, config, backend_name
@@ -408,9 +405,7 @@ def _execute_batch_parallel(
     result = BatchResult(total=len(circuits))
 
     with ThreadPoolExecutor(max_workers=config.max_workers) as executor:
-        futures = [
-            executor.submit(execute_fn, circuit, options) for circuit in circuits
-        ]
+        futures = [executor.submit(execute_fn, circuit, options) for circuit in circuits]
 
         for future in futures:
             try:

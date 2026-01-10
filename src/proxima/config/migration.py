@@ -7,14 +7,14 @@ Supports automatic upgrades, manual migration, and rollback capabilities.
 from __future__ import annotations
 
 import copy
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import yaml
-
 
 # Current configuration schema version
 CURRENT_VERSION = "1.0.0"
@@ -22,22 +22,22 @@ CURRENT_VERSION = "1.0.0"
 
 class MigrationDirection(Enum):
     """Direction of migration."""
-    
-    UP = "up"      # Upgrade to newer version
+
+    UP = "up"  # Upgrade to newer version
     DOWN = "down"  # Downgrade to older version
 
 
 @dataclass
 class MigrationStep:
     """A single migration step between versions."""
-    
+
     from_version: str
     to_version: str
     description: str
     migrate_up: Callable[[dict[str, Any]], dict[str, Any]]
     migrate_down: Callable[[dict[str, Any]], dict[str, Any]] | None = None
     breaking: bool = False  # Whether this is a breaking change
-    
+
     def __str__(self) -> str:
         arrow = "→" if not self.breaking else "⚠️→"
         return f"{self.from_version} {arrow} {self.to_version}: {self.description}"
@@ -46,7 +46,7 @@ class MigrationStep:
 @dataclass
 class MigrationResult:
     """Result of a migration operation."""
-    
+
     success: bool
     from_version: str
     to_version: str
@@ -55,7 +55,7 @@ class MigrationResult:
     warnings: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     backup_path: Path | None = None
-    
+
     def __str__(self) -> str:
         if self.success:
             return f"✓ Migrated from {self.from_version} to {self.to_version} ({len(self.steps_applied)} steps)"
@@ -66,54 +66,53 @@ class MigrationResult:
 # MIGRATION REGISTRY
 # =============================================================================
 
+
 class MigrationRegistry:
     """Registry of all available migrations."""
-    
+
     def __init__(self) -> None:
         self._migrations: list[MigrationStep] = []
         self._register_builtin_migrations()
-    
+
     def _register_builtin_migrations(self) -> None:
         """Register built-in migrations."""
         # Example migration: 0.0.0 (unversioned) to 1.0.0
-        self.register(MigrationStep(
-            from_version="0.0.0",
-            to_version="1.0.0",
-            description="Add schema version, restructure settings",
-            migrate_up=self._migrate_000_to_100,
-            migrate_down=self._migrate_100_to_000,
-        ))
-    
+        self.register(
+            MigrationStep(
+                from_version="0.0.0",
+                to_version="1.0.0",
+                description="Add schema version, restructure settings",
+                migrate_up=self._migrate_000_to_100,
+                migrate_down=self._migrate_100_to_000,
+            )
+        )
+
     def register(self, step: MigrationStep) -> None:
         """Register a migration step."""
         self._migrations.append(step)
         # Keep sorted by version
         self._migrations.sort(key=lambda s: _version_tuple(s.from_version))
-    
-    def get_path(
-        self, 
-        from_version: str, 
-        to_version: str
-    ) -> list[MigrationStep]:
+
+    def get_path(self, from_version: str, to_version: str) -> list[MigrationStep]:
         """Get the migration path between two versions."""
         if from_version == to_version:
             return []
-        
+
         from_tuple = _version_tuple(from_version)
         to_tuple = _version_tuple(to_version)
-        
+
         if from_tuple < to_tuple:
             # Upgrading
             return self._get_upgrade_path(from_version, to_version)
         else:
             # Downgrading
             return self._get_downgrade_path(from_version, to_version)
-    
+
     def _get_upgrade_path(self, from_version: str, to_version: str) -> list[MigrationStep]:
         """Get upgrade migration path."""
         path = []
         current = from_version
-        
+
         while _version_tuple(current) < _version_tuple(to_version):
             # Find next migration step
             next_step = None
@@ -122,20 +121,20 @@ class MigrationRegistry:
                     if _version_tuple(step.to_version) <= _version_tuple(to_version):
                         next_step = step
                         break
-            
+
             if next_step is None:
                 break
-            
+
             path.append(next_step)
             current = next_step.to_version
-        
+
         return path
-    
+
     def _get_downgrade_path(self, from_version: str, to_version: str) -> list[MigrationStep]:
         """Get downgrade migration path."""
         path = []
         current = from_version
-        
+
         while _version_tuple(current) > _version_tuple(to_version):
             # Find migration that leads to current version
             prev_step = None
@@ -144,65 +143,66 @@ class MigrationRegistry:
                     if _version_tuple(step.from_version) >= _version_tuple(to_version):
                         prev_step = step
                         break
-            
+
             if prev_step is None:
                 break
-            
+
             path.append(prev_step)
             current = prev_step.from_version
-        
+
         return path
-    
+
     # ==========================================================================
     # BUILT-IN MIGRATION FUNCTIONS
     # ==========================================================================
-    
+
     @staticmethod
     def _migrate_000_to_100(config: dict[str, Any]) -> dict[str, Any]:
         """Migrate from unversioned to 1.0.0."""
         result = copy.deepcopy(config)
-        
+
         # Add version
         result["_version"] = "1.0.0"
         result["_migrated_at"] = datetime.now().isoformat()
-        
+
         # Ensure all sections exist
         result.setdefault("general", {})
         result.setdefault("backends", {})
         result.setdefault("llm", {})
         result.setdefault("resources", {})
         result.setdefault("consent", {})
-        
+
         # Add storage_backend if not present
         if "storage_backend" not in result["general"]:
             result["general"]["storage_backend"] = "sqlite"
-        
+
         # Add data_dir if not present
         if "data_dir" not in result["general"]:
             result["general"]["data_dir"] = ""
-        
+
         return result
-    
+
     @staticmethod
     def _migrate_100_to_000(config: dict[str, Any]) -> dict[str, Any]:
         """Downgrade from 1.0.0 to unversioned."""
         result = copy.deepcopy(config)
-        
+
         # Remove version info
         result.pop("_version", None)
         result.pop("_migrated_at", None)
-        
+
         # Remove new fields
         if "general" in result:
             result["general"].pop("storage_backend", None)
             result["general"].pop("data_dir", None)
-        
+
         return result
 
 
 # =============================================================================
 # VERSION UTILITIES
 # =============================================================================
+
 
 def _version_tuple(version: str) -> tuple[int, ...]:
     """Convert version string to comparable tuple."""
@@ -248,12 +248,13 @@ def needs_migration(config: dict[str, Any], target_version: str | None = None) -
 # MIGRATOR
 # =============================================================================
 
+
 class ConfigMigrator:
     """Handles configuration migration between versions."""
-    
+
     def __init__(self, registry: MigrationRegistry | None = None) -> None:
         self.registry = registry or MigrationRegistry()
-    
+
     def migrate(
         self,
         config: dict[str, Any],
@@ -262,58 +263,60 @@ class ConfigMigrator:
         config_path: Path | None = None,
     ) -> MigrationResult:
         """Migrate configuration to target version.
-        
+
         Args:
             config: Configuration dictionary to migrate
             target_version: Target version (default: CURRENT_VERSION)
             create_backup: Whether to create a backup before migration
             config_path: Path to config file (for backup)
-            
+
         Returns:
             MigrationResult with migrated configuration or errors
         """
         target_version = target_version or CURRENT_VERSION
         from_version = get_config_version(config)
-        
+
         result = MigrationResult(
             success=False,
             from_version=from_version,
             to_version=target_version,
         )
-        
+
         # Check if migration is needed
         if not needs_migration(config, target_version):
             result.success = True
             result.config = config
             return result
-        
+
         # Get migration path
         path = self.registry.get_path(from_version, target_version)
-        
+
         if not path:
             # No direct path - check if versions are valid
             if from_version != target_version:
-                result.errors.append(
-                    f"No migration path from {from_version} to {target_version}"
-                )
+                result.errors.append(f"No migration path from {from_version} to {target_version}")
                 return result
-        
+
         # Create backup if requested
         if create_backup and config_path and config_path.exists():
             backup_path = self._create_backup(config_path)
             result.backup_path = backup_path
-        
+
         # Apply migrations
         current_config = copy.deepcopy(config)
-        direction = MigrationDirection.UP if _version_tuple(from_version) < _version_tuple(target_version) else MigrationDirection.DOWN
-        
+        direction = (
+            MigrationDirection.UP
+            if _version_tuple(from_version) < _version_tuple(target_version)
+            else MigrationDirection.DOWN
+        )
+
         try:
             for step in path:
                 if step.breaking:
                     result.warnings.append(
                         f"Breaking change in {step.from_version} → {step.to_version}: {step.description}"
                     )
-                
+
                 if direction == MigrationDirection.UP:
                     current_config = step.migrate_up(current_config)
                 else:
@@ -323,20 +326,20 @@ class ConfigMigrator:
                         )
                         return result
                     current_config = step.migrate_down(current_config)
-                
+
                 result.steps_applied.append(step)
-            
+
             # Update version
             current_config = set_config_version(current_config, target_version)
-            
+
             result.success = True
             result.config = current_config
-            
+
         except Exception as e:
             result.errors.append(f"Migration failed: {e}")
-        
+
         return result
-    
+
     def migrate_file(
         self,
         config_path: Path,
@@ -344,17 +347,17 @@ class ConfigMigrator:
         dry_run: bool = False,
     ) -> MigrationResult:
         """Migrate a configuration file.
-        
+
         Args:
             config_path: Path to the configuration file
             target_version: Target version (default: CURRENT_VERSION)
             dry_run: If True, don't actually write changes
-            
+
         Returns:
             MigrationResult with migrated configuration or errors
         """
         target_version = target_version or CURRENT_VERSION
-        
+
         # Load current config
         if not config_path.exists():
             return MigrationResult(
@@ -363,7 +366,7 @@ class ConfigMigrator:
                 to_version=target_version,
                 errors=[f"Configuration file not found: {config_path}"],
             )
-        
+
         try:
             with config_path.open("r", encoding="utf-8") as f:
                 config = yaml.safe_load(f) or {}
@@ -374,7 +377,7 @@ class ConfigMigrator:
                 to_version=target_version,
                 errors=[f"Failed to read configuration: {e}"],
             )
-        
+
         # Perform migration
         result = self.migrate(
             config,
@@ -382,7 +385,7 @@ class ConfigMigrator:
             create_backup=not dry_run,
             config_path=config_path,
         )
-        
+
         # Write result if not dry run and successful
         if result.success and result.config and not dry_run:
             try:
@@ -391,27 +394,28 @@ class ConfigMigrator:
             except Exception as e:
                 result.success = False
                 result.errors.append(f"Failed to write migrated config: {e}")
-        
+
         return result
-    
+
     def _create_backup(self, config_path: Path) -> Path:
         """Create a backup of the configuration file."""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         backup_dir = config_path.parent / ".proxima_backups"
         backup_dir.mkdir(parents=True, exist_ok=True)
-        
+
         backup_name = f"{config_path.stem}_premigration_{timestamp}{config_path.suffix}"
         backup_path = backup_dir / backup_name
-        
+
         import shutil
+
         shutil.copy2(config_path, backup_path)
-        
+
         return backup_path
-    
+
     def list_migrations(self) -> list[str]:
         """List all available migrations."""
         return [str(m) for m in self.registry._migrations]
-    
+
     def get_upgrade_path(self, config: dict[str, Any]) -> list[MigrationStep]:
         """Get the upgrade path for a configuration."""
         from_version = get_config_version(config)
@@ -422,6 +426,7 @@ class ConfigMigrator:
 # MIGRATION DECORATORS
 # =============================================================================
 
+
 def migration(
     from_version: str,
     to_version: str,
@@ -429,13 +434,14 @@ def migration(
     breaking: bool = False,
 ):
     """Decorator to register a migration function.
-    
+
     Usage:
         @migration("1.0.0", "1.1.0", "Add new feature settings")
         def migrate_100_to_110(config):
             config["new_feature"] = {"enabled": True}
             return config
     """
+
     def decorator(func: Callable[[dict[str, Any]], dict[str, Any]]):
         step = MigrationStep(
             from_version=from_version,
@@ -446,6 +452,7 @@ def migration(
         )
         _pending_migrations.append(step)
         return func
+
     return decorator
 
 
@@ -480,26 +487,26 @@ def auto_migrate(config: dict[str, Any]) -> dict[str, Any]:
     """Automatically migrate config to current version."""
     migrator = get_migrator()
     result = migrator.migrate(config)
-    
+
     if result.success and result.config:
         return result.config
-    
+
     # Return original if migration failed
     return config
 
 
 def check_migration_status(config: dict[str, Any]) -> dict[str, Any]:
     """Check migration status of a configuration.
-    
+
     Returns:
         Dictionary with migration status information
     """
     current = get_config_version(config)
     needs_upgrade = needs_migration(config, CURRENT_VERSION)
-    
+
     migrator = get_migrator()
     path = migrator.get_upgrade_path(config) if needs_upgrade else []
-    
+
     return {
         "current_version": current,
         "target_version": CURRENT_VERSION,

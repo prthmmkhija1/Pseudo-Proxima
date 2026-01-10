@@ -9,7 +9,6 @@ from enum import Enum
 from typing import Any
 
 from proxima.backends.base import BaseBackendAdapter, ExecutionResult, SimulatorType
-from proxima.backends.exceptions import BackendError, wrap_backend_exception
 
 
 class HealthStatus(str, Enum):
@@ -349,7 +348,9 @@ def generate_health_report(results: list[HealthCheckResult]) -> dict[str, Any]:
 
     overall_status = HealthStatus.HEALTHY
     if unhealthy_count > 0:
-        overall_status = HealthStatus.UNHEALTHY if unhealthy_count == len(results) else HealthStatus.DEGRADED
+        overall_status = (
+            HealthStatus.UNHEALTHY if unhealthy_count == len(results) else HealthStatus.DEGRADED
+        )
     elif degraded_count > 0:
         overall_status = HealthStatus.DEGRADED
 

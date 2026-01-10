@@ -76,9 +76,7 @@ class LLMProvider(Protocol):
     is_local: bool
     requires_api_key: bool
 
-    def send(
-        self, request: LLMRequest, api_key: str | None
-    ) -> LLMResponse:  # pragma: no cover
+    def send(self, request: LLMRequest, api_key: str | None) -> LLMResponse:  # pragma: no cover
         """Send a request to the LLM provider."""
         ...
 
@@ -265,9 +263,9 @@ class AnthropicProvider(_BaseProvider):
 
             elapsed = (time.perf_counter() - start) * 1000
             text = data["content"][0]["text"] if data.get("content") else ""
-            tokens = data.get("usage", {}).get("input_tokens", 0) + data.get(
-                "usage", {}
-            ).get("output_tokens", 0)
+            tokens = data.get("usage", {}).get("input_tokens", 0) + data.get("usage", {}).get(
+                "output_tokens", 0
+            )
 
             return LLMResponse(
                 text=text,
@@ -493,7 +491,9 @@ class LMStudioProvider(_BaseProvider):
 
     def health_check(self, endpoint: str | None = None) -> bool:
         """Check if LM Studio is running and reachable."""
-        check_endpoint = endpoint or self._endpoint or f"http://localhost:{DEFAULT_PORTS['lmstudio']}"
+        check_endpoint = (
+            endpoint or self._endpoint or f"http://localhost:{DEFAULT_PORTS['lmstudio']}"
+        )
         try:
             client = self._get_client()
             response = client.get(f"{check_endpoint}/v1/models", timeout=2.0)
@@ -579,7 +579,9 @@ class LlamaCppProvider(_BaseProvider):
 
     def health_check(self, endpoint: str | None = None) -> bool:
         """Check if llama.cpp server is running and reachable."""
-        check_endpoint = endpoint or self._endpoint or f"http://localhost:{DEFAULT_PORTS['llama_cpp']}"
+        check_endpoint = (
+            endpoint or self._endpoint or f"http://localhost:{DEFAULT_PORTS['llama_cpp']}"
+        )
         try:
             client = self._get_client()
             response = client.get(f"{check_endpoint}/health", timeout=2.0)

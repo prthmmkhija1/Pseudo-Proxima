@@ -21,25 +21,23 @@ from __future__ import annotations
 import gzip
 import hashlib
 import json
-import time
 import threading
+import time
 import uuid
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime
 from enum import Enum, auto
 from pathlib import Path
-from typing import Any, Generic, TypeVar
+from typing import Any
 
 from .consent import (
     ConsentCategory,
     ConsentLevel,
     ConsentManager,
     ConsentRecord,
-    ConsentResponse,
 )
-
 
 # ========== Audit Event Types ==========
 
@@ -518,19 +516,11 @@ class AuditLog:
 
     def get_grants(self) -> list[AuditEvent]:
         """Get all consent grant events."""
-        return [
-            e
-            for e in self.get_all()
-            if e.event_type == AuditEventType.CONSENT_GRANTED
-        ]
+        return [e for e in self.get_all() if e.event_type == AuditEventType.CONSENT_GRANTED]
 
     def get_denials(self) -> list[AuditEvent]:
         """Get all consent denial events."""
-        return [
-            e
-            for e in self.get_all()
-            if e.event_type == AuditEventType.CONSENT_DENIED
-        ]
+        return [e for e in self.get_all() if e.event_type == AuditEventType.CONSENT_DENIED]
 
     def get_revocations(self) -> list[AuditEvent]:
         """Get all consent revocation events."""
@@ -610,9 +600,7 @@ class AuditQueryBuilder:
         """Filter by topic pattern (simple glob with *)."""
         import fnmatch
 
-        self._filters.append(
-            lambda e: e.topic is not None and fnmatch.fnmatch(e.topic, pattern)
-        )
+        self._filters.append(lambda e: e.topic is not None and fnmatch.fnmatch(e.topic, pattern))
         return self
 
     def by_category(self, *categories: ConsentCategory) -> AuditQueryBuilder:
@@ -674,9 +662,7 @@ class AuditQueryBuilder:
         cutoff = time.time() - (days * 86400)
         return self.since(cutoff)
 
-    def sort_by(
-        self, key: Callable[[AuditEvent], Any], reverse: bool = False
-    ) -> AuditQueryBuilder:
+    def sort_by(self, key: Callable[[AuditEvent], Any], reverse: bool = False) -> AuditQueryBuilder:
         """Sort results by a key function."""
         self._sort_key = key
         self._sort_reverse = reverse
@@ -905,9 +891,7 @@ class AuditReport:
         sections: list[ComplianceReportSection] = []
 
         # Check for force overrides
-        force_events = self._audit_log.query().by_type(
-            AuditEventType.FORCE_OVERRIDE_USED
-        ).execute()
+        force_events = self._audit_log.query().by_type(AuditEventType.FORCE_OVERRIDE_USED).execute()
         if force_events:
             section = ComplianceReportSection(
                 title="Force Override Usage",
@@ -918,17 +902,24 @@ class AuditReport:
             sections.append(section)
 
         # Check for denied consents that were later granted
-        denials = self._audit_log.query().by_type(
-            AuditEventType.CONSENT_DENIED
-        ).sort_by_time(newest_first=False).execute()
+        denials = (
+            self._audit_log.query()
+            .by_type(AuditEventType.CONSENT_DENIED)
+            .sort_by_time(newest_first=False)
+            .execute()
+        )
 
         for denial in denials:
             if not denial.topic:
                 continue
             # Check if later granted
-            later_grants = self._audit_log.query().by_topic(denial.topic).by_type(
-                AuditEventType.CONSENT_GRANTED
-            ).since(denial.timestamp).execute()
+            later_grants = (
+                self._audit_log.query()
+                .by_topic(denial.topic)
+                .by_type(AuditEventType.CONSENT_GRANTED)
+                .since(denial.timestamp)
+                .execute()
+            )
 
             if later_grants:
                 section = ComplianceReportSection(
@@ -1021,9 +1012,11 @@ class AuditedConsentManager:
     ) -> None:
         self._manager = consent_manager or ConsentManager()
         self._audit_log = audit_log or AuditLog(
-            storage=FileAuditStorage(storage_path or Path.home() / ".proxima" / "audit.log")
-            if storage_path
-            else MemoryAuditStorage()
+            storage=(
+                FileAuditStorage(storage_path or Path.home() / ".proxima" / "audit.log")
+                if storage_path
+                else MemoryAuditStorage()
+            )
         )
 
         # Log session start

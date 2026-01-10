@@ -8,85 +8,84 @@ This module provides:
 - Interactive prompts and consent dialogs
 """
 
-from proxima.cli.main import app
-
 # Formatters
 from proxima.cli.formatters import (
+    CsvFormatter,
+    JsonFormatter,
+    OutputConfig,
     OutputFormat,
     OutputFormatter,
-    TextFormatter,
-    JsonFormatter,
-    YamlFormatter,
-    CsvFormatter,
-    TableFormatter,
     RichFormatter,
-    get_formatter,
-    format_output,
+    TableFormatter,
+    TextFormatter,
+    YamlFormatter,
     echo_output,
     echo_result,
-    OutputConfig,
+    format_output,
+    get_formatter,
 )
+from proxima.cli.main import app
 
 # Progress display
 from proxima.cli.progress import (
-    ProgressStatus,
+    ProgressCallback,
     ProgressDisplay,
+    ProgressStatus,
     SimpleProgress,
-    StepProgress,
     Step,
-    spinner_context,
+    StepProgress,
     progress_context,
+    spinner_context,
     step_context,
     track,
-    ProgressCallback,
 )
 
 # Try to import Rich progress classes if available
 try:
-    from proxima.cli.progress import RichSpinner, RichProgress
+    from proxima.cli.progress import RichProgress, RichSpinner
 except ImportError:
     RichSpinner = None  # type: ignore
     RichProgress = None  # type: ignore
 
 # Prompts
 from proxima.cli.prompts import (
-    PromptResult,
-    PromptResponse,
-    Prompt,
     ConfirmPrompt,
-    TextPrompt,
-    PasswordPrompt,
-    SelectOption,
-    SelectPrompt,
-    MultiSelectPrompt,
     ConsentInfo,
     ConsentPrompt,
+    MultiSelectPrompt,
+    PasswordPrompt,
+    Prompt,
+    PromptResponse,
+    PromptResult,
+    SelectOption,
+    SelectPrompt,
+    TextPrompt,
     confirm,
-    prompt_text,
-    prompt_password,
-    prompt_select,
-    prompt_multi_select,
-    request_consent,
     context_confirm,
     context_consent,
+    prompt_multi_select,
+    prompt_password,
+    prompt_select,
+    prompt_text,
+    request_consent,
 )
 
 # Workflows
 from proxima.cli.workflows import (
-    WorkflowStatus,
-    WorkflowResult,
-    WorkflowContext,
-    WorkflowRunner,
-    RunOptions,
-    RunWorkflow,
     CompareOptions,
     CompareWorkflow,
-    ValidateOptions,
-    ValidationWorkflow,
     ExportOptions,
     ExportWorkflow,
-    run_workflow,
+    RunOptions,
+    RunWorkflow,
+    ValidateOptions,
+    ValidationWorkflow,
+    WorkflowContext,
+    WorkflowResult,
+    WorkflowRunner,
+    WorkflowStatus,
     compare_backends,
+    run_workflow,
     validate_config,
 )
 

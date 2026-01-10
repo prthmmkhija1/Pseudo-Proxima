@@ -18,7 +18,6 @@ from proxima.backends.base import (
 from proxima.backends.exceptions import (
     BackendNotInstalledError,
     CircuitValidationError,
-    ExecutionError,
     QubitLimitExceededError,
     wrap_backend_exception,
 )

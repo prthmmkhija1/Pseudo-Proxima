@@ -9,6 +9,15 @@ from proxima.backends.base import (
     SimulatorType,
     ValidationResult,
 )
+from proxima.backends.conversion import (
+    CircuitFormat,
+    CircuitInfo,
+    ConversionResult,
+    convert_circuit,
+    detect_circuit_format,
+    extract_circuit_info,
+    validate_for_backend,
+)
 from proxima.backends.exceptions import (
     BackendError,
     BackendErrorCode,
@@ -33,15 +42,6 @@ from proxima.backends.execution import (
     execute_with_retry,
     execute_with_timeout,
     with_retry,
-)
-from proxima.backends.conversion import (
-    CircuitFormat,
-    CircuitInfo,
-    ConversionResult,
-    convert_circuit,
-    detect_circuit_format,
-    extract_circuit_info,
-    validate_for_backend,
 )
 from proxima.backends.health import (
     HealthCheckResult,

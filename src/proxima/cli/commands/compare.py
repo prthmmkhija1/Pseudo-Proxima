@@ -17,9 +17,8 @@ from typing import Any
 import typer
 
 from proxima.backends.registry import backend_registry
-from proxima.cli.formatters import echo_output, TableFormatter, OutputFormat
-from proxima.cli.progress import step_context, progress_context
-from proxima.cli.prompts import context_confirm, prompt_multi_select
+from proxima.cli.formatters import TableFormatter, echo_output
+from proxima.cli.prompts import prompt_multi_select
 from proxima.cli.workflows import (
     CompareOptions,
     CompareWorkflow,
@@ -38,25 +37,14 @@ def main(
     ctx: typer.Context,
     objective: str = typer.Argument(..., help="Objective to compare"),
     backends: list[str] = typer.Option(
-        None, "--backend", "-b",
-        help="Backends to compare (can specify multiple)"
+        None, "--backend", "-b", help="Backends to compare (can specify multiple)"
     ),
     all_backends: bool = typer.Option(
-        False, "--all", "-a",
-        help="Compare across all available backends"
+        False, "--all", "-a", help="Compare across all available backends"
     ),
-    parallel: bool = typer.Option(
-        False, "--parallel", "-p",
-        help="Run comparisons in parallel"
-    ),
-    output_file: Path = typer.Option(
-        None, "--output", "-o",
-        help="Save comparison report to file"
-    ),
-    no_progress: bool = typer.Option(
-        False, "--no-progress",
-        help="Disable progress display"
-    ),
+    parallel: bool = typer.Option(False, "--parallel", "-p", help="Run comparisons in parallel"),
+    output_file: Path = typer.Option(None, "--output", "-o", help="Save comparison report to file"),
+    no_progress: bool = typer.Option(False, "--no-progress", help="Disable progress display"),
 ):
     """Compare execution results across multiple backends.
 
@@ -165,12 +153,14 @@ def _display_table(results: dict[str, Any], comparison: dict[str, Any]) -> None:
     """Display comparison as table."""
     rows = []
     for backend, data in results.items():
-        rows.append({
-            "backend": backend,
-            "time_s": f"{data.get('execution_time', 0):.3f}",
-            "state": data.get("state", "unknown"),
-            "speedup": f"{comparison.get('speedup', {}).get(backend, 1.0):.2f}x",
-        })
+        rows.append(
+            {
+                "backend": backend,
+                "time_s": f"{data.get('execution_time', 0):.3f}",
+                "state": data.get("state", "unknown"),
+                "speedup": f"{comparison.get('speedup', {}).get(backend, 1.0):.2f}x",
+            }
+        )
 
     formatter = TableFormatter()
     typer.echo(formatter.format(rows, title="Backend Comparison"))
@@ -276,7 +266,7 @@ def quick_cmd(
 
         start = time.time()
         plan = planner.plan(objective)
-        result = executor.run(plan)
+        executor.run(plan)
         elapsed = time.time() - start
 
         results[backend] = {

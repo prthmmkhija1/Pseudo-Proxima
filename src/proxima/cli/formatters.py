@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 import sys
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from io import StringIO
 from typing import Any, TextIO
@@ -187,6 +187,7 @@ class YamlFormatter(OutputFormatter):
         """Format data as YAML."""
         try:
             import yaml
+
             return yaml.safe_dump(
                 data,
                 default_flow_style=False,
@@ -276,6 +277,7 @@ class TableFormatter(OutputFormatter):
 
         # Get box style
         from rich import box as rich_box
+
         box_styles = {
             "rounded": rich_box.ROUNDED,
             "simple": rich_box.SIMPLE,
@@ -337,9 +339,7 @@ class TableFormatter(OutputFormatter):
         # Rows
         for row in data:
             if isinstance(row, dict):
-                line = " | ".join(
-                    str(row.get(col, "")).ljust(widths[col]) for col in columns
-                )
+                line = " | ".join(str(row.get(col, "")).ljust(widths[col]) for col in columns)
                 lines.append(line)
 
         return "\n".join(lines)
@@ -387,7 +387,7 @@ class RichFormatter(OutputFormatter):
         output = StringIO()
         console = Console(file=output, force_terminal=True)
 
-        style = kwargs.get("style", "default")
+        kwargs.get("style", "default")
 
         if isinstance(data, str):
             text = Text(data)

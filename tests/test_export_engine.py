@@ -39,7 +39,6 @@ from proxima.data.export import (
     export_to_yaml,
 )
 
-
 # ===== Test Fixtures =====
 
 
@@ -256,11 +255,11 @@ class TestJSONExporter:
     def test_export_pretty_print(self, sample_data: ReportData):
         """Test pretty print option."""
         exporter = JSONExporter()
-        
+
         # With pretty print
         options_pretty = ExportOptions(stream_output=True, pretty_print=True)
         result_pretty = exporter.export(sample_data, options_pretty)
-        
+
         # Without pretty print
         options_compact = ExportOptions(stream_output=True, pretty_print=False)
         result_compact = exporter.export(sample_data, options_compact)
@@ -368,6 +367,7 @@ class TestXLSXExporter:
 
         # Verify sheets
         import openpyxl
+
         wb = openpyxl.load_workbook(output_path)
         sheet_names = wb.sheetnames
 

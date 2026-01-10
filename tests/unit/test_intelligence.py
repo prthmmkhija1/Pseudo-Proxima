@@ -11,48 +11,42 @@ Tests cover:
 
 from __future__ import annotations
 
-import math
-from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from proxima.intelligence import (
-    # LLM Router
-    LLMRequest,
-    LLMResponse,
-    LLMRouter,
-    OpenAIProvider,
+    AmplitudeAnalysis,
     AnthropicProvider,
-    OllamaProvider,
-    LMStudioProvider,
-    LlamaCppProvider,
-    ProviderRegistry,
-    LocalLLMDetector,
-    LocalLLMStatus,
+    BackendCapabilities,
+    BackendRegistry,
     # Backend Selector
     BackendSelector,
-    BackendRegistry,
-    BackendCapabilities,
     BackendType,
-    SelectionResult,
-    SelectionScore,
-    SelectionStrategy,
     CircuitCharacteristics,
     # Insight Engine
     InsightEngine,
-    InsightReport,
     InsightLevel,
-    StatisticalMetrics,
-    AmplitudeAnalysis,
+    InsightReport,
+    LlamaCppProvider,
+    # LLM Router
+    LLMRequest,
+    LLMResponse,
+    LMStudioProvider,
+    LocalLLMDetector,
+    LocalLLMStatus,
+    OllamaProvider,
+    OpenAIProvider,
     PatternInfo,
     PatternType,
-    Recommendation,
-    Visualization,
+    ProviderRegistry,
+    SelectionResult,
+    SelectionScore,
+    SelectionStrategy,
+    StatisticalMetrics,
     analyze_results,
     summarize_results,
 )
-
 
 # =============================================================================
 # LLM Request/Response Tests
@@ -65,7 +59,7 @@ class TestLLMRequest:
     def test_request_creation_minimal(self) -> None:
         """Test creating a minimal request."""
         request = LLMRequest(prompt="Hello")
-        
+
         assert request.prompt == "Hello"
         assert request.provider is None
         assert request.model is None
@@ -81,7 +75,7 @@ class TestLLMRequest:
             max_tokens=2000,
             system_prompt="You are a quantum physics expert.",
         )
-        
+
         assert request.prompt == "Tell me about quantum computing"
         assert request.provider == "openai"
         assert request.model == "gpt-4"
@@ -93,7 +87,7 @@ class TestLLMRequest:
         """Test temperature can be set to boundary values."""
         request_zero = LLMRequest(prompt="Test", temperature=0.0)
         request_one = LLMRequest(prompt="Test", temperature=1.0)
-        
+
         assert request_zero.temperature == 0.0
         assert request_one.temperature == 1.0
 
@@ -109,7 +103,7 @@ class TestLLMResponse:
             model="gpt-4",
             latency_ms=150.5,
         )
-        
+
         assert response.text == "Hello! How can I help?"
         assert response.provider == "openai"
         assert response.model == "gpt-4"
@@ -126,7 +120,7 @@ class TestLLMResponse:
             latency_ms=50.0,
             error="API rate limit exceeded",
         )
-        
+
         assert response.text == ""
         assert response.error == "API rate limit exceeded"
 
@@ -140,7 +134,7 @@ class TestLLMResponse:
             latency_ms=100.0,
             raw=raw,
         )
-        
+
         assert response.raw == raw
         assert response.raw["id"] == "chatcmpl-123"
 
@@ -156,7 +150,7 @@ class TestOpenAIProvider:
     def test_provider_properties(self) -> None:
         """Test provider name and type."""
         provider = OpenAIProvider()
-        
+
         assert provider.name == "openai"
         assert provider.requires_api_key is True
         assert provider.is_local is False
@@ -164,7 +158,7 @@ class TestOpenAIProvider:
     def test_default_model(self) -> None:
         """Test default model is set."""
         provider = OpenAIProvider()
-        
+
         # Default model should be gpt-4 or gpt-3.5
         assert provider.default_model is not None
         assert "gpt" in provider.default_model
@@ -179,11 +173,11 @@ class TestOpenAIProvider:
         }
         mock_response.raise_for_status = MagicMock()
         mock_post.return_value = mock_response
-        
+
         provider = OpenAIProvider()
         request = LLMRequest(prompt="Hi")
         response = provider.send(request, api_key="test-key")
-        
+
         assert response.text == "Hello!"
         assert response.provider == "openai"
 
@@ -191,11 +185,11 @@ class TestOpenAIProvider:
     def test_send_error(self, mock_post: MagicMock) -> None:
         """Test API error handling."""
         mock_post.side_effect = Exception("Connection failed")
-        
+
         provider = OpenAIProvider()
         request = LLMRequest(prompt="Hi")
         response = provider.send(request, api_key="test-key")
-        
+
         assert response.error is not None
         assert "Connection failed" in response.error
 
@@ -206,7 +200,7 @@ class TestAnthropicProvider:
     def test_provider_properties(self) -> None:
         """Test provider name and type."""
         provider = AnthropicProvider()
-        
+
         assert provider.name == "anthropic"
         assert provider.requires_api_key is True
         assert provider.is_local is False
@@ -214,7 +208,7 @@ class TestAnthropicProvider:
     def test_default_model(self) -> None:
         """Test default model is Claude."""
         provider = AnthropicProvider()
-        
+
         assert provider.default_model is not None
         assert "claude" in provider.default_model
 
@@ -228,11 +222,11 @@ class TestAnthropicProvider:
         }
         mock_response.raise_for_status = MagicMock()
         mock_post.return_value = mock_response
-        
+
         provider = AnthropicProvider()
         request = LLMRequest(prompt="Hi")
         response = provider.send(request, api_key="test-key")
-        
+
         assert response.text == "Hello from Claude!"
         assert response.provider == "anthropic"
 
@@ -243,7 +237,7 @@ class TestOllamaProvider:
     def test_provider_properties(self) -> None:
         """Test provider is local."""
         provider = OllamaProvider()
-        
+
         assert provider.name == "ollama"
         assert provider.requires_api_key is False
         assert provider.is_local is True
@@ -251,7 +245,7 @@ class TestOllamaProvider:
     def test_default_model(self) -> None:
         """Test default model."""
         provider = OllamaProvider()
-        
+
         assert provider.default_model == "llama2"
 
     @patch("httpx.Client.get")
@@ -260,7 +254,7 @@ class TestOllamaProvider:
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_get.return_value = mock_response
-        
+
         provider = OllamaProvider()
         assert provider.health_check() is True
 
@@ -268,7 +262,7 @@ class TestOllamaProvider:
     def test_health_check_failure(self, mock_get: MagicMock) -> None:
         """Test health check when server is not running."""
         mock_get.side_effect = Exception("Connection refused")
-        
+
         provider = OllamaProvider()
         assert provider.health_check() is False
 
@@ -279,7 +273,7 @@ class TestLMStudioProvider:
     def test_provider_properties(self) -> None:
         """Test provider is local."""
         provider = LMStudioProvider()
-        
+
         assert provider.name == "lmstudio"
         assert provider.requires_api_key is False
         assert provider.is_local is True
@@ -290,7 +284,7 @@ class TestLMStudioProvider:
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_get.return_value = mock_response
-        
+
         provider = LMStudioProvider()
         assert provider.health_check() is True
 
@@ -301,7 +295,7 @@ class TestLlamaCppProvider:
     def test_provider_properties(self) -> None:
         """Test provider is local."""
         provider = LlamaCppProvider()
-        
+
         assert provider.name == "llama_cpp"
         assert provider.requires_api_key is False
         assert provider.is_local is True
@@ -318,7 +312,7 @@ class TestProviderRegistry:
     def test_default_providers_registered(self) -> None:
         """Test default providers are available."""
         registry = ProviderRegistry()
-        
+
         assert registry.get("openai") is not None
         assert registry.get("anthropic") is not None
         assert registry.get("ollama") is not None
@@ -329,7 +323,7 @@ class TestProviderRegistry:
         """Test listing all providers."""
         registry = ProviderRegistry()
         providers = registry.list_providers()
-        
+
         assert len(providers) >= 5
         assert "openai" in providers
         assert "anthropic" in providers
@@ -338,7 +332,7 @@ class TestProviderRegistry:
         """Test getting only local providers."""
         registry = ProviderRegistry()
         local = registry.get_local_providers()
-        
+
         assert all(p.is_local for p in local)
         assert len(local) >= 3  # ollama, lmstudio, llama_cpp
 
@@ -354,22 +348,22 @@ class TestLocalLLMDetector:
     def test_detector_creation(self) -> None:
         """Test creating a detector."""
         detector = LocalLLMDetector()
-        
+
         assert detector is not None
 
     def test_detect_all_returns_list(self) -> None:
         """Test detect_all returns list of statuses (mocked to avoid network)."""
         detector = LocalLLMDetector()
-        
+
         # Mock the detect_all method to avoid actual network calls
         mock_statuses = [
             LocalLLMStatus(provider="ollama", available=False, endpoint="http://localhost:11434"),
             LocalLLMStatus(provider="lm_studio", available=False, endpoint="http://localhost:1234"),
             LocalLLMStatus(provider="llama_cpp", available=False, endpoint="http://localhost:8080"),
         ]
-        with patch.object(detector, 'detect_all', return_value=mock_statuses):
+        with patch.object(detector, "detect_all", return_value=mock_statuses):
             statuses = detector.detect_all()
-        
+
             assert isinstance(statuses, list)
             assert len(statuses) >= 3
             assert all(isinstance(s, LocalLLMStatus) for s in statuses)
@@ -377,25 +371,46 @@ class TestLocalLLMDetector:
     def test_get_first_available_with_mock(self) -> None:
         """Test get_first_available with mocked providers."""
         detector = LocalLLMDetector()
-        
+
         # Mock to return no available providers
-        with patch.object(detector, 'detect_all', return_value=[
-            LocalLLMStatus(provider="ollama", available=False, endpoint="http://localhost:11434"),
-            LocalLLMStatus(provider="lm_studio", available=False, endpoint="http://localhost:1234"),
-            LocalLLMStatus(provider="llama_cpp", available=False, endpoint="http://localhost:8080"),
-        ]):
+        with patch.object(
+            detector,
+            "detect_all",
+            return_value=[
+                LocalLLMStatus(
+                    provider="ollama", available=False, endpoint="http://localhost:11434"
+                ),
+                LocalLLMStatus(
+                    provider="lm_studio", available=False, endpoint="http://localhost:1234"
+                ),
+                LocalLLMStatus(
+                    provider="llama_cpp", available=False, endpoint="http://localhost:8080"
+                ),
+            ],
+        ):
             result = detector.get_first_available()
             assert result is None
 
     def test_get_first_available_with_available_provider(self) -> None:
         """Test get_first_available when a provider is available."""
         detector = LocalLLMDetector()
-        
+
         # Mock to return one available provider
-        with patch.object(detector, 'detect_all', return_value=[
-            LocalLLMStatus(provider="ollama", available=True, endpoint="http://localhost:11434", models=["llama2"]),
-            LocalLLMStatus(provider="lm_studio", available=False, endpoint="http://localhost:1234"),
-        ]):
+        with patch.object(
+            detector,
+            "detect_all",
+            return_value=[
+                LocalLLMStatus(
+                    provider="ollama",
+                    available=True,
+                    endpoint="http://localhost:11434",
+                    models=["llama2"],
+                ),
+                LocalLLMStatus(
+                    provider="lm_studio", available=False, endpoint="http://localhost:1234"
+                ),
+            ],
+        ):
             result = detector.get_first_available()
             assert result is not None
             assert result.provider == "ollama"
@@ -419,7 +434,7 @@ class TestCircuitCharacteristics:
             gate_types={"h", "cx", "rz"},
             entanglement_density=0.3,
         )
-        
+
         assert chars.qubit_count == 5
         assert chars.gate_count == 20
         assert chars.depth == 10
@@ -433,7 +448,7 @@ class TestCircuitCharacteristics:
             depth=20,
             estimated_memory_mb=16.0,
         )
-        
+
         assert chars.estimated_memory_mb == 16.0
 
 
@@ -444,7 +459,7 @@ class TestBackendRegistry:
         """Test default backends are registered."""
         registry = BackendRegistry()
         backends = registry.list_all()
-        
+
         assert len(backends) >= 5
         names = [b.name for b in backends]
         assert "numpy" in names
@@ -461,7 +476,7 @@ class TestBackendRegistry:
             supports_gpu=True,
         )
         registry.register(custom)
-        
+
         assert registry.get("custom") is not None
         assert registry.get("custom").max_qubits == 50
 
@@ -473,9 +488,9 @@ class TestBackendRegistry:
             gate_count=20,
             depth=10,
         )
-        
+
         compatible = registry.list_compatible(chars)
-        
+
         # All backends should be compatible with 5 qubits
         assert len(compatible) >= 5
 
@@ -487,9 +502,9 @@ class TestBackendRegistry:
             gate_count=100,
             depth=50,
         )
-        
+
         compatible = registry.list_compatible(chars)
-        
+
         # Fewer backends support 35 qubits
         assert len(compatible) < 5
 
@@ -500,14 +515,14 @@ class TestBackendSelector:
     def test_selector_creation(self) -> None:
         """Test creating a selector."""
         selector = BackendSelector()
-        
+
         assert selector is not None
 
     def test_list_backends(self) -> None:
         """Test listing available backends."""
         selector = BackendSelector()
         backends = selector.list_backends()
-        
+
         assert "numpy" in backends
         assert "cupy" in backends
 
@@ -520,9 +535,9 @@ class TestBackendSelector:
             depth=20,
             estimated_memory_mb=16.0,
         )
-        
+
         result = selector.select_from_characteristics(chars)
-        
+
         assert isinstance(result, SelectionResult)
         assert result.selected_backend is not None
         assert result.confidence >= 0.0
@@ -538,12 +553,12 @@ class TestBackendSelector:
             gate_count=100,
             depth=30,
         )
-        
+
         result = selector.select_from_characteristics(
             chars,
             strategy=SelectionStrategy.PERFORMANCE,
         )
-        
+
         assert result is not None
 
     def test_select_with_memory_strategy(self) -> None:
@@ -555,12 +570,12 @@ class TestBackendSelector:
             depth=50,
             estimated_memory_mb=1024.0,
         )
-        
+
         result = selector.select_from_characteristics(
             chars,
             strategy=SelectionStrategy.MEMORY,
         )
-        
+
         assert result is not None
 
     def test_selection_result_has_alternatives(self) -> None:
@@ -571,9 +586,9 @@ class TestBackendSelector:
             gate_count=40,
             depth=15,
         )
-        
+
         result = selector.select_from_characteristics(chars)
-        
+
         assert isinstance(result.alternatives, list)
 
     def test_selection_result_has_reasoning(self) -> None:
@@ -584,9 +599,9 @@ class TestBackendSelector:
             gate_count=50,
             depth=20,
         )
-        
+
         result = selector.select_from_characteristics(chars)
-        
+
         assert isinstance(result.reasoning_steps, list)
         assert len(result.reasoning_steps) > 0
 
@@ -598,9 +613,9 @@ class TestBackendSelector:
             gate_count=50,
             depth=20,
         )
-        
+
         result = selector.select_from_characteristics(chars)
-        
+
         for i in range(len(result.scores) - 1):
             assert result.scores[i].total_score >= result.scores[i + 1].total_score
 
@@ -619,7 +634,7 @@ class TestSelectionScore:
             history_score=0.5,
             compatibility_score=0.9,
         )
-        
+
         assert score.backend_name == "numpy"
         assert score.total_score == 0.75
 
@@ -635,7 +650,7 @@ class TestSelectionScore:
             compatibility_score=0.8,
             details={"gpu_available": True, "qubit_headroom": 15},
         )
-        
+
         assert score.details["gpu_available"] is True
         assert score.details["qubit_headroom"] == 15
 
@@ -664,7 +679,7 @@ class TestStatisticalMetrics:
             gini_coefficient=0.3,
             top_k_coverage=0.9,
         )
-        
+
         assert metrics.entropy == 1.5
         assert metrics.dominant_state == "00"
 
@@ -680,7 +695,7 @@ class TestPatternInfo:
             description="Strong peak at state '00'",
             affected_states=["00"],
         )
-        
+
         assert pattern.pattern_type == PatternType.PEAKED
         assert pattern.confidence == 0.85
 
@@ -693,7 +708,7 @@ class TestPatternInfo:
             affected_states=["00", "11"],
             metrics={"combined_probability": 0.98},
         )
-        
+
         assert pattern.metrics["combined_probability"] == 0.98
 
 
@@ -703,16 +718,16 @@ class TestInsightEngine:
     def test_engine_creation(self) -> None:
         """Test creating an insight engine."""
         engine = InsightEngine()
-        
+
         assert engine is not None
 
     def test_analyze_uniform_distribution(self) -> None:
         """Test analyzing uniform distribution."""
         engine = InsightEngine()
         probs = {"00": 0.25, "01": 0.25, "10": 0.25, "11": 0.25}
-        
+
         report = engine.analyze(probs)
-        
+
         assert isinstance(report, InsightReport)
         assert report.statistics.entropy == pytest.approx(2.0, abs=0.01)
         assert report.statistics.total_states == 4
@@ -722,12 +737,12 @@ class TestInsightEngine:
         """Test analyzing peaked distribution."""
         engine = InsightEngine()
         probs = {"00": 0.9, "01": 0.05, "10": 0.03, "11": 0.02}
-        
+
         report = engine.analyze(probs)
-        
+
         assert report.statistics.dominant_state == "00"
         assert report.statistics.dominant_probability == 0.9
-        
+
         # Should detect peaked pattern
         peaked_patterns = [p for p in report.patterns if p.pattern_type == PatternType.PEAKED]
         assert len(peaked_patterns) > 0
@@ -736,9 +751,9 @@ class TestInsightEngine:
         """Test analyzing Bell state (entanglement)."""
         engine = InsightEngine()
         probs = {"00": 0.5, "01": 0.0, "10": 0.0, "11": 0.5}
-        
+
         report = engine.analyze(probs)
-        
+
         # Should detect entanglement pattern
         entangled = [p for p in report.patterns if p.pattern_type == PatternType.ENTANGLED]
         assert len(entangled) > 0
@@ -751,9 +766,9 @@ class TestInsightEngine:
             "00": complex(0.707, 0.0),
             "11": complex(0.707, 0.0),
         }
-        
+
         report = engine.analyze(probs, amplitudes=amps)
-        
+
         assert report.amplitude_analysis is not None
         assert isinstance(report.amplitude_analysis, AmplitudeAnalysis)
 
@@ -761,10 +776,10 @@ class TestInsightEngine:
         """Test different analysis levels."""
         engine = InsightEngine()
         probs = {"0": 0.7, "1": 0.3}
-        
+
         basic = engine.analyze(probs, level=InsightLevel.BASIC)
         detailed = engine.analyze(probs, level=InsightLevel.DETAILED)
-        
+
         # Detailed should have recommendations
         assert len(detailed.recommendations) >= len(basic.recommendations)
 
@@ -772,9 +787,9 @@ class TestInsightEngine:
         """Test quick analysis method."""
         engine = InsightEngine()
         probs = {"00": 0.5, "11": 0.5}
-        
+
         summary = engine.quick_analyze(probs)
-        
+
         assert isinstance(summary, str)
         assert len(summary) > 0
 
@@ -782,9 +797,9 @@ class TestInsightEngine:
         """Test that report has summary."""
         engine = InsightEngine()
         probs = {"0": 1.0}
-        
+
         report = engine.analyze(probs)
-        
+
         assert report.summary is not None
         assert len(report.summary) > 0
 
@@ -792,9 +807,9 @@ class TestInsightEngine:
         """Test that report has key findings."""
         engine = InsightEngine()
         probs = {"00": 0.5, "11": 0.5}
-        
+
         report = engine.analyze(probs)
-        
+
         assert isinstance(report.key_findings, list)
         assert len(report.key_findings) > 0
 
@@ -802,26 +817,27 @@ class TestInsightEngine:
         """Test that report includes visualization suggestions."""
         engine = InsightEngine()
         probs = {"00": 0.5, "01": 0.3, "10": 0.15, "11": 0.05}
-        
+
         report = engine.analyze(probs)
-        
+
         assert isinstance(report.visualizations, list)
         assert len(report.visualizations) > 0
-        
+
         # Should suggest bar chart
         bar_viz = [v for v in report.visualizations if v.viz_type == "bar"]
         assert len(bar_viz) > 0
 
     def test_engine_with_llm_callback(self) -> None:
         """Test engine with LLM callback."""
+
         def mock_llm(prompt: str) -> str:
             return "This is a mock LLM response. What else would you like to know?"
-        
+
         engine = InsightEngine(llm_callback=mock_llm)
         probs = {"00": 0.5, "11": 0.5}
-        
+
         report = engine.analyze(probs, level=InsightLevel.EXPERT)
-        
+
         assert report.llm_synthesis is not None
         assert "mock LLM response" in report.llm_synthesis
 
@@ -832,17 +848,17 @@ class TestConvenienceFunctions:
     def test_analyze_results(self) -> None:
         """Test analyze_results function."""
         probs = {"0": 0.7, "1": 0.3}
-        
+
         report = analyze_results(probs)
-        
+
         assert isinstance(report, InsightReport)
 
     def test_summarize_results(self) -> None:
         """Test summarize_results function."""
         probs = {"00": 0.9, "01": 0.05, "10": 0.03, "11": 0.02}
-        
+
         summary = summarize_results(probs)
-        
+
         assert isinstance(summary, str)
         assert "00" in summary  # Should mention dominant state
 
@@ -859,9 +875,9 @@ class TestEdgeCases:
         """Test analyzing empty probability distribution."""
         engine = InsightEngine()
         probs: dict[str, float] = {}
-        
+
         report = engine.analyze(probs)
-        
+
         assert report.statistics.total_states == 0
         assert report.statistics.entropy == 0.0
 
@@ -869,9 +885,9 @@ class TestEdgeCases:
         """Test analyzing single state with 100% probability."""
         engine = InsightEngine()
         probs = {"0": 1.0}
-        
+
         report = engine.analyze(probs)
-        
+
         assert report.statistics.entropy == 0.0
         assert report.statistics.dominant_probability == 1.0
         assert len(report.warnings) > 0  # Should warn about deterministic
@@ -881,9 +897,9 @@ class TestEdgeCases:
         engine = InsightEngine()
         # 1e-10 is the cutoff, so 1e-10 itself is filtered out
         probs = {"0": 1e-10, "1": 1.0 - 1e-10}
-        
+
         report = engine.analyze(probs)
-        
+
         # Should handle near-zero probabilities
         # Only the large probability counts as non-zero (1e-10 is filtered)
         assert report.statistics.non_zero_states == 1
@@ -892,10 +908,10 @@ class TestEdgeCases:
         """Test analyzing large state space."""
         engine = InsightEngine()
         # Create 256 states (8 qubits)
-        probs = {format(i, "08b"): 1/256 for i in range(256)}
-        
+        probs = {format(i, "08b"): 1 / 256 for i in range(256)}
+
         report = engine.analyze(probs)
-        
+
         assert report.statistics.total_states == 256
         assert report.statistics.entropy == pytest.approx(8.0, abs=0.01)
 
@@ -907,9 +923,9 @@ class TestEdgeCases:
             gate_count=1000,
             depth=500,
         )
-        
+
         result = selector.select_from_characteristics(chars)
-        
+
         # Should fallback gracefully
         assert result.selected_backend == "numpy"
         assert result.confidence == 0.0
@@ -925,19 +941,20 @@ class TestIntegration:
 
     def test_selector_with_history(self) -> None:
         """Test selector with history provider."""
+
         def mock_history(backend: str) -> float:
             history = {"numpy": 0.9, "cupy": 0.7, "qiskit": 0.85}
             return history.get(backend, 0.5)
-        
+
         selector = BackendSelector(history_provider=mock_history)
         chars = CircuitCharacteristics(
             qubit_count=10,
             gate_count=50,
             depth=20,
         )
-        
+
         result = selector.select_from_characteristics(chars)
-        
+
         # History should influence selection
         numpy_score = next(s for s in result.scores if s.backend_name == "numpy")
         assert numpy_score.history_score == 0.9
@@ -952,7 +969,7 @@ class TestIntegration:
             "depth": 2,
             "description": "Bell state preparation",
         }
-        
+
         report = engine.analyze(probs, circuit_info=circuit_info)
-        
+
         assert report is not None

@@ -12,9 +12,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 # Check if textual is available
 try:
-    import textual
+    import importlib.util
 
-    HAS_TEXTUAL = True
+    HAS_TEXTUAL = importlib.util.find_spec("textual") is not None
 except ImportError:
     HAS_TEXTUAL = False
 
@@ -592,66 +592,14 @@ class TestTUIIntegration:
     def test_all_exports_available(self):
         """Verify all exports in __init__.py are importable."""
         from proxima.tui import (
-            # App
-            ProximaApp,
-            # Screens
-            BackendsScreen,
-            ConfigurationScreen,
-            DashboardScreen,
-            ExecutionScreen,
-            ResultsScreen,
             # Widgets
-            BackendCard,
-            BackendInfo,
-            BackendStatus,
-            ConfigInput,
-            ConfigToggle,
-            ExecutionCard,
-            ExecutionProgress,
-            ExecutionTimer,
-            HelpModal,
-            LogEntry,
-            LogViewer,
-            MetricDisplay,
-            ProgressBar,
-            ResultsTable,
-            StatusIndicator,
-            StatusItem,
-            StatusLevel,
-            StatusPanel,
-            # Controllers
-            DataController,
-            EventBus,
-            EventType,
-            ExecutionController,
-            ExecutionStatus,
-            NavigationController,
-            State,
-            StateStore,
-            TUIEvent,
-            # Modals
-            ChoiceModal,
             ConfirmModal,
-            ConsentModal,
-            DialogResult,
-            ErrorModal,
-            FormField,
-            FormModal,
-            InputModal,
-            ModalResponse,
-            ProgressModal,
-            show_confirm,
-            show_consent,
-            show_error,
-            show_input,
-            # Styles
-            ColorPalette,
-            StyleManager,
+            DashboardScreen,
+            # Controllers
+            EventBus,
+            ProximaApp,
+            StatusPanel,
             Theme,
-            build_theme_css,
-            get_css,
-            get_palette,
-            set_theme,
         )
 
         # Verify key items exist

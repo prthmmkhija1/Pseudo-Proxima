@@ -13,12 +13,12 @@ This module provides:
 
 from __future__ import annotations
 
-import sys
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from getpass import getpass
-from typing import Any, Callable, Generic, TypeVar
+from typing import Any, Generic, TypeVar
 
 import typer
 
@@ -26,7 +26,6 @@ try:
     from rich.console import Console
     from rich.panel import Panel
     from rich.prompt import Confirm, Prompt as RichPrompt
-    from rich.table import Table
     from rich.text import Text
 
     RICH_AVAILABLE = True
@@ -128,7 +127,9 @@ class ConfirmPrompt(Prompt[bool]):
             else:
                 default_str = f"[{self.yes_text}/{self.no_text}]"
                 if self.default is not None:
-                    default_indicator = self.yes_text.upper() if self.default else self.no_text.upper()
+                    default_indicator = (
+                        self.yes_text.upper() if self.default else self.no_text.upper()
+                    )
                     default_str = f"[{default_indicator}]"
 
                 response = input(f"{self.message} {default_str}: ").strip().lower()

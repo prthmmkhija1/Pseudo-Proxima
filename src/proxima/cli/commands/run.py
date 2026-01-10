@@ -11,11 +11,10 @@ This module provides the complete run command with:
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 import typer
 
-from proxima.cli.formatters import echo_output, OutputFormat
+from proxima.cli.formatters import echo_output
 from proxima.cli.progress import step_context
 from proxima.cli.prompts import context_consent
 from proxima.cli.workflows import (
@@ -135,7 +134,9 @@ def main(
         steps = ["Initialize execution", "Plan objective (dry-run)"]
 
     try:
-        with step_context(steps, title=f"Running: {objective}", no_progress=no_progress or quiet) as progress:
+        with step_context(
+            steps, title=f"Running: {objective}", no_progress=no_progress or quiet
+        ) as progress:
             # Step 1: Initialize
             fsm = ExecutionStateMachine()
             planner = Planner(fsm)
@@ -181,8 +182,9 @@ def main(
             # Save to history (if enabled)
             if save_results:
                 try:
-                    from proxima.data.history import execution_history, ExecutionResult
                     from datetime import datetime
+
+                    from proxima.data.history import ExecutionResult, execution_history
 
                     history_entry = ExecutionResult(
                         id=f"run_{int(datetime.now().timestamp())}",
@@ -205,7 +207,7 @@ def main(
         if output_format == "json":
             echo_output(ctx, execution_result, format="json")
         elif not quiet:
-            typer.echo(f"\n[OK] Execution complete")
+            typer.echo("\n[OK] Execution complete")
             typer.echo(f"  State: {fsm.state}")
             typer.echo(f"  Backend: {effective_backend}")
             if isinstance(result, dict):
@@ -308,6 +310,7 @@ def plan_cmd(
 
     if output_file:
         import json
+
         output_file.parent.mkdir(parents=True, exist_ok=True)
         output_file.write_text(json.dumps(result, indent=2, default=str))
         typer.echo(f"Plan saved to {output_file}")

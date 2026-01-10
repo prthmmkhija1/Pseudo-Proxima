@@ -12,12 +12,12 @@ This module provides:
 
 Events flow:
     ConsentManager -> ConsentEventBus -> Handlers
-    
+
 Usage:
     bus = ConsentEventBus()
     bus.register(LoggingHandler())
     bus.register(MetricsHandler())
-    
+
     # In ConsentManager, emit events:
     bus.emit(ConsentEvent(...))
 """
@@ -33,16 +33,14 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum, auto
-from typing import Any, Generic, Protocol, TypeVar
-import weakref
+from typing import Any, Protocol
 
 from .consent import (
     ConsentCategory,
     ConsentLevel,
-    ConsentRecord,
     ConsentManager,
+    ConsentRecord,
 )
-
 
 # ========== Event Types ==========
 
@@ -676,9 +674,9 @@ class EventAwareConsentManager:
         # Emit decision event
         self._bus.emit(
             ConsentEvent(
-                kind=ConsentEventKind.CONSENT_GRANTED
-                if granted
-                else ConsentEventKind.CONSENT_DENIED,
+                kind=(
+                    ConsentEventKind.CONSENT_GRANTED if granted else ConsentEventKind.CONSENT_DENIED
+                ),
                 topic=topic,
                 category=category,
                 granted=granted,

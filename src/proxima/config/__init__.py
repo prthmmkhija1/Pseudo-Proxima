@@ -18,148 +18,140 @@ from proxima.config.defaults import (
     PROJECT_CONFIG_FILENAME,
     USER_CONFIG_PATH,
 )
-
-from proxima.config.settings import (
-    # Settings classes
-    Settings,
-    GeneralSettings,
-    BackendsSettings,
-    LLMSettings,
-    ResourcesSettings,
-    ConsentSettings,
-    # Config service
-    ConfigService,
-    config_service,
-    # Convenience functions
-    get_settings,
-    reload_settings,
-    FlatSettings,
-)
-
-from proxima.config.validation import (
-    # Enums
-    ValidationSeverity,
-    # Data classes
-    ValidationIssue,
-    ValidationResult,
-    # Main validation
-    validate_settings,
-    validate_config_file,
-    # Individual validators
-    validate_verbosity,
-    validate_output_format,
-    validate_backend,
-    validate_timeout,
-    validate_llm_provider,
-    validate_url,
-    validate_memory_threshold,
-    validate_path,
-    validate_storage_backend,
-    validate_model_name,
-    validate_env_var_name,
-)
-
 from proxima.config.export_import import (
+    BackupInfo,
     # Enums
     ExportFormat,
     # Data classes
     ExportOptions,
     ImportResult,
-    BackupInfo,
+    cleanup_old_backups,
+    # Backup functions
+    create_backup,
     # Export functions
     export_config,
+    # Template functions
+    generate_template,
     # Import functions
     import_config,
     import_from_url,
-    # Backup functions
-    create_backup,
     list_backups,
     restore_backup,
-    cleanup_old_backups,
-    # Template functions
-    generate_template,
 )
-
+from proxima.config.migration import (
+    # Constants
+    CURRENT_VERSION,
+    ConfigMigrator,
+    # Enums
+    MigrationDirection,
+    # Classes
+    MigrationRegistry,
+    MigrationResult,
+    # Data classes
+    MigrationStep,
+    auto_migrate,
+    check_migration_status,
+    # Functions
+    get_config_version,
+    get_migrator,
+    # Decorators
+    migration,
+    needs_migration,
+    register_pending_migrations,
+    set_config_version,
+)
+from proxima.config.schema import (
+    # Data classes
+    FieldInfo,
+    # Enums
+    FieldType,
+    SectionInfo,
+    generate_completion_data,
+    generate_json_schema,
+    # Documentation generation
+    generate_markdown_docs,
+    get_field_examples,
+    get_field_help,
+    # Convenience
+    get_settings_schema,
+    # Introspection
+    introspect_model,
+    list_all_settings,
+    print_settings_tree,
+)
 from proxima.config.secrets import (
+    EncryptedFileStorage,
+    EnvironmentStorage,
+    KeyringStorage,
+    MemoryStorage,
     # Enums
     SecretBackend,
+    # Main manager
+    SecretManager,
     # Data classes
     SecretMetadata,
     SecretResult,
     # Storage backends
     SecretStorage,
-    KeyringStorage,
-    EncryptedFileStorage,
-    EnvironmentStorage,
-    MemoryStorage,
-    # Main manager
-    SecretManager,
-    get_secret_manager,
     # Utilities
     generate_secret_key,
+    get_secret_manager,
     mask_secret,
     validate_api_key_format,
 )
-
-from proxima.config.migration import (
-    # Constants
-    CURRENT_VERSION,
-    # Enums
-    MigrationDirection,
-    # Data classes
-    MigrationStep,
-    MigrationResult,
-    # Classes
-    MigrationRegistry,
-    ConfigMigrator,
-    # Functions
-    get_config_version,
-    set_config_version,
-    needs_migration,
-    get_migrator,
-    auto_migrate,
-    check_migration_status,
-    # Decorators
-    migration,
-    register_pending_migrations,
+from proxima.config.settings import (
+    BackendsSettings,
+    # Config service
+    ConfigService,
+    ConsentSettings,
+    FlatSettings,
+    GeneralSettings,
+    LLMSettings,
+    ResourcesSettings,
+    # Settings classes
+    Settings,
+    config_service,
+    # Convenience functions
+    get_settings,
+    reload_settings,
 )
-
-from proxima.config.schema import (
-    # Enums
-    FieldType,
+from proxima.config.validation import (
     # Data classes
-    FieldInfo,
-    SectionInfo,
-    # Introspection
-    introspect_model,
-    # Documentation generation
-    generate_markdown_docs,
-    generate_json_schema,
-    generate_completion_data,
-    # Convenience
-    get_settings_schema,
-    get_field_help,
-    get_field_examples,
-    list_all_settings,
-    print_settings_tree,
+    ValidationIssue,
+    ValidationResult,
+    # Enums
+    ValidationSeverity,
+    validate_backend,
+    validate_config_file,
+    validate_env_var_name,
+    validate_llm_provider,
+    validate_memory_threshold,
+    validate_model_name,
+    validate_output_format,
+    validate_path,
+    # Main validation
+    validate_settings,
+    validate_storage_backend,
+    validate_timeout,
+    validate_url,
+    # Individual validators
+    validate_verbosity,
 )
-
 from proxima.config.watcher import (
-    # Enums
-    WatchEvent,
+    ConfigWatcher,
     # Data classes
     FileChange,
     # Watchers
     FileWatcher,
     PollingWatcher,
     WatchdogWatcher,
-    ConfigWatcher,
     WatchedConfigService,
+    # Enums
+    WatchEvent,
     # Convenience
     create_config_watcher,
     watch_config_file,
 )
-
 
 __all__ = [
     # ==========================================================================
@@ -170,7 +162,6 @@ __all__ = [
     "ENV_PREFIX",
     "PROJECT_CONFIG_FILENAME",
     "USER_CONFIG_PATH",
-    
     # ==========================================================================
     # SETTINGS
     # ==========================================================================
@@ -188,7 +179,6 @@ __all__ = [
     "get_settings",
     "reload_settings",
     "FlatSettings",
-    
     # ==========================================================================
     # VALIDATION
     # ==========================================================================
@@ -208,7 +198,6 @@ __all__ = [
     "validate_storage_backend",
     "validate_model_name",
     "validate_env_var_name",
-    
     # ==========================================================================
     # EXPORT/IMPORT
     # ==========================================================================
@@ -224,7 +213,6 @@ __all__ = [
     "restore_backup",
     "cleanup_old_backups",
     "generate_template",
-    
     # ==========================================================================
     # SECRETS
     # ==========================================================================
@@ -241,7 +229,6 @@ __all__ = [
     "generate_secret_key",
     "mask_secret",
     "validate_api_key_format",
-    
     # ==========================================================================
     # MIGRATION
     # ==========================================================================
@@ -259,7 +246,6 @@ __all__ = [
     "check_migration_status",
     "migration",
     "register_pending_migrations",
-    
     # ==========================================================================
     # SCHEMA
     # ==========================================================================
@@ -275,7 +261,6 @@ __all__ = [
     "get_field_examples",
     "list_all_settings",
     "print_settings_tree",
-    
     # ==========================================================================
     # WATCHER
     # ==========================================================================

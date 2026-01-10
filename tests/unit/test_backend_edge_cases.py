@@ -3,38 +3,13 @@
 from __future__ import annotations
 
 import time
-from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from proxima.backends.base import (
     Capabilities,
-    ExecutionResult,
-    ResultType,
     SimulatorType,
-    ValidationResult,
-)
-from proxima.backends.exceptions import (
-    BackendError,
-    BackendErrorCode,
-    BackendNotInstalledError,
-    BackendTimeoutError,
-    CircuitValidationError,
-    ExecutionError,
-    MemoryExceededError,
-    QubitLimitExceededError,
-    UnsupportedOperationError,
-    wrap_backend_exception,
-)
-from proxima.backends.execution import (
-    BatchConfig,
-    RetryConfig,
-    RetryResult,
-    calculate_backoff_delay,
-    execute_with_retry,
-    execute_with_timeout,
-    should_retry,
 )
 from proxima.backends.conversion import (
     CircuitFormat,
@@ -42,13 +17,30 @@ from proxima.backends.conversion import (
     detect_circuit_format,
     extract_circuit_info,
 )
+from proxima.backends.exceptions import (
+    BackendError,
+    BackendErrorCode,
+    BackendNotInstalledError,
+    BackendTimeoutError,
+    CircuitValidationError,
+    MemoryExceededError,
+    QubitLimitExceededError,
+    wrap_backend_exception,
+)
+from proxima.backends.execution import (
+    BatchConfig,
+    RetryConfig,
+    calculate_backoff_delay,
+    execute_with_retry,
+    execute_with_timeout,
+    should_retry,
+)
 from proxima.backends.health import (
     HealthCheckResult,
     HealthStatus,
     check_backend_health,
     generate_health_report,
 )
-
 
 # =============================================================================
 # Exception Tests

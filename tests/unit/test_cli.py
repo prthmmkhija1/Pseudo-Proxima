@@ -10,11 +10,7 @@ This module provides comprehensive tests for:
 from __future__ import annotations
 
 import json
-import time
-from dataclasses import dataclass
 from io import StringIO
-from pathlib import Path
-from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -167,8 +163,9 @@ class TestJsonFormatter:
 
     def test_custom_serializer(self):
         """Test custom JSON serializer for non-standard types."""
-        from proxima.cli.formatters import JsonFormatter
         from enum import Enum
+
+        from proxima.cli.formatters import JsonFormatter
 
         class Status(Enum):
             ACTIVE = "active"
@@ -289,21 +286,21 @@ class TestFormatterFactory:
 
     def test_get_text_formatter(self):
         """Test getting text formatter."""
-        from proxima.cli.formatters import get_formatter, TextFormatter
+        from proxima.cli.formatters import TextFormatter, get_formatter
 
         formatter = get_formatter("text")
         assert isinstance(formatter, TextFormatter)
 
     def test_get_json_formatter(self):
         """Test getting JSON formatter."""
-        from proxima.cli.formatters import get_formatter, JsonFormatter
+        from proxima.cli.formatters import JsonFormatter, get_formatter
 
         formatter = get_formatter("json")
         assert isinstance(formatter, JsonFormatter)
 
     def test_get_unknown_formatter(self):
         """Test getting formatter for unknown format falls back to text."""
-        from proxima.cli.formatters import get_formatter, TextFormatter
+        from proxima.cli.formatters import TextFormatter, get_formatter
 
         formatter = get_formatter("unknown")
         assert isinstance(formatter, TextFormatter)
@@ -347,7 +344,7 @@ class TestSimpleProgress:
 
     def test_progress_lifecycle(self):
         """Test progress start/update/complete."""
-        from proxima.cli.progress import SimpleProgress, ProgressStatus
+        from proxima.cli.progress import ProgressStatus, SimpleProgress
 
         progress = SimpleProgress("Loading...", total=10, no_progress=True)
         progress.start()
@@ -369,7 +366,7 @@ class TestSimpleProgress:
 
     def test_progress_fail(self):
         """Test progress failure."""
-        from proxima.cli.progress import SimpleProgress, ProgressStatus
+        from proxima.cli.progress import ProgressStatus, SimpleProgress
 
         progress = SimpleProgress(no_progress=True)
         progress.start()
@@ -391,7 +388,7 @@ class TestStepProgress:
 
     def test_step_advance(self):
         """Test advancing through steps."""
-        from proxima.cli.progress import StepProgress, ProgressStatus
+        from proxima.cli.progress import ProgressStatus, StepProgress
 
         progress = StepProgress(["Step 1", "Step 2"], no_progress=True)
         progress.start()
@@ -403,7 +400,7 @@ class TestStepProgress:
 
     def test_step_with_error(self):
         """Test step with error."""
-        from proxima.cli.progress import StepProgress, ProgressStatus
+        from proxima.cli.progress import ProgressStatus, StepProgress
 
         progress = StepProgress(["Step 1"], no_progress=True)
         progress.start()
@@ -413,7 +410,7 @@ class TestStepProgress:
 
     def test_step_skip(self):
         """Test skipping a step."""
-        from proxima.cli.progress import StepProgress, ProgressStatus
+        from proxima.cli.progress import ProgressStatus, StepProgress
 
         progress = StepProgress(["Step 1", "Step 2"], no_progress=True)
         progress.start()
@@ -437,7 +434,7 @@ class TestProgressContextManagers:
         from proxima.cli.progress import progress_context
 
         with progress_context("Processing", total=10, no_progress=True) as progress:
-            for i in range(10):
+            for _i in range(10):
                 progress.update(1)
 
     def test_step_context(self):
@@ -529,7 +526,7 @@ class TestConfirmPrompt:
     @patch("builtins.input", return_value="")
     def test_confirm_default(self, mock_input):
         """Test confirm with default value."""
-        from proxima.cli.prompts import ConfirmPrompt, PromptResult
+        from proxima.cli.prompts import ConfirmPrompt
 
         prompt = ConfirmPrompt("Continue?", default=True)
         result = prompt.ask()
@@ -563,7 +560,7 @@ class TestSelectPrompt:
 
     def test_select_prompt_creation(self):
         """Test creating a select prompt."""
-        from proxima.cli.prompts import SelectPrompt, SelectOption
+        from proxima.cli.prompts import SelectPrompt
 
         options = ["Option A", "Option B", "Option C"]
         prompt = SelectPrompt("Choose:", options=options)
@@ -641,7 +638,7 @@ class TestConsentPrompt:
     @patch("builtins.input", return_value="I AGREE")
     def test_consent_granted(self, mock_input):
         """Test consent granted."""
-        from proxima.cli.prompts import ConsentPrompt, ConsentInfo
+        from proxima.cli.prompts import ConsentInfo, ConsentPrompt
 
         info = ConsentInfo(title="Test", description="Test consent")
         prompt = ConsentPrompt(info, require_explicit=True)
@@ -651,7 +648,7 @@ class TestConsentPrompt:
     @patch("builtins.input", return_value="no")
     def test_consent_denied(self, mock_input):
         """Test consent denied."""
-        from proxima.cli.prompts import ConsentPrompt, ConsentInfo
+        from proxima.cli.prompts import ConsentInfo, ConsentPrompt
 
         info = ConsentInfo(title="Test", description="Test consent")
         prompt = ConsentPrompt(info, require_explicit=True)
@@ -775,7 +772,7 @@ class TestRunWorkflow:
 
     def test_run_workflow_creation(self, workflow_context):
         """Test creating run workflow."""
-        from proxima.cli.workflows import RunWorkflow, RunOptions
+        from proxima.cli.workflows import RunOptions, RunWorkflow
 
         options = RunOptions(objective="test objective")
         workflow = RunWorkflow(workflow_context, options)
@@ -784,7 +781,7 @@ class TestRunWorkflow:
 
     def test_run_workflow_dry_run(self, mock_settings):
         """Test run workflow in dry-run mode."""
-        from proxima.cli.workflows import RunWorkflow, RunOptions, WorkflowContext
+        from proxima.cli.workflows import RunOptions, RunWorkflow, WorkflowContext
 
         ctx = WorkflowContext(settings=mock_settings, dry_run=True, force=True)
         options = RunOptions(objective="test", backend="aer_simulator")
@@ -797,7 +794,7 @@ class TestRunWorkflow:
 
     def test_run_workflow_plan(self, workflow_context):
         """Test run workflow planning."""
-        from proxima.cli.workflows import RunWorkflow, RunOptions
+        from proxima.cli.workflows import RunOptions, RunWorkflow
 
         workflow_context.force = True
         options = RunOptions(objective="demo", backend="test_backend")
@@ -813,7 +810,7 @@ class TestCompareWorkflow:
 
     def test_compare_workflow_creation(self, workflow_context):
         """Test creating compare workflow."""
-        from proxima.cli.workflows import CompareWorkflow, CompareOptions
+        from proxima.cli.workflows import CompareOptions, CompareWorkflow
 
         options = CompareOptions(
             objective="test",
@@ -824,7 +821,7 @@ class TestCompareWorkflow:
 
     def test_compare_workflow_plan(self, workflow_context):
         """Test compare workflow planning."""
-        from proxima.cli.workflows import CompareWorkflow, CompareOptions
+        from proxima.cli.workflows import CompareOptions, CompareWorkflow
 
         options = CompareOptions(
             objective="test",
@@ -844,7 +841,7 @@ class TestValidationWorkflow:
 
     def test_validation_workflow_creation(self, workflow_context):
         """Test creating validation workflow."""
-        from proxima.cli.workflows import ValidationWorkflow, ValidateOptions
+        from proxima.cli.workflows import ValidateOptions, ValidationWorkflow
 
         options = ValidateOptions(backend="test_backend")
         workflow = ValidationWorkflow(workflow_context, options)
@@ -852,7 +849,7 @@ class TestValidationWorkflow:
 
     def test_validation_workflow_run(self, workflow_context):
         """Test running validation workflow."""
-        from proxima.cli.workflows import ValidationWorkflow, ValidateOptions
+        from proxima.cli.workflows import ValidateOptions, ValidationWorkflow
 
         workflow_context.force = True
         options = ValidateOptions()
@@ -868,7 +865,7 @@ class TestExportWorkflow:
 
     def test_export_workflow_creation(self, workflow_context, tmp_path):
         """Test creating export workflow."""
-        from proxima.cli.workflows import ExportWorkflow, ExportOptions
+        from proxima.cli.workflows import ExportOptions, ExportWorkflow
 
         output_path = tmp_path / "export.json"
         options = ExportOptions(output_path=output_path, format="json")
@@ -877,7 +874,7 @@ class TestExportWorkflow:
 
     def test_export_workflow_run(self, workflow_context, tmp_path):
         """Test running export workflow."""
-        from proxima.cli.workflows import ExportWorkflow, ExportOptions
+        from proxima.cli.workflows import ExportOptions, ExportWorkflow
 
         workflow_context.force = True
         output_path = tmp_path / "export.json"
@@ -967,7 +964,7 @@ class TestOutputConfig:
         from proxima.cli.formatters import OutputConfig
 
         mock_context.obj["output_format"] = "json"
-        config = OutputConfig.from_context(mock_context)
+        OutputConfig.from_context(mock_context)
         # Format should be parsed
 
 
@@ -1001,7 +998,7 @@ class TestCLIIntegration:
         from proxima.cli.progress import step_context
         from proxima.cli.workflows import WorkflowContext
 
-        ctx = WorkflowContext(settings=mock_settings, force=True)
+        WorkflowContext(settings=mock_settings, force=True)
 
         steps = ["Step 1", "Step 2"]
         with step_context(steps, title="Test", no_progress=True) as progress:

@@ -22,7 +22,6 @@ from proxima.backends.base import (
 from proxima.backends.exceptions import (
     BackendNotInstalledError,
     CircuitValidationError,
-    ExecutionError,
     UnsupportedOperationError,
     wrap_backend_exception,
 )
@@ -234,9 +233,7 @@ class LRETBackendAdapter(BaseBackendAdapter):
 
         return None
 
-    def execute(
-        self, circuit: Any, options: dict[str, Any] | None = None
-    ) -> ExecutionResult:
+    def execute(self, circuit: Any, options: dict[str, Any] | None = None) -> ExecutionResult:
         """Execute a circuit using LRET.
 
         Args:
@@ -370,9 +367,26 @@ class LRETBackendAdapter(BaseBackendAdapter):
     def get_supported_gates(self) -> list[str]:
         """Get list of gates supported by LRET."""
         standard_gates = [
-            "H", "X", "Y", "Z", "S", "T", "Sdg", "Tdg",
-            "RX", "RY", "RZ", "CX", "CNOT", "CZ", "SWAP",
-            "CCX", "U", "U1", "U2", "U3",
+            "H",
+            "X",
+            "Y",
+            "Z",
+            "S",
+            "T",
+            "Sdg",
+            "Tdg",
+            "RX",
+            "RY",
+            "RZ",
+            "CX",
+            "CNOT",
+            "CZ",
+            "SWAP",
+            "CCX",
+            "U",
+            "U1",
+            "U2",
+            "U3",
         ]
         if self.is_available():
             try:

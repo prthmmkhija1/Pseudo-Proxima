@@ -17,7 +17,6 @@ from typing import Any, Generic, TypeVar
 
 from textual.message import Message
 
-
 # ========== Event Types ==========
 
 

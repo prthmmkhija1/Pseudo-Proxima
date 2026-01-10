@@ -13,14 +13,11 @@ Tests cover:
 """
 
 import json
-import logging
 import tempfile
 import threading
 import time
 from datetime import datetime
 from pathlib import Path
-
-import pytest
 
 
 class TestAuditEvent:
@@ -246,7 +243,7 @@ class TestAuditLog:
 
     def test_log_event(self):
         """Test logging an event."""
-        from proxima.resources.audit import AuditLog, AuditEventType
+        from proxima.resources.audit import AuditEventType, AuditLog
 
         log = AuditLog()
         event = log.log(
@@ -260,7 +257,7 @@ class TestAuditLog:
 
     def test_disabled_logging(self):
         """Test that disabled log doesn't record events."""
-        from proxima.resources.audit import AuditLog, AuditEventType
+        from proxima.resources.audit import AuditEventType, AuditLog
 
         log = AuditLog(enabled=False)
         event = log.log(AuditEventType.CONSENT_GRANTED, topic="disabled")
@@ -270,7 +267,7 @@ class TestAuditLog:
 
     def test_get_by_type(self):
         """Test filtering by event type."""
-        from proxima.resources.audit import AuditLog, AuditEventType
+        from proxima.resources.audit import AuditEventType, AuditLog
 
         log = AuditLog()
         log.log(AuditEventType.CONSENT_GRANTED, topic="a")
@@ -282,7 +279,7 @@ class TestAuditLog:
 
     def test_get_by_topic(self):
         """Test filtering by topic."""
-        from proxima.resources.audit import AuditLog, AuditEventType
+        from proxima.resources.audit import AuditEventType, AuditLog
 
         log = AuditLog()
         log.log(AuditEventType.CONSENT_GRANTED, topic="topic_a")
@@ -294,7 +291,7 @@ class TestAuditLog:
 
     def test_get_grants_denials(self):
         """Test getting grants and denials."""
-        from proxima.resources.audit import AuditLog, AuditEventType
+        from proxima.resources.audit import AuditEventType, AuditLog
 
         log = AuditLog()
         log.log(AuditEventType.CONSENT_GRANTED, topic="g1", granted=True)
@@ -306,7 +303,7 @@ class TestAuditLog:
 
     def test_event_listener(self):
         """Test real-time event listener."""
-        from proxima.resources.audit import AuditLog, AuditEventType
+        from proxima.resources.audit import AuditEventType, AuditLog
 
         log = AuditLog()
         received = []
@@ -322,7 +319,7 @@ class TestAuditLog:
 
     def test_export_json(self):
         """Test exporting audit log to JSON."""
-        from proxima.resources.audit import AuditLog, AuditEventType
+        from proxima.resources.audit import AuditEventType, AuditLog
 
         with tempfile.TemporaryDirectory() as tmpdir:
             log = AuditLog()
@@ -345,7 +342,7 @@ class TestAuditQueryBuilder:
 
     def test_query_by_type(self):
         """Test query filtering by type."""
-        from proxima.resources.audit import AuditLog, AuditEventType
+        from proxima.resources.audit import AuditEventType, AuditLog
 
         log = AuditLog()
         log.log(AuditEventType.CONSENT_GRANTED, topic="q1")
@@ -358,7 +355,7 @@ class TestAuditQueryBuilder:
 
     def test_query_granted_only(self):
         """Test query for granted only."""
-        from proxima.resources.audit import AuditLog, AuditEventType
+        from proxima.resources.audit import AuditEventType, AuditLog
 
         log = AuditLog()
         log.log(AuditEventType.CONSENT_GRANTED, topic="g", granted=True)
@@ -370,7 +367,7 @@ class TestAuditQueryBuilder:
 
     def test_query_chaining(self):
         """Test chaining multiple query conditions."""
-        from proxima.resources.audit import AuditLog, AuditEventType
+        from proxima.resources.audit import AuditEventType, AuditLog
         from proxima.resources.consent import ConsentCategory
 
         log = AuditLog()
@@ -389,7 +386,7 @@ class TestAuditQueryBuilder:
 
     def test_query_limit_offset(self):
         """Test limit and offset."""
-        from proxima.resources.audit import AuditLog, AuditEventType
+        from proxima.resources.audit import AuditEventType, AuditLog
 
         log = AuditLog()
         for i in range(10):
@@ -400,7 +397,7 @@ class TestAuditQueryBuilder:
 
     def test_query_count(self):
         """Test counting query results."""
-        from proxima.resources.audit import AuditLog, AuditEventType
+        from proxima.resources.audit import AuditEventType, AuditLog
 
         log = AuditLog()
         for i in range(5):
@@ -411,7 +408,7 @@ class TestAuditQueryBuilder:
 
     def test_query_first_last(self):
         """Test getting first/last results."""
-        from proxima.resources.audit import AuditLog, AuditEventType
+        from proxima.resources.audit import AuditEventType, AuditLog
 
         log = AuditLog()
         log.log(AuditEventType.CONSENT_GRANTED, topic="first")
@@ -428,7 +425,7 @@ class TestAuditStatistics:
 
     def test_statistics_from_events(self):
         """Test computing statistics from events."""
-        from proxima.resources.audit import AuditLog, AuditEventType, AuditStatistics
+        from proxima.resources.audit import AuditEventType, AuditLog
 
         log = AuditLog()
         log.log(AuditEventType.CONSENT_GRANTED, topic="s1", granted=True)
@@ -465,7 +462,7 @@ class TestAuditReport:
 
     def test_generate_summary(self):
         """Test summary report generation."""
-        from proxima.resources.audit import AuditLog, AuditEventType, AuditReport
+        from proxima.resources.audit import AuditEventType, AuditLog, AuditReport
 
         log = AuditLog()
         log.log(AuditEventType.CONSENT_GRANTED, topic="r1", granted=True)
@@ -479,7 +476,7 @@ class TestAuditReport:
 
     def test_export_html(self):
         """Test HTML report export."""
-        from proxima.resources.audit import AuditLog, AuditEventType, AuditReport
+        from proxima.resources.audit import AuditEventType, AuditLog, AuditReport
 
         with tempfile.TemporaryDirectory() as tmpdir:
             log = AuditLog()
@@ -547,10 +544,10 @@ class TestConsentEventBus:
     def test_register_and_emit(self):
         """Test registering handler and emitting events."""
         from proxima.resources.hooks import (
-            ConsentEventBus,
-            ConsentEvent,
-            ConsentEventKind,
             CallbackHandler,
+            ConsentEvent,
+            ConsentEventBus,
+            ConsentEventKind,
         )
 
         bus = ConsentEventBus()
@@ -568,10 +565,10 @@ class TestConsentEventBus:
     def test_unregister_handler(self):
         """Test unregistering a handler."""
         from proxima.resources.hooks import (
-            ConsentEventBus,
-            ConsentEvent,
-            ConsentEventKind,
             CallbackHandler,
+            ConsentEvent,
+            ConsentEventBus,
+            ConsentEventKind,
         )
 
         bus = ConsentEventBus()
@@ -588,10 +585,10 @@ class TestConsentEventBus:
     def test_pause_resume(self):
         """Test pausing and resuming event emission."""
         from proxima.resources.hooks import (
-            ConsentEventBus,
-            ConsentEvent,
-            ConsentEventKind,
             CallbackHandler,
+            ConsentEvent,
+            ConsentEventBus,
+            ConsentEventKind,
         )
 
         bus = ConsentEventBus()
@@ -609,7 +606,7 @@ class TestConsentEventBus:
 
     def test_event_history(self):
         """Test event history tracking."""
-        from proxima.resources.hooks import ConsentEventBus, ConsentEvent, ConsentEventKind
+        from proxima.resources.hooks import ConsentEvent, ConsentEventBus, ConsentEventKind
 
         bus = ConsentEventBus()
 
@@ -625,7 +622,7 @@ class TestLoggingHandler:
 
     def test_logs_events(self):
         """Test that events are logged."""
-        from proxima.resources.hooks import LoggingHandler, ConsentEvent, ConsentEventKind
+        from proxima.resources.hooks import ConsentEvent, ConsentEventKind, LoggingHandler
 
         handler = LoggingHandler()
         event = ConsentEvent(
@@ -643,7 +640,7 @@ class TestMetricsHandler:
 
     def test_tracks_metrics(self):
         """Test that metrics are tracked."""
-        from proxima.resources.hooks import MetricsHandler, ConsentEvent, ConsentEventKind
+        from proxima.resources.hooks import ConsentEvent, ConsentEventKind, MetricsHandler
 
         handler = MetricsHandler()
 
@@ -657,7 +654,7 @@ class TestMetricsHandler:
 
     def test_grant_rate(self):
         """Test grant rate calculation."""
-        from proxima.resources.hooks import MetricsHandler, ConsentEvent, ConsentEventKind
+        from proxima.resources.hooks import ConsentEvent, ConsentEventKind, MetricsHandler
 
         handler = MetricsHandler()
 
@@ -670,7 +667,7 @@ class TestMetricsHandler:
 
     def test_reset_metrics(self):
         """Test resetting metrics."""
-        from proxima.resources.hooks import MetricsHandler, ConsentEvent, ConsentEventKind
+        from proxima.resources.hooks import ConsentEvent, ConsentEventKind, MetricsHandler
 
         handler = MetricsHandler()
         handler.handle(ConsentEvent(kind=ConsentEventKind.CONSENT_GRANTED, granted=True))
@@ -685,17 +682,17 @@ class TestPolicyHandler:
     def test_rate_limit_policy(self):
         """Test rate limit policy enforcement."""
         from proxima.resources.hooks import (
-            PolicyHandler,
-            RateLimitPolicy,
             ConsentEvent,
             ConsentEventKind,
+            PolicyHandler,
+            RateLimitPolicy,
         )
 
         policy = RateLimitPolicy(max_requests=3, window_seconds=1.0)
         handler = PolicyHandler()
         handler.add_policy(policy)
 
-        for i in range(5):
+        for _i in range(5):
             handler.handle(ConsentEvent(kind=ConsentEventKind.CONSENT_REQUESTED))
 
         violations = handler.get_violations()
@@ -703,13 +700,13 @@ class TestPolicyHandler:
 
     def test_category_blacklist_policy(self):
         """Test category blacklist policy."""
+        from proxima.resources.consent import ConsentCategory
         from proxima.resources.hooks import (
-            PolicyHandler,
             CategoryBlacklistPolicy,
             ConsentEvent,
             ConsentEventKind,
+            PolicyHandler,
         )
-        from proxima.resources.consent import ConsentCategory
 
         policy = CategoryBlacklistPolicy(blocked_categories=[ConsentCategory.DATA_COLLECTION])
         handler = PolicyHandler()
@@ -735,9 +732,9 @@ class TestEventAwareConsentManager:
     def test_emits_grant_event(self):
         """Test that grant emits event."""
         from proxima.resources.hooks import (
-            EventAwareConsentManager,
-            ConsentEventKind,
             CallbackHandler,
+            ConsentEventKind,
+            EventAwareConsentManager,
         )
 
         received = []
@@ -753,9 +750,9 @@ class TestEventAwareConsentManager:
     def test_emits_revoke_event(self):
         """Test that revoke emits event."""
         from proxima.resources.hooks import (
-            EventAwareConsentManager,
-            ConsentEventKind,
             CallbackHandler,
+            ConsentEventKind,
+            EventAwareConsentManager,
         )
 
         received = []
@@ -775,8 +772,6 @@ class TestConsentIntegration:
     def test_full_audit_workflow(self):
         """Test complete audit workflow."""
         from proxima.resources.audit import (
-            AuditLog,
-            AuditEventType,
             create_audited_manager,
         )
 
@@ -804,10 +799,10 @@ class TestConsentIntegration:
         """Test combining hooks with audit logging."""
         from proxima.resources.audit import AuditedConsentManager
         from proxima.resources.hooks import (
-            ConsentEventBus,
-            MetricsHandler,
             ConsentEvent,
+            ConsentEventBus,
             ConsentEventKind,
+            MetricsHandler,
         )
 
         # Create both audit and event tracking
@@ -820,9 +815,11 @@ class TestConsentIntegration:
         def forward_to_bus(event):
             bus.emit(
                 ConsentEvent(
-                    kind=ConsentEventKind.CONSENT_GRANTED
-                    if event.granted
-                    else ConsentEventKind.CONSENT_DENIED,
+                    kind=(
+                        ConsentEventKind.CONSENT_GRANTED
+                        if event.granted
+                        else ConsentEventKind.CONSENT_DENIED
+                    ),
                     topic=event.topic,
                     granted=event.granted,
                 )
@@ -846,7 +843,7 @@ class TestConsentEdgeCases:
 
     def test_concurrent_audit_writes(self):
         """Test thread-safe audit logging."""
-        from proxima.resources.audit import AuditLog, AuditEventType
+        from proxima.resources.audit import AuditEventType, AuditLog
 
         log = AuditLog()
         errors = []
@@ -870,10 +867,10 @@ class TestConsentEdgeCases:
     def test_handler_error_isolation(self):
         """Test that handler errors don't affect other handlers."""
         from proxima.resources.hooks import (
-            ConsentEventBus,
-            ConsentEvent,
-            ConsentEventKind,
             CallbackHandler,
+            ConsentEvent,
+            ConsentEventBus,
+            ConsentEventKind,
         )
 
         bus = ConsentEventBus()
@@ -895,7 +892,7 @@ class TestConsentEdgeCases:
 
     def test_empty_query_results(self):
         """Test querying with no matching results."""
-        from proxima.resources.audit import AuditLog, AuditEventType
+        from proxima.resources.audit import AuditEventType, AuditLog
 
         log = AuditLog()
         log.log(AuditEventType.CONSENT_GRANTED, topic="exists")
@@ -909,8 +906,8 @@ class TestConsentEdgeCases:
     def test_disabled_handler(self):
         """Test that disabled handlers don't receive events."""
         from proxima.resources.hooks import (
-            ConsentEventBus,
             ConsentEvent,
+            ConsentEventBus,
             ConsentEventKind,
             MetricsHandler,
         )

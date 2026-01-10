@@ -7,13 +7,6 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
-from proxima.backends.exceptions import (
-    BackendError,
-    BackendErrorCode,
-    CircuitValidationError,
-    UnsupportedOperationError,
-)
-
 
 class CircuitFormat(str, Enum):
     """Supported circuit formats."""
@@ -372,7 +365,7 @@ def _cirq_to_qiskit(circuit: Any, preserve_measurements: bool) -> ConversionResu
         )
 
     import cirq
-    from qiskit import QuantumCircuit, QuantumRegister, ClassicalRegister
+    from qiskit import ClassicalRegister, QuantumCircuit, QuantumRegister
 
     # Get all qubits and create mapping
     cirq_qubits = sorted(circuit.all_qubits())
@@ -382,9 +375,7 @@ def _cirq_to_qiskit(circuit: Any, preserve_measurements: bool) -> ConversionResu
     # Create Qiskit circuit
     qr = QuantumRegister(n_qubits, "q")
     has_measurements = any(
-        isinstance(op.gate, cirq.MeasurementGate)
-        for moment in circuit
-        for op in moment
+        isinstance(op.gate, cirq.MeasurementGate) for moment in circuit for op in moment
     )
     cr = ClassicalRegister(n_qubits, "c") if has_measurements and preserve_measurements else None
 
@@ -398,7 +389,7 @@ def _cirq_to_qiskit(circuit: Any, preserve_measurements: bool) -> ConversionResu
 
             if isinstance(op.gate, cirq.MeasurementGate):
                 if preserve_measurements and cr:
-                    for i, qi in enumerate(qubit_indices):
+                    for _i, qi in enumerate(qubit_indices):
                         qc.measure(qr[qi], cr[qi])
                 continue
 

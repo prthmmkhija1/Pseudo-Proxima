@@ -10,16 +10,17 @@ Step 6.1: Modal dialogs including:
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Callable
+from typing import Any
 
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical
 from textual.message import Message
 from textual.screen import ModalScreen
-from textual.widgets import Button, Input, Label, ProgressBar, Static, Switch
+from textual.widgets import Button, Input, Label, ProgressBar, Switch
 
 
 class DialogResult(Enum):
@@ -319,9 +320,7 @@ class ChoiceModal(BaseModal):
                     result=DialogResult.CONFIRMED,
                     data={
                         "index": self._selected_index,
-                        "choice": self._choices[self._selected_index]
-                        if self._choices
-                        else None,
+                        "choice": self._choices[self._selected_index] if self._choices else None,
                     },
                 )
             )

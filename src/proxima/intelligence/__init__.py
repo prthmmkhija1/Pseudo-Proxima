@@ -38,16 +38,16 @@ from proxima.intelligence.llm_router import (
     quick_prompt,
 )
 from proxima.intelligence.selector import (
-    analyze_circuit,
     BackendCapabilities,
     BackendRegistry,
     BackendSelector,
     BackendType,
     CircuitCharacteristics,
-    select_backend,
     SelectionResult,
     SelectionScore,
     SelectionStrategy,
+    analyze_circuit,
+    select_backend,
 )
 
 __all__ = [

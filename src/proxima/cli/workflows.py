@@ -16,7 +16,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from pathlib import Path
-from typing import Any, Generic, Protocol, TypeVar
+from typing import Any, Generic, TypeVar
 
 import typer
 
@@ -30,7 +30,6 @@ from proxima.resources.control import ExecutionController
 from proxima.resources.monitor import ResourceMonitor
 from proxima.resources.timer import ExecutionTimer, ProgressTracker
 from proxima.utils.logging import get_logger
-
 
 # ========== Workflow Status ==========
 
@@ -121,6 +120,7 @@ class WorkflowContext:
         settings = obj.get("settings")
         if settings is None:
             from proxima.config.settings import config_service
+
             settings = config_service.load()
 
         return cls(
@@ -459,10 +459,11 @@ class CompareWorkflow(WorkflowRunner[dict[str, Any]]):
         return {
             "fastest_backend": fastest,
             "execution_times": times,
-            "speedup": {
-                name: times[fastest] / t if t > 0 else 0
-                for name, t in times.items()
-            } if fastest else {},
+            "speedup": (
+                {name: times[fastest] / t if t > 0 else 0 for name, t in times.items()}
+                if fastest
+                else {}
+            ),
         }
 
 
@@ -535,11 +536,13 @@ class ValidationWorkflow(WorkflowRunner[dict[str, Any]]):
         issues = []
 
         if self.options.config_path and not self.options.config_path.exists():
-            issues.append({
-                "severity": "error",
-                "path": str(self.options.config_path),
-                "message": "Configuration file not found",
-            })
+            issues.append(
+                {
+                    "severity": "error",
+                    "path": str(self.options.config_path),
+                    "message": "Configuration file not found",
+                }
+            )
 
         return issues
 
@@ -551,12 +554,14 @@ class ValidationWorkflow(WorkflowRunner[dict[str, Any]]):
         issues = []
 
         for issue in result.issues:
-            issues.append({
-                "severity": issue.severity.value,
-                "path": issue.path,
-                "message": issue.message,
-                "suggestion": issue.suggestion,
-            })
+            issues.append(
+                {
+                    "severity": issue.severity.value,
+                    "path": issue.path,
+                    "message": issue.message,
+                    "suggestion": issue.suggestion,
+                }
+            )
 
         return issues
 
@@ -568,17 +573,21 @@ class ValidationWorkflow(WorkflowRunner[dict[str, Any]]):
         try:
             status = backend_registry.get_status(backend_name)
             if not status.available:
-                issues.append({
-                    "severity": "warning",
-                    "path": "backends.default_backend",
-                    "message": f"Backend '{backend_name}' is not available: {status.reason}",
-                })
+                issues.append(
+                    {
+                        "severity": "warning",
+                        "path": "backends.default_backend",
+                        "message": f"Backend '{backend_name}' is not available: {status.reason}",
+                    }
+                )
         except KeyError:
-            issues.append({
-                "severity": "error",
-                "path": "backends.default_backend",
-                "message": f"Backend '{backend_name}' is not registered",
-            })
+            issues.append(
+                {
+                    "severity": "error",
+                    "path": "backends.default_backend",
+                    "message": f"Backend '{backend_name}' is not registered",
+                }
+            )
 
         return issues
 
@@ -624,6 +633,7 @@ class ExportWorkflow(WorkflowRunner[dict[str, Any]]):
         if self.options.source == "history":
             try:
                 from proxima.data.history import execution_history
+
                 data = [r.to_dict() for r in execution_history.list_results()]
             except ImportError:
                 # History module not available, export empty
@@ -631,6 +641,7 @@ class ExportWorkflow(WorkflowRunner[dict[str, Any]]):
         elif self.options.source == "session":
             try:
                 from proxima.resources.session import SessionManager
+
                 manager = SessionManager()
                 sessions = manager.list_sessions()
                 data = [{"id": s.id, "status": s.status.value} for s in sessions]
@@ -660,6 +671,7 @@ class ExportWorkflow(WorkflowRunner[dict[str, Any]]):
             )
         elif self.options.format == "yaml":
             import yaml
+
             self.options.output_path.write_text(
                 yaml.safe_dump(export_data, sort_keys=False),
                 encoding="utf-8",

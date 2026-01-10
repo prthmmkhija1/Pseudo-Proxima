@@ -12,23 +12,21 @@ This module provides:
 from __future__ import annotations
 
 import sys
-import threading
 import time
 from abc import ABC, abstractmethod
+from collections.abc import Generator, Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum, auto
-from typing import Any, Callable, Generator, Iterator, TypeVar
+from typing import Any, TypeVar
 
 try:
     from rich.console import Console
     from rich.live import Live
-    from rich.panel import Panel
     from rich.progress import (
         BarColumn,
         MofNCompleteColumn,
         Progress,
-        ProgressColumn,
         SpinnerColumn,
         TaskID,
         TaskProgressColumn,
@@ -38,7 +36,6 @@ try:
     )
     from rich.status import Status
     from rich.table import Table
-    from rich.text import Text
 
     RICH_AVAILABLE = True
 except ImportError:
@@ -291,7 +288,6 @@ if RICH_AVAILABLE:
                 self._status_display.stop()
             self.console.print("[yellow]⊘[/yellow] Cancelled")
 
-
     class RichProgress(ProgressDisplay):
         """Rich progress bar for determinate operations."""
 
@@ -532,9 +528,13 @@ class StepProgress:
 
         if RICH_AVAILABLE and self.console:
             if failed == 0:
-                self.console.print(f"\n[green]✓[/green] Completed {completed}/{total} steps in {elapsed:.1f}s")
+                self.console.print(
+                    f"\n[green]✓[/green] Completed {completed}/{total} steps in {elapsed:.1f}s"
+                )
             else:
-                self.console.print(f"\n[red]✗[/red] {failed} step(s) failed, {completed}/{total} completed")
+                self.console.print(
+                    f"\n[red]✗[/red] {failed} step(s) failed, {completed}/{total} completed"
+                )
         else:
             print(f"\nCompleted {completed}/{total} steps in {elapsed:.1f}s")
 

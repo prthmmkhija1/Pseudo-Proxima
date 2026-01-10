@@ -22,10 +22,9 @@ from typing import Any
 
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Container, Horizontal, ScrollableContainer, Vertical
+from textual.containers import Container, Horizontal, ScrollableContainer
 from textual.message import Message
 from textual.reactive import reactive
-from textual.widget import Widget
 from textual.widgets import (
     Button,
     DataTable,
@@ -36,12 +35,12 @@ from textual.widgets import (
     Switch,
 )
 
-
 # ========== Status Level Enum ==========
 
 
 class StatusLevel(Enum):
     """Status level for items."""
+
     OK = "ok"
     INFO = "info"
     WARNING = "warning"
@@ -52,6 +51,7 @@ class StatusLevel(Enum):
 @dataclass
 class StatusItem:
     """A status item for display in StatusPanel."""
+
     label: str
     value: str
     level: StatusLevel = StatusLevel.INFO
@@ -80,8 +80,14 @@ class StatusIndicator(Static):
     """
 
     ICONS = {
-        "success": "✓", "error": "✗", "warning": "⚠", "info": "ℹ",
-        "pending": "○", "running": "◉", "connected": "●", "disconnected": "○",
+        "success": "✓",
+        "error": "✗",
+        "warning": "⚠",
+        "info": "ℹ",
+        "pending": "○",
+        "running": "◉",
+        "connected": "●",
+        "disconnected": "○",
     }
 
     status = reactive("pending")
@@ -155,7 +161,7 @@ class StatusPanel(Static):
         try:
             container = self.query_one("#status-items", Container)
             container.remove_children()
-            for key, (label, value, status) in self._status_items.items():
+            for _key, (label, value, status) in self._status_items.items():
                 row = Horizontal(classes="status-row")
                 row.mount(Label(f"{label}:", classes="status-label"))
                 row.mount(StatusIndicator(status=status, label=value))
@@ -170,6 +176,7 @@ class StatusPanel(Static):
 @dataclass
 class LogEntry:
     """A log entry."""
+
     timestamp: float
     level: str
     message: str
@@ -230,11 +237,13 @@ class LogViewer(Static):
     def add_entry(self, entry: LogEntry) -> None:
         self._entries.append(entry)
         if len(self._entries) > self._max_entries:
-            self._entries = self._entries[-self._max_entries:]
+            self._entries = self._entries[-self._max_entries :]
         self._render_entry(entry)
 
     def log(self, message: str, level: str = "info", component: str = "") -> None:
-        self.add_entry(LogEntry(timestamp=time.time(), level=level, message=message, component=component))
+        self.add_entry(
+            LogEntry(timestamp=time.time(), level=level, message=message, component=component)
+        )
 
     def _render_entry(self, entry: LogEntry) -> None:
         if self._filter_level and entry.level != self._filter_level:
@@ -245,7 +254,9 @@ class LogViewer(Static):
         with content.batch():
             row = Horizontal(classes="log-entry")
             row.mount(Label(entry.format_timestamp(), classes="log-timestamp"))
-            row.mount(Label(f"[{entry.format_level()}]", classes=f"log-level log-level-{entry.level}"))
+            row.mount(
+                Label(f"[{entry.format_level()}]", classes=f"log-level log-level-{entry.level}")
+            )
             row.mount(Label(entry.message, classes="log-message"))
             content.mount(row)
         if self._auto_scroll:
@@ -279,6 +290,7 @@ class LogViewer(Static):
 
 class BackendStatus(Enum):
     """Backend connection status."""
+
     CONNECTED = "connected"
     DISCONNECTED = "disconnected"
     ERROR = "error"
@@ -288,6 +300,7 @@ class BackendStatus(Enum):
 @dataclass
 class BackendInfo:
     """Information about a backend."""
+
     name: str
     backend_type: str
     status: BackendStatus = BackendStatus.DISCONNECTED
@@ -330,9 +343,15 @@ class BackendCard(Static):
         self.add_class(backend.status.value)
 
     def compose(self) -> ComposeResult:
-        icons = {BackendStatus.CONNECTED: "🟢", BackendStatus.DISCONNECTED: "⚪",
-                 BackendStatus.ERROR: "🔴", BackendStatus.CONNECTING: "🟡"}
-        yield Label(f"{icons.get(self._backend.status, '⚪')} {self._backend.name}", classes="backend-name")
+        icons = {
+            BackendStatus.CONNECTED: "🟢",
+            BackendStatus.DISCONNECTED: "⚪",
+            BackendStatus.ERROR: "🔴",
+            BackendStatus.CONNECTING: "🟡",
+        }
+        yield Label(
+            f"{icons.get(self._backend.status, '⚪')} {self._backend.name}", classes="backend-name"
+        )
         yield Label(f"Type: {self._backend.backend_type}", classes="backend-type")
         if self._backend.total_executions > 0:
             stats = f"Executions: {self._backend.total_executions}"
@@ -382,8 +401,13 @@ class ResultsTable(Static):
         for result in results:
             icon = "✓" if result.get("status") == "success" else "✗"
             ts = datetime.fromtimestamp(result.get("timestamp", time.time())).strftime("%H:%M:%S")
-            table.add_row(result.get("id", ""), result.get("backend", ""),
-                         f"{icon} {result.get('status', '')}", f"{result.get('duration_ms', 0):.1f}ms", ts)
+            table.add_row(
+                result.get("id", ""),
+                result.get("backend", ""),
+                f"{icon} {result.get('status', '')}",
+                f"{result.get('duration_ms', 0):.1f}ms",
+                ts,
+            )
 
     def get_selected_result(self) -> dict[str, Any] | None:
         table = self.query_one("#results-data-table", DataTable)
@@ -468,7 +492,9 @@ class MetricDisplay(Static):
 
     value = reactive("0")
 
-    def __init__(self, label: str, value: str = "0", unit: str = "", trend: float | None = None, **kwargs) -> None:
+    def __init__(
+        self, label: str, value: str = "0", unit: str = "", trend: float | None = None, **kwargs
+    ) -> None:
         super().__init__(**kwargs)
         self._label, self._unit, self._trend = label, unit, trend
         self.value = value
@@ -477,7 +503,11 @@ class MetricDisplay(Static):
         yield Label(f"{self.value}{self._unit}", classes="metric-value", id="metric-value")
         yield Label(self._label, classes="metric-label")
         if self._trend is not None:
-            cls = "trend-up" if self._trend > 0 else ("trend-down" if self._trend < 0 else "trend-neutral")
+            cls = (
+                "trend-up"
+                if self._trend > 0
+                else ("trend-down" if self._trend < 0 else "trend-neutral")
+            )
             icon = "↑" if self._trend > 0 else ("↓" if self._trend < 0 else "→")
             yield Label(f"{icon} {abs(self._trend):.1f}%", classes=f"metric-trend {cls}")
 
@@ -530,7 +560,9 @@ class ExecutionProgress(Static):
         if self._start_time:
             elapsed = time.time() - self._start_time
             eta = (elapsed / progress * (100 - progress)) if progress > 0 else 0
-            stats = f"Elapsed: {elapsed:.1f}s" + (f" | ETA: {eta:.1f}s" if progress < 100 and eta > 0 else "")
+            stats = f"Elapsed: {elapsed:.1f}s" + (
+                f" | ETA: {eta:.1f}s" if progress < 100 and eta > 0 else ""
+            )
             self.query_one("#stats-label", Label).update(stats)
 
 
@@ -588,7 +620,9 @@ class ConfigInput(Static):
             super().__init__()
             self.key, self.value = key, value
 
-    def __init__(self, key: str, label: str, value: str = "", placeholder: str = "", **kwargs) -> None:
+    def __init__(
+        self, key: str, label: str, value: str = "", placeholder: str = "", **kwargs
+    ) -> None:
         super().__init__(**kwargs)
         self._key, self._label, self._value, self._placeholder = key, label, value, placeholder
 
@@ -642,16 +676,33 @@ class ExecutionCard(Static):
     ExecutionCard .exec-details { color: $text-muted; }
     """
 
-    def __init__(self, execution_id: str, backend: str, status: str, duration_ms: float, timestamp: float, **kwargs) -> None:
+    def __init__(
+        self,
+        execution_id: str,
+        backend: str,
+        status: str,
+        duration_ms: float,
+        timestamp: float,
+        **kwargs,
+    ) -> None:
         super().__init__(**kwargs)
-        self._id, self._backend, self._status, self._duration, self._timestamp = execution_id, backend, status, duration_ms, timestamp
+        self._id, self._backend, self._status, self._duration, self._timestamp = (
+            execution_id,
+            backend,
+            status,
+            duration_ms,
+            timestamp,
+        )
         self.add_class(status)
 
     def compose(self) -> ComposeResult:
         icon = "✓" if self._status == "success" else "✗"
         yield Label(f"{icon} Execution {self._id}", classes="exec-title")
         ts = datetime.fromtimestamp(self._timestamp).strftime("%H:%M:%S")
-        yield Label(f"Backend: {self._backend} | Duration: {self._duration:.1f}ms | {ts}", classes="exec-details")
+        yield Label(
+            f"Backend: {self._backend} | Duration: {self._duration:.1f}ms | {ts}",
+            classes="exec-details",
+        )
 
 
 # ========== ProgressBar Wrapper ==========
@@ -668,7 +719,9 @@ class ProgressBar(Static):
 
     progress = reactive(0.0)
 
-    def __init__(self, label: str = "", total: float = 100.0, show_percentage: bool = True, **kwargs) -> None:
+    def __init__(
+        self, label: str = "", total: float = 100.0, show_percentage: bool = True, **kwargs
+    ) -> None:
         super().__init__(**kwargs)
         self._label, self._total, self._show_percentage = label, total, show_percentage
 

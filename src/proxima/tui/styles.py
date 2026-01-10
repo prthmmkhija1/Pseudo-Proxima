@@ -9,7 +9,7 @@ Step 6.1: Comprehensive styling system with:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from typing import ClassVar
 

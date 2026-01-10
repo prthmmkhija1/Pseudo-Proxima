@@ -217,9 +217,7 @@ class JSONExporter(BaseExporter):
             # Build export data
             export_data: dict[str, Any] = {
                 "title": data.title,
-                "generated_at": self._format_timestamp(
-                    data.generated_at, options.timestamp_format
-                ),
+                "generated_at": self._format_timestamp(data.generated_at, options.timestamp_format),
                 "summary": data.summary if data.summary else {},
             }
 
@@ -347,9 +345,7 @@ class CSVExporter(BaseExporter):
                 error=str(e),
             )
 
-    def _write_csv(
-        self, data: ReportData, options: ExportOptions, output: Any
-    ) -> None:
+    def _write_csv(self, data: ReportData, options: ExportOptions, output: Any) -> None:
         """Write CSV data to a file or string buffer."""
         if not data.raw_results:
             # Write summary as key-value pairs
@@ -404,9 +400,7 @@ class XLSXExporter(BaseExporter):
 
             # Define styles
             header_font = Font(bold=True, color="FFFFFF")
-            header_fill = PatternFill(
-                start_color="4472C4", end_color="4472C4", fill_type="solid"
-            )
+            header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
             header_alignment = Alignment(horizontal="center", vertical="center")
             thin_border = Border(
                 left=Side(style="thin"),
@@ -872,9 +866,7 @@ class HTMLExporter(BaseExporter):
 
             # Flatten nested dicts for display
             flat_summary = self._flatten_dict(data.summary) if data.summary else {}
-            flat_comparison = (
-                self._flatten_dict(data.comparison) if data.comparison else {}
-            )
+            flat_comparison = self._flatten_dict(data.comparison) if data.comparison else {}
             flat_metadata = self._flatten_dict(data.metadata) if data.metadata else {}
 
             # Round floats
@@ -884,9 +876,7 @@ class HTMLExporter(BaseExporter):
 
             html = template.render(
                 title=data.title,
-                generated_at=self._format_timestamp(
-                    data.generated_at, options.timestamp_format
-                ),
+                generated_at=self._format_timestamp(data.generated_at, options.timestamp_format),
                 summary=flat_summary if data.summary else None,
                 raw_results=data.raw_results if options.include_raw_results else [],
                 comparison=flat_comparison if options.include_comparison else None,
@@ -1199,9 +1189,7 @@ class YAMLExporter(BaseExporter):
             # Build export data
             export_data: dict[str, Any] = {
                 "title": data.title,
-                "generated_at": self._format_timestamp(
-                    data.generated_at, options.timestamp_format
-                ),
+                "generated_at": self._format_timestamp(data.generated_at, options.timestamp_format),
                 "summary": data.summary if data.summary else {},
             }
 

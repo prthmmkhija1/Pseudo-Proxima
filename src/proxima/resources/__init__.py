@@ -1,6 +1,7 @@
 ﻿"""Resource management modules."""
 
 from .audit import (
+    AuditedConsentManager,
     AuditEvent,
     AuditEventType,
     AuditLog,
@@ -9,7 +10,6 @@ from .audit import (
     AuditSeverity,
     AuditStatistics,
     AuditStorage,
-    AuditedConsentManager,
     ComplianceReportSection,
     FileAuditStorage,
     MemoryAuditStorage,
