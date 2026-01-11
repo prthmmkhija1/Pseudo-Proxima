@@ -108,6 +108,7 @@ def quantum_runner(plan: dict[str, Any]) -> dict[str, Any]:
     objective = plan.get("objective", "demo")
     backend_name = plan.get("backend", "cirq")
     shots = plan.get("shots", 1024)
+    timeout_seconds = plan.get("timeout_seconds")
 
     # Handle auto backend selection
     if backend_name == "auto":
@@ -157,6 +158,10 @@ def quantum_runner(plan: dict[str, Any]) -> dict[str, Any]:
         "shots": shots,
         "repetitions": shots,
     }
+
+    # Add timeout if specified
+    if timeout_seconds is not None:
+        options["timeout_seconds"] = timeout_seconds
 
     try:
         result = adapter.execute(circuit, options)

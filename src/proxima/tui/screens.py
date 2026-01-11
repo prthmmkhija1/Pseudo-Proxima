@@ -10,8 +10,10 @@ Screens:
 
 from __future__ import annotations
 
+import sys
 import time
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -39,6 +41,40 @@ from .widgets import (
     StatusLevel,
     StatusPanel,
 )
+
+if TYPE_CHECKING:
+    from proxima.backends.registry import BackendRegistry
+    from proxima.data.store import ResultStore
+
+
+def _get_backend_registry() -> BackendRegistry | None:
+    """Safely get the backend registry."""
+    try:
+        from proxima.backends.registry import backend_registry
+
+        return backend_registry
+    except ImportError:
+        return None
+
+
+def _get_result_store() -> ResultStore | None:
+    """Safely get the result store."""
+    try:
+        from proxima.data.store import get_store
+
+        return get_store()
+    except (ImportError, Exception):
+        return None
+
+
+def _get_version() -> str:
+    """Get Proxima version."""
+    try:
+        from proxima import __version__
+
+        return __version__
+    except ImportError:
+        return "unknown"
 
 
 class BaseScreen(Screen):
@@ -171,48 +207,142 @@ class DashboardScreen(BaseScreen):
         self._refresh_recent_executions()
 
     def _get_status_items(self) -> list[StatusItem]:
-        """Get current status items."""
-        return [
-            StatusItem("Version", "1.0.0", StatusLevel.INFO),
-            StatusItem("Python", "3.14.0", StatusLevel.INFO),
-            StatusItem("Backends Available", "3", StatusLevel.OK),
-            StatusItem("Total Executions", "42", StatusLevel.INFO),
-            StatusItem("Last Run", "2 min ago", StatusLevel.OK, time.time() - 120),
-        ]
+        """Get current status items from real sources."""
+        items: list[StatusItem] = []
+
+        # Version info
+        version = _get_version()
+        items.append(StatusItem("Version", version, StatusLevel.INFO))
+
+        # Python version
+        python_version = (
+            f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+        )
+        items.append(StatusItem("Python", python_version, StatusLevel.INFO))
+
+        # Backend count from registry
+        registry = _get_backend_registry()
+        if registry:
+            available_backends = registry.list_available()
+            count = len(available_backends)
+            level = StatusLevel.OK if count > 0 else StatusLevel.WARNING
+            items.append(StatusItem("Backends Available", str(count), level))
+        else:
+            items.append(StatusItem("Backends Available", "N/A", StatusLevel.WARNING))
+
+        # Total executions from store
+        store = _get_result_store()
+        if store:
+            try:
+                results = store.list_results(limit=1000)
+                items.append(StatusItem("Total Executions", str(len(results)), StatusLevel.INFO))
+
+                # Last run
+                if results:
+                    # Results are sorted by timestamp descending
+                    last_result = results[0]
+                    last_ts = last_result.timestamp.timestamp()
+                    age_seconds = time.time() - last_ts
+                    if age_seconds < 60:
+                        last_run = "just now"
+                    elif age_seconds < 3600:
+                        last_run = f"{int(age_seconds // 60)} min ago"
+                    elif age_seconds < 86400:
+                        last_run = f"{int(age_seconds // 3600)} hours ago"
+                    else:
+                        last_run = f"{int(age_seconds // 86400)} days ago"
+                    items.append(StatusItem("Last Run", last_run, StatusLevel.OK, last_ts))
+                else:
+                    items.append(StatusItem("Last Run", "Never", StatusLevel.INFO))
+            except Exception:
+                items.append(StatusItem("Total Executions", "N/A", StatusLevel.WARNING))
+                items.append(StatusItem("Last Run", "N/A", StatusLevel.WARNING))
+        else:
+            items.append(StatusItem("Total Executions", "N/A", StatusLevel.WARNING))
+            items.append(StatusItem("Last Run", "N/A", StatusLevel.WARNING))
+
+        return items
 
     def _refresh_backends(self) -> None:
-        """Refresh backend cards."""
+        """Refresh backend cards from registry."""
         container = self.query_one("#backend-cards", Container)
         container.remove_children()
 
-        # Sample backend data
-        backends = [
-            BackendInfo(
-                "Qiskit Aer", "simulator", BackendStatus.CONNECTED, time.time() - 300, 25, 45.2
-            ),
-            BackendInfo("IBM Quantum", "cloud", BackendStatus.DISCONNECTED),
-            BackendInfo(
-                "Local Runner", "local", BackendStatus.CONNECTED, time.time() - 60, 17, 12.5
-            ),
-        ]
+        # Get real backend data from registry
+        registry = _get_backend_registry()
+        backends: list[BackendInfo] = []
+
+        if registry:
+            for status in registry.list_statuses():
+                # Map registry status to widget BackendStatus
+                if status.available:
+                    widget_status = BackendStatus.CONNECTED
+                elif status.reason and "failed" in status.reason.lower():
+                    widget_status = BackendStatus.ERROR
+                else:
+                    widget_status = BackendStatus.DISCONNECTED
+
+                # Determine backend type from capabilities or name
+                backend_type = "simulator"
+                if status.capabilities:
+                    if status.capabilities.max_qubits > 30:
+                        backend_type = "cloud"
+                if "local" in status.name.lower():
+                    backend_type = "local"
+                elif "ibm" in status.name.lower() or "aws" in status.name.lower():
+                    backend_type = "cloud"
+
+                error_msg = status.reason if not status.available else None
+
+                backends.append(
+                    BackendInfo(
+                        status.name,
+                        backend_type,
+                        widget_status,
+                        last_used=None,
+                        total_executions=0,
+                        avg_latency_ms=None,
+                        error_message=error_msg,
+                    )
+                )
+        else:
+            # Fallback if registry unavailable
+            backends = [
+                BackendInfo("Registry Unavailable", "unknown", BackendStatus.ERROR),
+            ]
 
         for backend in backends:
             container.mount(BackendCard(backend))
 
     def _refresh_recent_executions(self) -> None:
-        """Refresh recent executions list."""
+        """Refresh recent executions list from store."""
         container = self.query_one("#recent-executions", ScrollableContainer)
         container.remove_children()
 
-        # Sample recent executions
-        executions = [
-            ("exec-001", "qiskit_aer", "success", 45.2, time.time() - 120),
-            ("exec-002", "local", "success", 12.5, time.time() - 300),
-            ("exec-003", "ibm_quantum", "failed", 0.0, time.time() - 600),
-        ]
+        # Get real execution data from store
+        store = _get_result_store()
+        executions: list[tuple[str, str, str, float, float]] = []
 
-        for exec_id, backend, status, duration, ts in executions:
-            container.mount(ExecutionCard(exec_id, backend, status, duration, ts))
+        if store:
+            try:
+                results = store.list_results(limit=10)
+                for result in results:
+                    exec_id = result.id[:8] if len(result.id) > 8 else result.id
+                    backend = result.backend_name
+                    # Determine status - if we have counts, it succeeded
+                    status = "success" if result.counts else "completed"
+                    duration = result.execution_time_ms
+                    ts = result.timestamp.timestamp()
+                    executions.append((exec_id, backend, status, duration, ts))
+            except Exception:
+                # Store access failed
+                pass
+
+        if not executions:
+            container.mount(Label("No recent executions"))
+        else:
+            for exec_id, backend, status, duration, ts in executions:
+                container.mount(ExecutionCard(exec_id, backend, status, duration, ts))
 
     def action_refresh(self) -> None:
         """Refresh dashboard data."""
@@ -547,48 +677,35 @@ class ResultsScreen(BaseScreen):
         self._load_sample_results()
 
     def _load_sample_results(self) -> None:
-        """Load sample results data."""
+        """Load results data from store."""
         results_table = self.query_one("#results-table", ResultsTable)
 
-        sample_results = [
-            {
-                "id": "exec-001",
-                "backend": "qiskit_aer",
-                "status": "success",
-                "duration_ms": 45.2,
-                "timestamp": time.time() - 120,
-            },
-            {
-                "id": "exec-002",
-                "backend": "local",
-                "status": "success",
-                "duration_ms": 12.5,
-                "timestamp": time.time() - 300,
-            },
-            {
-                "id": "exec-003",
-                "backend": "ibm_quantum",
-                "status": "failed",
-                "duration_ms": 0.0,
-                "timestamp": time.time() - 600,
-            },
-            {
-                "id": "exec-004",
-                "backend": "qiskit_aer",
-                "status": "success",
-                "duration_ms": 52.1,
-                "timestamp": time.time() - 900,
-            },
-            {
-                "id": "exec-005",
-                "backend": "local",
-                "status": "success",
-                "duration_ms": 8.3,
-                "timestamp": time.time() - 1200,
-            },
-        ]
+        # Get real results from store
+        store = _get_result_store()
+        results_data: list[dict[str, object]] = []
 
-        results_table.load_results(sample_results)
+        if store:
+            try:
+                results = store.list_results(limit=100)
+                for result in results:
+                    status = "success" if result.counts else "completed"
+                    results_data.append(
+                        {
+                            "id": result.id[:8] if len(result.id) > 8 else result.id,
+                            "backend": result.backend_name,
+                            "status": status,
+                            "duration_ms": result.execution_time_ms,
+                            "timestamp": result.timestamp.timestamp(),
+                        }
+                    )
+            except Exception:
+                pass
+
+        if not results_data:
+            # Show empty state
+            results_data = []
+
+        results_table.load_results(results_data)
 
     def action_refresh_results(self) -> None:
         """Refresh results list."""
@@ -696,22 +813,57 @@ class BackendsScreen(BaseScreen):
         self._refresh_backends()
 
     def _refresh_backends(self) -> None:
-        """Refresh backend list."""
+        """Refresh backend list from registry."""
         container = self.query_one("#backend-cards-container", Container)
         container.remove_children()
 
-        backends = [
-            BackendInfo(
-                "Qiskit Aer", "simulator", BackendStatus.CONNECTED, time.time() - 300, 25, 45.2
-            ),
-            BackendInfo("IBM Quantum", "cloud", BackendStatus.DISCONNECTED),
-            BackendInfo(
-                "Local Runner", "local", BackendStatus.CONNECTED, time.time() - 60, 17, 12.5
-            ),
-            BackendInfo(
-                "AWS Braket", "cloud", BackendStatus.ERROR, error_message="Authentication failed"
-            ),
-        ]
+        # Get real backend data from registry
+        registry = _get_backend_registry()
+        backends: list[BackendInfo] = []
+
+        if registry:
+            for status in registry.list_statuses():
+                # Map registry status to widget BackendStatus
+                if status.available:
+                    widget_status = BackendStatus.CONNECTED
+                elif status.reason and "failed" in status.reason.lower():
+                    widget_status = BackendStatus.ERROR
+                else:
+                    widget_status = BackendStatus.DISCONNECTED
+
+                # Determine backend type from capabilities or name
+                backend_type = "simulator"
+                if status.capabilities:
+                    if status.capabilities.max_qubits > 30:
+                        backend_type = "cloud"
+                if "local" in status.name.lower() or "lret" in status.name.lower():
+                    backend_type = "local"
+                elif "ibm" in status.name.lower() or "aws" in status.name.lower():
+                    backend_type = "cloud"
+
+                error_msg = status.reason if not status.available else None
+
+                backends.append(
+                    BackendInfo(
+                        status.name,
+                        backend_type,
+                        widget_status,
+                        last_used=None,
+                        total_executions=0,
+                        avg_latency_ms=None,
+                        error_message=error_msg,
+                    )
+                )
+        else:
+            # Fallback if registry unavailable
+            backends = [
+                BackendInfo(
+                    "Registry Unavailable",
+                    "unknown",
+                    BackendStatus.ERROR,
+                    error_message="Could not access backend registry",
+                ),
+            ]
 
         for backend in backends:
             container.mount(BackendCard(backend))

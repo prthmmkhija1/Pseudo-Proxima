@@ -23,7 +23,7 @@ from proxima.utils.logging import configure_from_settings
 app = typer.Typer(
     name="proxima",
     help="Proxima: Intelligent Quantum Simulation Orchestration Framework",
-    add_completion=False,
+    add_completion=True,
 )
 
 

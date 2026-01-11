@@ -53,6 +53,7 @@ class LLMRequest:
     max_tokens: int | None = None
     provider: ProviderName | None = None
     system_prompt: str | None = None
+    stream: bool = False  # Enable streaming response
     metadata: dict[str, str] = field(default_factory=dict)
 
 
@@ -67,6 +68,8 @@ class LLMResponse:
     tokens_used: int = 0
     raw: dict | None = None
     error: str | None = None
+    is_streaming: bool = False  # Whether this is a streaming response
+    stream_chunks: list[str] = field(default_factory=list)  # Collected stream chunks
 
 
 class LLMProvider(Protocol):
@@ -78,6 +81,12 @@ class LLMProvider(Protocol):
 
     def send(self, request: LLMRequest, api_key: str | None) -> LLMResponse:  # pragma: no cover
         """Send a request to the LLM provider."""
+        ...
+
+    def stream_send(
+        self, request: LLMRequest, api_key: str | None, callback: Callable[[str], None] | None = None
+    ) -> LLMResponse:  # pragma: no cover
+        """Send a streaming request to the LLM provider."""
         ...
 
     def health_check(self, endpoint: str | None = None) -> bool:  # pragma: no cover
@@ -106,6 +115,30 @@ class _BaseProvider:
     def health_check(self, endpoint: str | None = None) -> bool:
         """Check if the provider is reachable."""
         return True  # Override in subclasses
+
+    def stream_send(
+        self,
+        request: LLMRequest,
+        api_key: str | None,
+        callback: Callable[[str], None] | None = None,
+    ) -> LLMResponse:
+        """Default streaming implementation - falls back to non-streaming."""
+        # Default implementation: just call send() and simulate streaming
+        response = self.send(request, api_key)
+        if callback and response.text:
+            # Simulate streaming by sending the full text
+            callback(response.text)
+        return LLMResponse(
+            text=response.text,
+            provider=response.provider,
+            model=response.model,
+            latency_ms=response.latency_ms,
+            tokens_used=response.tokens_used,
+            raw=response.raw,
+            error=response.error,
+            is_streaming=True,
+            stream_chunks=[response.text] if response.text else [],
+        )
 
 
 class OpenAIProvider(_BaseProvider):
@@ -206,6 +239,101 @@ class OpenAIProvider(_BaseProvider):
             return response.status_code in (200, 401)
         except Exception:
             return False
+
+    def stream_send(
+        self,
+        request: LLMRequest,
+        api_key: str | None,
+        callback: Callable[[str], None] | None = None,
+    ) -> LLMResponse:
+        """Send a streaming request to OpenAI API."""
+        start = time.perf_counter()
+
+        if not api_key:
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=request.model or self.default_model,
+                latency_ms=0,
+                error="API key required for OpenAI",
+            )
+
+        model = request.model or self.default_model
+        messages = []
+
+        if request.system_prompt:
+            messages.append({"role": "system", "content": request.system_prompt})
+
+        messages.append({"role": "user", "content": request.prompt})
+
+        payload: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "temperature": request.temperature,
+            "stream": True,
+        }
+
+        if request.max_tokens:
+            payload["max_tokens"] = request.max_tokens
+
+        try:
+            chunks: list[str] = []
+            with httpx.Client(timeout=self.timeout) as client:
+                with client.stream(
+                    "POST",
+                    f"{self._api_base}/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json=payload,
+                ) as response:
+                    response.raise_for_status()
+                    for line in response.iter_lines():
+                        if line.startswith("data: "):
+                            data_str = line[6:]
+                            if data_str.strip() == "[DONE]":
+                                break
+                            try:
+                                data = json.loads(data_str)
+                                delta = data.get("choices", [{}])[0].get("delta", {})
+                                content = delta.get("content", "")
+                                if content:
+                                    chunks.append(content)
+                                    if callback:
+                                        callback(content)
+                            except json.JSONDecodeError:
+                                continue
+
+            elapsed = (time.perf_counter() - start) * 1000
+            full_text = "".join(chunks)
+
+            return LLMResponse(
+                text=full_text,
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                is_streaming=True,
+                stream_chunks=chunks,
+            )
+        except httpx.HTTPStatusError as e:
+            elapsed = (time.perf_counter() - start) * 1000
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                error=f"HTTP {e.response.status_code}: {e.response.text[:200]}",
+            )
+        except Exception as e:
+            elapsed = (time.perf_counter() - start) * 1000
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                error=str(e),
+            )
 
 
 class AnthropicProvider(_BaseProvider):

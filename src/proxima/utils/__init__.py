@@ -2,6 +2,40 @@
 Shared utilities module.
 """
 
+from proxima.utils.helpers import (
+    camel_to_snake,
+    coalesce,
+    ensure_dir,
+    file_hash,
+    format_bytes,
+    format_duration,
+    format_number,
+    format_timestamp,
+    is_valid_email,
+    is_valid_identifier,
+    is_valid_url,
+    parse_duration,
+    pluralize,
+    safe_bool,
+    safe_filename,
+    safe_float,
+    safe_int,
+    slugify,
+    snake_to_camel,
+    time_ago,
+    truncate,
+    validate_range,
+)
+from proxima.utils.integrations import (
+    ExternalIntegration,
+    IntegrationHealth,
+    IntegrationStatus,
+    IntegrationType,
+    LLMIntegration,
+    QuantumIntegration,
+    QuantumLibraryInfo,
+    SystemResourceIntegration,
+)
 from proxima.utils.logging import (
     clear_execution_context,
     configure_from_settings,
@@ -13,6 +47,7 @@ from proxima.utils.logging import (
 )
 
 __all__ = [
+    # Logging
     "configure_logging",
     "configure_from_settings",
     "get_logger",
@@ -20,4 +55,36 @@ __all__ = [
     "clear_execution_context",
     "generate_execution_id",
     "timed_operation",
+    # Helpers
+    "slugify",
+    "truncate",
+    "snake_to_camel",
+    "camel_to_snake",
+    "pluralize",
+    "format_timestamp",
+    "format_duration",
+    "parse_duration",
+    "time_ago",
+    "format_bytes",
+    "format_number",
+    "safe_int",
+    "safe_float",
+    "safe_bool",
+    "coalesce",
+    "ensure_dir",
+    "safe_filename",
+    "file_hash",
+    "is_valid_identifier",
+    "is_valid_email",
+    "is_valid_url",
+    "validate_range",
+    # Integrations
+    "IntegrationStatus",
+    "IntegrationType",
+    "IntegrationHealth",
+    "ExternalIntegration",
+    "QuantumLibraryInfo",
+    "QuantumIntegration",
+    "LLMIntegration",
+    "SystemResourceIntegration",
 ]

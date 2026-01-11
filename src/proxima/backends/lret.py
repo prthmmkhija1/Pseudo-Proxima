@@ -7,6 +7,7 @@ Target: https://github.com/kunal5556/LRET (feature/framework-integration branch)
 from __future__ import annotations
 
 import importlib.util
+import logging
 import time
 from typing import Any
 
@@ -129,8 +130,8 @@ class LRETBackendAdapter(BaseBackendAdapter):
                         valid=is_valid,
                         message="Validated via LRET" if is_valid else "LRET validation failed",
                     )
-            except Exception:
-                pass
+            except Exception as exc:
+                logging.debug("LRET validation check failed: %s", exc)
 
         # Generic validation for dict-based circuits
         if isinstance(circuit, dict):
@@ -212,8 +213,8 @@ class LRETBackendAdapter(BaseBackendAdapter):
         if hasattr(circuit, "all_qubits"):
             try:
                 return len(circuit.all_qubits())
-            except Exception:
-                pass
+            except Exception as exc:
+                logging.debug("Could not extract qubit count via all_qubits(): %s", exc)
 
         return None
 
@@ -222,8 +223,8 @@ class LRETBackendAdapter(BaseBackendAdapter):
         if hasattr(circuit, "size"):
             try:
                 return circuit.size()
-            except Exception:
-                pass
+            except Exception as exc:
+                logging.debug("Could not extract gate count via size(): %s", exc)
 
         if isinstance(circuit, dict):
             for key in ("gates", "operations", "instructions"):
@@ -342,8 +343,8 @@ class LRETBackendAdapter(BaseBackendAdapter):
             if callable(val):
                 try:
                     return val()
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logging.debug("Could not extract counts via %s(): %s", attr, exc)
         return {}
 
     def _extract_statevector(self, result: Any) -> Any:
@@ -393,6 +394,6 @@ class LRETBackendAdapter(BaseBackendAdapter):
                 lret = self._get_lret_module()
                 if hasattr(lret, "SUPPORTED_GATES"):
                     return list(lret.SUPPORTED_GATES)
-            except Exception:
-                pass
+            except Exception as exc:
+                logging.debug("Could not get LRET supported gates: %s", exc)
         return standard_gates

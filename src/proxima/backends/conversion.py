@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import logging
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
@@ -114,8 +115,8 @@ def _extract_qiskit_info(circuit: Any) -> CircuitInfo:
         for instruction in circuit.data:
             gate_name = instruction.operation.name
             gate_types[gate_name] = gate_types.get(gate_name, 0) + 1
-    except Exception:
-        pass
+    except Exception as exc:
+        logging.debug("Could not extract Qiskit gate types: %s", exc)
 
     has_measurements = "measure" in gate_types
 
@@ -146,8 +147,8 @@ def _extract_cirq_info(circuit: Any) -> CircuitInfo:
                 gate_types[gate_name] = gate_types.get(gate_name, 0) + 1
                 if "measure" in gate_name.lower():
                     has_measurements = True
-    except Exception:
-        pass
+    except Exception as exc:
+        logging.debug("Could not extract Cirq gate types: %s", exc)
 
     num_qubits = len(circuit.all_qubits()) if hasattr(circuit, "all_qubits") else 0
 
@@ -178,15 +179,15 @@ def _extract_qasm_info(circuit_str: str, fmt: CircuitFormat) -> CircuitInfo:
                 parts = line.split("[")
                 if len(parts) > 1:
                     num_qubits += int(parts[1].split("]")[0])
-            except (ValueError, IndexError):
-                pass
+            except (ValueError, IndexError) as exc:
+                logging.debug("Could not parse qreg line '%s': %s", line, exc)
         elif line.startswith("creg"):
             try:
                 parts = line.split("[")
                 if len(parts) > 1:
                     num_cbits += int(parts[1].split("]")[0])
-            except (ValueError, IndexError):
-                pass
+            except (ValueError, IndexError) as exc:
+                logging.debug("Could not parse creg line '%s': %s", line, exc)
         elif line and not line.startswith(("//", "OPENQASM", "include")):
             # Count gates
             gate = line.split()[0].split("(")[0]
@@ -251,6 +252,9 @@ def convert_circuit(
         (CircuitFormat.QISKIT, CircuitFormat.OPENQASM2): _qiskit_to_qasm2,
         (CircuitFormat.OPENQASM2, CircuitFormat.QISKIT): _qasm2_to_qiskit,
         (CircuitFormat.CIRQ, CircuitFormat.OPENQASM2): _cirq_to_qasm2,
+        (CircuitFormat.OPENQASM2, CircuitFormat.CIRQ): _qasm2_to_cirq,
+        (CircuitFormat.OPENQASM3, CircuitFormat.QISKIT): _qasm3_to_qiskit,
+        (CircuitFormat.OPENQASM3, CircuitFormat.CIRQ): _qasm3_to_cirq,
     }
 
     converter = converters.get((source_format, target_format))
@@ -506,6 +510,208 @@ def _cirq_to_qasm2(circuit: Any, preserve_measurements: bool) -> ConversionResul
             target_format=CircuitFormat.OPENQASM2,
             error=f"QASM export failed: {exc}",
         )
+
+
+def _qasm2_to_cirq(qasm_str: str, preserve_measurements: bool) -> ConversionResult:
+    """Convert OpenQASM 2.0 to Cirq circuit.
+
+    Strategy: QASM2 -> Qiskit -> Cirq (using existing converters)
+    """
+    if importlib.util.find_spec("cirq") is None:
+        return ConversionResult(
+            success=False,
+            source_format=CircuitFormat.OPENQASM2,
+            target_format=CircuitFormat.CIRQ,
+            error="Cirq is not installed",
+        )
+
+    # First convert to Qiskit
+    qiskit_result = _qasm2_to_qiskit(qasm_str, preserve_measurements)
+    if not qiskit_result.success:
+        return ConversionResult(
+            success=False,
+            source_format=CircuitFormat.OPENQASM2,
+            target_format=CircuitFormat.CIRQ,
+            error=f"Intermediate QASM2->Qiskit failed: {qiskit_result.error}",
+        )
+
+    # Then convert Qiskit to Cirq
+    cirq_result = _qiskit_to_cirq(qiskit_result.circuit, preserve_measurements)
+    if not cirq_result.success:
+        return ConversionResult(
+            success=False,
+            source_format=CircuitFormat.OPENQASM2,
+            target_format=CircuitFormat.CIRQ,
+            error=f"Intermediate Qiskit->Cirq failed: {cirq_result.error}",
+        )
+
+    return ConversionResult(
+        success=True,
+        circuit=cirq_result.circuit,
+        source_format=CircuitFormat.OPENQASM2,
+        target_format=CircuitFormat.CIRQ,
+        warnings=qiskit_result.warnings + cirq_result.warnings,
+    )
+
+
+def _qasm3_to_qiskit(qasm_str: str, preserve_measurements: bool) -> ConversionResult:
+    """Convert OpenQASM 3.0 to Qiskit circuit.
+
+    Note: OpenQASM 3.0 support in Qiskit is available via qiskit.qasm3 module.
+    Falls back to QASM 2.0 parser with version normalization if qasm3 unavailable.
+    """
+    if importlib.util.find_spec("qiskit") is None:
+        return ConversionResult(
+            success=False,
+            source_format=CircuitFormat.OPENQASM3,
+            target_format=CircuitFormat.QISKIT,
+            error="Qiskit is not installed",
+        )
+
+    warnings: list[str] = []
+
+    try:
+        # Try qiskit.qasm3 module first (Qiskit 0.39+)
+        try:
+            from qiskit import qasm3
+
+            circuit = qasm3.loads(qasm_str)
+            return ConversionResult(
+                success=True,
+                circuit=circuit,
+                source_format=CircuitFormat.OPENQASM3,
+                target_format=CircuitFormat.QISKIT,
+            )
+        except (ImportError, AttributeError):
+            # qasm3 module not available, try fallback
+            warnings.append("qiskit.qasm3 not available, attempting QASM2 fallback")
+
+        # Fallback: Try to convert QASM3 to QASM2-compatible format
+        # This is a best-effort conversion for simple circuits
+        qasm2_str = _normalize_qasm3_to_qasm2(qasm_str)
+
+        from qiskit import QuantumCircuit
+
+        circuit = QuantumCircuit.from_qasm_str(qasm2_str)
+        warnings.append("Converted via QASM3->QASM2 normalization (some features may be lost)")
+
+        return ConversionResult(
+            success=True,
+            circuit=circuit,
+            source_format=CircuitFormat.OPENQASM3,
+            target_format=CircuitFormat.QISKIT,
+            warnings=warnings,
+        )
+    except Exception as exc:
+        return ConversionResult(
+            success=False,
+            source_format=CircuitFormat.OPENQASM3,
+            target_format=CircuitFormat.QISKIT,
+            error=f"QASM3 import failed: {exc}",
+            warnings=warnings,
+        )
+
+
+def _normalize_qasm3_to_qasm2(qasm3_str: str) -> str:
+    """Normalize OpenQASM 3.0 string to OpenQASM 2.0 compatible format.
+
+    This is a best-effort conversion for simple circuits. Complex QASM3
+    features (classical logic, subroutines, etc.) are not supported.
+    """
+    lines = []
+
+    for line in qasm3_str.strip().split("\n"):
+        stripped = line.strip()
+
+        # Skip empty lines and comments
+        if not stripped or stripped.startswith("//"):
+            lines.append(line)
+            continue
+
+        # Replace OPENQASM 3 header
+        if stripped.startswith("OPENQASM 3"):
+            lines.append("OPENQASM 2.0;")
+            continue
+
+        # Handle 'include' statements
+        if stripped.startswith("include"):
+            # Normalize to QASM2 includes
+            if "stdgates.inc" in stripped:
+                lines.append('include "qelib1.inc";')
+            else:
+                lines.append(line)
+            continue
+
+        # Handle qubit declarations (QASM3 style)
+        if stripped.startswith("qubit["):
+            # Convert 'qubit[n] name;' to 'qreg name[n];'
+            try:
+                parts = stripped.replace("qubit[", "").split("]")
+                count = parts[0]
+                name = parts[1].strip().rstrip(";").strip()
+                lines.append(f"qreg {name}[{count}];")
+            except (IndexError, ValueError):
+                lines.append(line)
+            continue
+
+        # Handle bit declarations (QASM3 style)
+        if stripped.startswith("bit["):
+            # Convert 'bit[n] name;' to 'creg name[n];'
+            try:
+                parts = stripped.replace("bit[", "").split("]")
+                count = parts[0]
+                name = parts[1].strip().rstrip(";").strip()
+                lines.append(f"creg {name}[{count}];")
+            except (IndexError, ValueError):
+                lines.append(line)
+            continue
+
+        # Pass through other lines (gates, measurements, etc.)
+        lines.append(line)
+
+    return "\n".join(lines)
+
+
+def _qasm3_to_cirq(qasm_str: str, preserve_measurements: bool) -> ConversionResult:
+    """Convert OpenQASM 3.0 to Cirq circuit.
+
+    Strategy: QASM3 -> Qiskit -> Cirq (using existing converters)
+    """
+    if importlib.util.find_spec("cirq") is None:
+        return ConversionResult(
+            success=False,
+            source_format=CircuitFormat.OPENQASM3,
+            target_format=CircuitFormat.CIRQ,
+            error="Cirq is not installed",
+        )
+
+    # First convert to Qiskit
+    qiskit_result = _qasm3_to_qiskit(qasm_str, preserve_measurements)
+    if not qiskit_result.success:
+        return ConversionResult(
+            success=False,
+            source_format=CircuitFormat.OPENQASM3,
+            target_format=CircuitFormat.CIRQ,
+            error=f"Intermediate QASM3->Qiskit failed: {qiskit_result.error}",
+        )
+
+    # Then convert Qiskit to Cirq
+    cirq_result = _qiskit_to_cirq(qiskit_result.circuit, preserve_measurements)
+    if not cirq_result.success:
+        return ConversionResult(
+            success=False,
+            source_format=CircuitFormat.OPENQASM3,
+            target_format=CircuitFormat.CIRQ,
+            error=f"Intermediate Qiskit->Cirq failed: {cirq_result.error}",
+        )
+
+    return ConversionResult(
+        success=True,
+        circuit=cirq_result.circuit,
+        source_format=CircuitFormat.OPENQASM3,
+        target_format=CircuitFormat.CIRQ,
+        warnings=qiskit_result.warnings + cirq_result.warnings,
+    )
 
 
 # ==============================================================================

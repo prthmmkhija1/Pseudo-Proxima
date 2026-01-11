@@ -387,17 +387,17 @@ class RichFormatter(OutputFormatter):
         output = StringIO()
         console = Console(file=output, force_terminal=True)
 
-        kwargs.get("style", "default")
+        style = kwargs.get("style", "default")
 
         if isinstance(data, str):
-            text = Text(data)
+            text = Text(data, style=style if style != "default" else None)
             console.print(text)
         elif isinstance(data, dict):
-            self._print_dict_tree(console, data, kwargs.get("title", "Result"))
+            self._print_dict_tree(console, data, kwargs.get("title", "Result"), style=style)
         elif isinstance(data, (list, tuple)):
-            self._print_list(console, data, kwargs.get("title", "Items"))
+            self._print_list(console, data, kwargs.get("title", "Items"), style=style)
         else:
-            console.print(str(data))
+            console.print(str(data), style=style if style != "default" else None)
 
         return output.getvalue()
 
@@ -406,6 +406,7 @@ class RichFormatter(OutputFormatter):
         console: Console,
         data: dict,
         title: str = "Data",
+        style: str = "default",
     ) -> None:
         """Print dictionary as tree."""
         tree = Tree(f"[bold]{title}[/bold]")
@@ -434,6 +435,7 @@ class RichFormatter(OutputFormatter):
         console: Console,
         data: list | tuple,
         title: str = "Items",
+        style: str = "default",
     ) -> None:
         """Print list with styling."""
         tree = Tree(f"[bold]{title}[/bold]")

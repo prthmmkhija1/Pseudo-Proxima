@@ -3,11 +3,16 @@
 Provides:
 - Session: Encapsulates execution session state
 - SessionManager: Create, save, load, resume sessions
+- SessionLock: File-based locking for concurrent access
+- SessionCleanup: Cleanup old/expired sessions
 """
 
 from __future__ import annotations
 
+import atexit
 import json
+import os
+import threading
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -288,3 +293,307 @@ class SessionManager:
         session.update_status(SessionStatus.RUNNING)
         self._current = session
         return session
+
+
+# =============================================================================
+# Session Locking
+# =============================================================================
+
+
+class SessionLock:
+    """File-based locking for session access.
+
+    Provides exclusive access to a session file to prevent
+    concurrent modifications from multiple processes.
+    """
+
+    def __init__(self, session_path: Path) -> None:
+        self._session_path = session_path
+        self._lock_path = session_path.with_suffix(".lock")
+        self._lock_file: Any = None
+        self._locked = False
+
+    def acquire(self, timeout: float = 5.0) -> bool:
+        """Acquire the lock with timeout.
+
+        Args:
+            timeout: Maximum time to wait for lock in seconds.
+
+        Returns:
+            True if lock acquired, False if timeout.
+        """
+        import platform
+        start_time = time.time()
+
+        while time.time() - start_time < timeout:
+            try:
+                self._lock_file = open(self._lock_path, 'w')
+
+                if platform.system() != 'Windows':
+                    import fcntl
+                    fcntl.flock(self._lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                else:
+                    # Windows: use msvcrt for file locking
+                    import msvcrt
+                    msvcrt.locking(self._lock_file.fileno(), msvcrt.LK_NBLCK, 1)
+
+                self._locked = True
+                # Write PID for debugging
+                self._lock_file.write(str(os.getpid()))
+                self._lock_file.flush()
+                return True
+            except (OSError, BlockingIOError):
+                if self._lock_file:
+                    self._lock_file.close()
+                    self._lock_file = None
+                time.sleep(0.1)
+
+        return False
+
+    def release(self) -> None:
+        """Release the lock."""
+        import platform
+
+        if self._lock_file and self._locked:
+            try:
+                if platform.system() != 'Windows':
+                    import fcntl
+                    fcntl.flock(self._lock_file.fileno(), fcntl.LOCK_UN)
+                else:
+                    import msvcrt
+                    msvcrt.locking(self._lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+            except OSError:
+                pass
+            finally:
+                self._lock_file.close()
+                self._lock_file = None
+                self._locked = False
+                # Clean up lock file
+                try:
+                    self._lock_path.unlink()
+                except OSError:
+                    pass
+
+    def __enter__(self) -> SessionLock:
+        if not self.acquire():
+            raise TimeoutError(f"Could not acquire lock for {self._session_path}")
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        self.release()
+
+    @property
+    def is_locked(self) -> bool:
+        return self._locked
+
+
+# =============================================================================
+# Session Cleanup
+# =============================================================================
+
+
+class SessionCleanup:
+    """Handles cleanup of old and expired sessions."""
+
+    def __init__(
+        self,
+        storage_dir: Path,
+        max_age_days: float = 30.0,
+        max_sessions: int = 100,
+    ) -> None:
+        self._storage_dir = storage_dir
+        self._max_age_seconds = max_age_days * 24 * 3600
+        self._max_sessions = max_sessions
+
+    def cleanup_expired(self) -> int:
+        """Remove sessions older than max_age_days.
+
+        Returns:
+            Number of sessions cleaned up.
+        """
+        if not self._storage_dir.exists():
+            return 0
+
+        count = 0
+        current_time = time.time()
+
+        for path in self._storage_dir.glob("*.json"):
+            try:
+                # Check file modification time
+                mtime = path.stat().st_mtime
+                age = current_time - mtime
+
+                if age > self._max_age_seconds:
+                    path.unlink()
+                    # Also remove lock file if exists
+                    lock_path = path.with_suffix(".lock")
+                    if lock_path.exists():
+                        lock_path.unlink()
+                    count += 1
+            except OSError:
+                continue
+
+        return count
+
+    def cleanup_excess(self) -> int:
+        """Remove oldest sessions if count exceeds max_sessions.
+
+        Returns:
+            Number of sessions cleaned up.
+        """
+        if not self._storage_dir.exists():
+            return 0
+
+        sessions = []
+        for path in self._storage_dir.glob("*.json"):
+            try:
+                sessions.append((path, path.stat().st_mtime))
+            except OSError:
+                continue
+
+        if len(sessions) <= self._max_sessions:
+            return 0
+
+        # Sort by modification time (oldest first)
+        sessions.sort(key=lambda x: x[1])
+
+        # Remove excess
+        excess = len(sessions) - self._max_sessions
+        count = 0
+
+        for path, _ in sessions[:excess]:
+            try:
+                path.unlink()
+                lock_path = path.with_suffix(".lock")
+                if lock_path.exists():
+                    lock_path.unlink()
+                count += 1
+            except OSError:
+                continue
+
+        return count
+
+    def cleanup_incomplete(self) -> int:
+        """Remove sessions that are stuck in RUNNING or PAUSED state.
+
+        Sessions that have been in these states for more than 24 hours
+        are considered stuck and will be cleaned up.
+
+        Returns:
+            Number of sessions cleaned up.
+        """
+        if not self._storage_dir.exists():
+            return 0
+
+        count = 0
+        current_time = time.time()
+        stuck_threshold = 24 * 3600  # 24 hours
+
+        for path in self._storage_dir.glob("*.json"):
+            try:
+                data = json.loads(path.read_text())
+                status = data.get("metadata", {}).get("status")
+                updated_at = data.get("metadata", {}).get("updated_at", 0)
+
+                if status in ("RUNNING", "PAUSED"):
+                    if current_time - updated_at > stuck_threshold:
+                        path.unlink()
+                        count += 1
+            except (OSError, json.JSONDecodeError):
+                continue
+
+        return count
+
+    def run_full_cleanup(self) -> dict[str, int]:
+        """Run all cleanup operations.
+
+        Returns:
+            Dictionary with counts for each cleanup type.
+        """
+        return {
+            "expired": self.cleanup_expired(),
+            "excess": self.cleanup_excess(),
+            "incomplete": self.cleanup_incomplete(),
+        }
+
+
+# =============================================================================
+# Enhanced Session Manager with Locking
+# =============================================================================
+
+
+class LockingSessionManager(SessionManager):
+    """Session manager with file locking support."""
+
+    def __init__(
+        self,
+        storage_dir: Path | None = None,
+        auto_cleanup: bool = True,
+        max_age_days: float = 30.0,
+    ) -> None:
+        super().__init__(storage_dir)
+        self._locks: dict[str, SessionLock] = {}
+        self._cleanup = SessionCleanup(storage_dir, max_age_days) if storage_dir else None
+        self._lock = threading.Lock()
+
+        # Register cleanup on exit
+        if auto_cleanup and storage_dir:
+            atexit.register(self._cleanup_on_exit)
+
+    def save(self, session: Session | None = None) -> bool:
+        """Save session with locking."""
+        session = session or self._current
+        if not session or not self._storage_dir:
+            return False
+
+        path = self._storage_dir / f"{session.metadata.id}.json"
+        lock = SessionLock(path)
+
+        if lock.acquire():
+            try:
+                self._storage_dir.mkdir(parents=True, exist_ok=True)
+                path.write_text(json.dumps(session.to_dict(), indent=2))
+                return True
+            finally:
+                lock.release()
+        return False
+
+    def load(self, session_id: str) -> Session | None:
+        """Load session with locking."""
+        if not self._storage_dir:
+            return None
+
+        path = self._storage_dir / f"{session_id}.json"
+        if not path.exists():
+            return None
+
+        lock = SessionLock(path)
+        if lock.acquire():
+            try:
+                data = json.loads(path.read_text())
+                session = Session.from_dict(data)
+                with self._lock:
+                    self._sessions[session_id] = session
+                return session
+            except Exception:
+                return None
+            finally:
+                lock.release()
+        return None
+
+    def run_cleanup(self) -> dict[str, int]:
+        """Manually run cleanup."""
+        if self._cleanup:
+            return self._cleanup.run_full_cleanup()
+        return {}
+
+    def _cleanup_on_exit(self) -> None:
+        """Cleanup handler for program exit."""
+        # Save current session if exists
+        if self._current:
+            self.save(self._current)
+
+        # Release any held locks
+        for lock in self._locks.values():
+            lock.release()
+        self._locks.clear()

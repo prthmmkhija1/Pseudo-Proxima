@@ -524,7 +524,7 @@ class AnalysisHandler(PipelineHandler):
 
 
 class ExportHandler(PipelineHandler):
-    """Export results to file."""
+    """Export results to file in multiple formats (JSON, CSV, XLSX)."""
 
     def __init__(self, export_dir: str = "./results"):
         super().__init__(PipelineStage.EXPORTING)
@@ -552,13 +552,26 @@ class ExportHandler(PipelineHandler):
             }
 
             # Determine format
-            fmt = ctx.export_format or "json"
+            fmt = (ctx.export_format or "json").lower()
             filename = f"{ctx.execution_id}_{int(time.time())}.{fmt}"
             filepath = os.path.join(self.export_dir, filename)
 
             if fmt == "json":
-                with open(filepath, "w") as f:
+                with open(filepath, "w", encoding="utf-8") as f:
                     json.dump(export_data, f, indent=2, default=str)
+
+            elif fmt == "csv":
+                filepath = self._export_csv(export_data, filepath)
+
+            elif fmt == "xlsx":
+                filepath = self._export_xlsx(export_data, filepath)
+
+            else:
+                # Default to JSON for unknown formats
+                filepath = filepath.replace(f".{fmt}", ".json")
+                with open(filepath, "w", encoding="utf-8") as f:
+                    json.dump(export_data, f, indent=2, default=str)
+                fmt = "json"
 
             ctx.export_path = filepath
 
@@ -575,6 +588,148 @@ class ExportHandler(PipelineHandler):
                 error=str(e),
                 duration_ms=(time.time() - start) * 1000,
             )
+
+    def _export_csv(self, data: dict[str, Any], filepath: str) -> str:
+        """Export data to CSV format."""
+        import csv
+
+        # Flatten results for CSV
+        rows = []
+
+        # Summary row
+        rows.append({
+            "type": "summary",
+            "execution_id": data["execution_id"],
+            "timestamp": data["timestamp"],
+            "input": data["input"],
+            "duration_ms": data["duration_ms"],
+            "backends": ", ".join(data["backends"]),
+        })
+
+        # Backend results rows
+        for backend, result in data.get("results", {}).items():
+            row = {
+                "type": "result",
+                "backend": backend,
+                "status": result.get("status", "unknown"),
+                "duration_ms": result.get("duration_ms", 0),
+            }
+            # Add counts as columns
+            counts = result.get("counts", {})
+            for state, count in counts.items():
+                row[f"count_{state}"] = count
+            rows.append(row)
+
+        # Insights rows
+        for i, insight in enumerate(data.get("insights", []), 1):
+            rows.append({
+                "type": "insight",
+                "insight_num": i,
+                "insight_text": insight,
+            })
+
+        # Write CSV
+        if rows:
+            all_keys = set()
+            for row in rows:
+                all_keys.update(row.keys())
+            fieldnames = sorted(all_keys)
+
+            with open(filepath, "w", newline="", encoding="utf-8") as f:
+                writer = csv.DictWriter(f, fieldnames=fieldnames)
+                writer.writeheader()
+                writer.writerows(rows)
+
+        return filepath
+
+    def _export_xlsx(self, data: dict[str, Any], filepath: str) -> str:
+        """Export data to XLSX format using openpyxl."""
+        try:
+            from openpyxl import Workbook
+            from openpyxl.styles import Font, PatternFill
+        except ImportError:
+            # Fall back to CSV if openpyxl not available
+            logger.warning("openpyxl not available, falling back to CSV")
+            return self._export_csv(data, filepath.replace(".xlsx", ".csv"))
+
+        wb = Workbook()
+
+        # Summary sheet
+        ws_summary = wb.active
+        ws_summary.title = "Summary"
+
+        # Header style
+        header_font = Font(bold=True)
+        header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
+
+        # Summary data
+        summary_data = [
+            ("Execution ID", data["execution_id"]),
+            ("Timestamp", data["timestamp"]),
+            ("Input", data["input"]),
+            ("Duration (ms)", data["duration_ms"]),
+            ("Backends", ", ".join(data["backends"])),
+        ]
+
+        for row_num, (key, value) in enumerate(summary_data, 1):
+            ws_summary.cell(row=row_num, column=1, value=key).font = header_font
+            ws_summary.cell(row=row_num, column=2, value=str(value))
+
+        # Results sheet
+        ws_results = wb.create_sheet("Results")
+        results = data.get("results", {})
+
+        if results:
+            # Headers
+            headers = ["Backend", "Status", "Duration (ms)"]
+            # Collect all count keys
+            count_keys: set[str] = set()
+            for result in results.values():
+                count_keys.update(result.get("counts", {}).keys())
+            headers.extend([f"Count: {k}" for k in sorted(count_keys)])
+
+            for col, header in enumerate(headers, 1):
+                cell = ws_results.cell(row=1, column=col, value=header)
+                cell.font = header_font
+                cell.fill = header_fill
+
+            # Data rows
+            for row_num, (backend, result) in enumerate(results.items(), 2):
+                ws_results.cell(row=row_num, column=1, value=backend)
+                ws_results.cell(row=row_num, column=2, value=result.get("status", "unknown"))
+                ws_results.cell(row=row_num, column=3, value=result.get("duration_ms", 0))
+
+                counts = result.get("counts", {})
+                for col, key in enumerate(sorted(count_keys), 4):
+                    ws_results.cell(row=row_num, column=col, value=counts.get(key, 0))
+
+        # Insights sheet
+        ws_insights = wb.create_sheet("Insights")
+        insights = data.get("insights", [])
+
+        ws_insights.cell(row=1, column=1, value="Insight #").font = header_font
+        ws_insights.cell(row=1, column=2, value="Insight").font = header_font
+
+        for row_num, insight in enumerate(insights, 2):
+            ws_insights.cell(row=row_num, column=1, value=row_num - 1)
+            ws_insights.cell(row=row_num, column=2, value=insight)
+
+        # Auto-adjust column widths
+        for ws in [ws_summary, ws_results, ws_insights]:
+            for column in ws.columns:
+                max_length = 0
+                column_letter = column[0].column_letter
+                for cell in column:
+                    try:
+                        if cell.value:
+                            max_length = max(max_length, len(str(cell.value)))
+                    except TypeError:
+                        pass
+                adjusted_width = min(max_length + 2, 50)
+                ws.column_dimensions[column_letter].width = adjusted_width
+
+        wb.save(filepath)
+        return filepath
 
 
 # =============================================================================

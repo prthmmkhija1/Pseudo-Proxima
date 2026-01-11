@@ -208,6 +208,8 @@ class LogViewer(Static):
     LogViewer .log-level-info { color: $info; }
     LogViewer .log-level-warning { color: $warning; }
     LogViewer .log-level-error { color: $error; }
+    LogViewer .log-level-success { color: $success; }
+    LogViewer .log-level-critical { color: $error; text-style: bold; }
     LogViewer .log-message { width: 1fr; }
     LogViewer .log-footer { height: 3; padding: 1; background: $surface; }
     """
@@ -244,6 +246,30 @@ class LogViewer(Static):
         self.add_entry(
             LogEntry(timestamp=time.time(), level=level, message=message, component=component)
         )
+
+    def log_debug(self, message: str, component: str = "") -> None:
+        """Log a debug-level message."""
+        self.log(message, level="debug", component=component)
+
+    def log_info(self, message: str, component: str = "") -> None:
+        """Log an info-level message."""
+        self.log(message, level="info", component=component)
+
+    def log_warning(self, message: str, component: str = "") -> None:
+        """Log a warning-level message."""
+        self.log(message, level="warning", component=component)
+
+    def log_error(self, message: str, component: str = "") -> None:
+        """Log an error-level message."""
+        self.log(message, level="error", component=component)
+
+    def log_success(self, message: str, component: str = "") -> None:
+        """Log a success-level message."""
+        self.log(message, level="success", component=component)
+
+    def log_critical(self, message: str, component: str = "") -> None:
+        """Log a critical-level message."""
+        self.log(message, level="critical", component=component)
 
     def _render_entry(self, entry: LogEntry) -> None:
         if self._filter_level and entry.level != self._filter_level:

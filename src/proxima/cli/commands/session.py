@@ -135,13 +135,18 @@ def rename_session(
         typer.echo(f"Session not found: {session_id}", err=True)
         raise typer.Exit(1)
 
+    old_name = session.name or "(unnamed)"
+
     # Update the session name
     session.name = name
     session.updated_at = datetime.utcnow()
 
-    # For memory store, we can update in place
-    # For persistent stores, we'd need an update method
-    typer.echo(f"Renamed session to: {name}")
+    # Persist the update
+    if store.update_session(session):
+        typer.echo(f"Renamed session from '{old_name}' to '{name}'")
+    else:
+        typer.echo("Failed to rename session.", err=True)
+        raise typer.Exit(1)
 
 
 @app.command("resume")

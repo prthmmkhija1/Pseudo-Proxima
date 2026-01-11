@@ -245,11 +245,16 @@ def reload_settings() -> Settings:
 
 
 class FlatSettings:
-    """Flat accessor for settings values."""
+    """Flat accessor for settings values.
+
+    Provides convenient dot-notation access to all settings values
+    without navigating the nested structure.
+    """
 
     def __init__(self, settings: Settings):
         self._settings = settings
 
+    # General settings
     @property
     def storage_backend(self) -> str:
         return self._settings.general.storage_backend
@@ -257,3 +262,71 @@ class FlatSettings:
     @property
     def data_dir(self) -> str | None:
         return self._settings.general.data_dir or None
+
+    @property
+    def verbosity(self) -> str:
+        return self._settings.general.verbosity
+
+    @property
+    def output_format(self) -> str:
+        return self._settings.general.output_format
+
+    @property
+    def color_enabled(self) -> bool:
+        return self._settings.general.color_enabled
+
+    # Backend settings
+    @property
+    def default_backend(self) -> str:
+        return self._settings.backends.default_backend
+
+    @property
+    def parallel_execution(self) -> bool:
+        return self._settings.backends.parallel_execution
+
+    @property
+    def timeout_seconds(self) -> int:
+        return self._settings.backends.timeout_seconds
+
+    # LLM settings
+    @property
+    def llm_provider(self) -> str:
+        return self._settings.llm.provider
+
+    @property
+    def llm_model(self) -> str:
+        return self._settings.llm.model
+
+    @property
+    def llm_local_endpoint(self) -> str:
+        return self._settings.llm.local_endpoint
+
+    @property
+    def llm_require_consent(self) -> bool:
+        return self._settings.llm.require_consent
+
+    # Resource settings
+    @property
+    def memory_warn_threshold_mb(self) -> int:
+        return self._settings.resources.memory_warn_threshold_mb
+
+    @property
+    def memory_critical_threshold_mb(self) -> int:
+        return self._settings.resources.memory_critical_threshold_mb
+
+    @property
+    def max_execution_time_seconds(self) -> int:
+        return self._settings.resources.max_execution_time_seconds
+
+    # Consent settings
+    @property
+    def auto_approve_local_llm(self) -> bool:
+        return self._settings.consent.auto_approve_local_llm
+
+    @property
+    def auto_approve_remote_llm(self) -> bool:
+        return self._settings.consent.auto_approve_remote_llm
+
+    @property
+    def remember_consent_decisions(self) -> bool:
+        return self._settings.consent.remember_decisions

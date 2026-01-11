@@ -73,7 +73,10 @@ def run_agent(
         agent_config.tasks = agent_config.tasks[start_task - 1 :]
 
     if step:
-        typer.echo("Step mode: will prompt for each task")
+        typer.echo("Step mode: will prompt before each task")
+        # Execute tasks one by one with user confirmation
+        _execute_step_mode(agent_config, interpreter, display_callback)
+        return
 
     try:
         report = interpreter.execute(agent_config)
@@ -194,6 +197,108 @@ Analyze the measurement distribution and provide insights.
     output_file.write_text(template)
     typer.echo(f"Created agent file: {output_file}")
     typer.echo(f"Edit the file and run with: proxima agent run {output_file}")
+
+
+def _execute_step_mode(agent_config, interpreter, display_callback) -> None:
+    """Execute tasks one by one with user confirmation between each task.
+
+    Args:
+        agent_config: The parsed agent configuration
+        interpreter: The AgentInterpreter instance
+        display_callback: Callback for displaying messages
+    """
+    import time
+
+    from proxima.core.agent_interpreter import TaskResult, TaskStatus
+
+    results: list[TaskResult] = []
+    total_tasks = len(agent_config.tasks)
+
+    for i, task in enumerate(agent_config.tasks, 1):
+        typer.echo(f"\n{'=' * 60}")
+        typer.echo(f"Task {i}/{total_tasks}: {task.name}")
+        typer.echo(f"Type: {task.type.value}")
+        typer.echo(
+            f"Description: {task.description[:100]}..."
+            if len(task.description) > 100
+            else f"Description: {task.description}"
+        )
+        typer.echo("=" * 60)
+
+        # Prompt user for action
+        action = typer.prompt(
+            "\n[R]un, [S]kip, or [A]bort?",
+            default="r",
+            show_default=True,
+        ).lower()
+
+        if action == "a":
+            typer.echo("\n⚠ Execution aborted by user")
+            break
+        elif action == "s":
+            typer.echo(f"⏭ Skipping task {i}")
+            current_time = time.time()
+            results.append(
+                TaskResult(
+                    task_id=str(i),
+                    status=TaskStatus.SKIPPED,
+                    start_time=current_time,
+                    end_time=current_time,
+                )
+            )
+            continue
+
+        # Execute the task
+        start = time.time()
+        try:
+            # Execute single task using interpreter's internal method
+            task_result = interpreter._execute_task(task, i)
+            end = time.time()
+            elapsed_ms = (end - start) * 1000
+
+            results.append(
+                TaskResult(
+                    task_id=str(i),
+                    status=TaskStatus.COMPLETED,
+                    start_time=start,
+                    end_time=end,
+                    result=task_result,
+                )
+            )
+            typer.echo(f"✓ Task {i} completed in {elapsed_ms:.1f}ms")
+
+        except Exception as e:
+            end = time.time()
+            elapsed_ms = (end - start) * 1000
+            results.append(
+                TaskResult(
+                    task_id=str(i),
+                    status=TaskStatus.FAILED,
+                    start_time=start,
+                    end_time=end,
+                    error=str(e),
+                )
+            )
+            typer.echo(f"✗ Task {i} failed: {e}")
+
+            # Ask if user wants to continue
+            if i < total_tasks:
+                continue_exec = typer.confirm("Continue with remaining tasks?", default=True)
+                if not continue_exec:
+                    typer.echo("\n⚠ Execution stopped by user")
+                    break
+
+    # Summary
+    completed = sum(1 for r in results if r.status == TaskStatus.COMPLETED)
+    failed = sum(1 for r in results if r.status == TaskStatus.FAILED)
+    skipped = sum(1 for r in results if r.status == TaskStatus.SKIPPED)
+
+    typer.echo(f"\n{'=' * 60}")
+    typer.echo("Step Mode Execution Summary")
+    typer.echo(f"  Completed: {completed}/{total_tasks}")
+    typer.echo(f"  Failed: {failed}")
+    typer.echo(f"  Skipped: {skipped}")
+    typer.echo("=" * 60)
 
 
 @app.command("list-tasks")

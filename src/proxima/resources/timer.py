@@ -671,3 +671,81 @@ class ExecutionTimer:
         for stage in self.all_stages():
             lines.append(f"  {stage}")
         return "\n".join(lines)
+
+    # -------------------------------------------------------------------------
+    # Persistence
+    # -------------------------------------------------------------------------
+
+    def to_dict(self) -> dict:
+        """Serialize timer state to dictionary for persistence."""
+        return {
+            "current_stage": self._current_stage,
+            "stage_order": list(self._stage_order),
+            "stages": {
+                name: {
+                    "name": stage.name,
+                    "elapsed_ms": stage.elapsed_ms,
+                    "started": stage.started,
+                    "completed": stage.completed,
+                }
+                for name, stage in self._stages.items()
+            },
+            "progress": {
+                "total": self._progress.total,
+                "completed": self._progress.completed,
+            },
+            "global_start": self._global_start,
+            "global_end": self._global_end,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> ExecutionTimer:
+        """Restore timer state from dictionary."""
+        timer = cls()
+        timer._current_stage = data.get("current_stage")
+        timer._stage_order = list(data.get("stage_order", []))
+        timer._global_start = data.get("global_start")
+        timer._global_end = data.get("global_end")
+
+        for name, stage_data in data.get("stages", {}).items():
+            stage = StageInfo(
+                name=stage_data["name"],
+                elapsed_ms=stage_data.get("elapsed_ms", 0.0),
+                started=stage_data.get("started", False),
+                completed=stage_data.get("completed", False),
+            )
+            timer._stages[name] = stage
+
+        progress_data = data.get("progress", {})
+        if progress_data.get("total"):
+            timer._progress.set_total(progress_data["total"])
+            timer._progress.update(progress_data.get("completed", 0))
+
+        return timer
+
+    def save_to_file(self, path: str) -> None:
+        """Save timer state to JSON file.
+
+        Args:
+            path: File path to save to.
+        """
+        import json
+        from pathlib import Path
+
+        Path(path).write_text(json.dumps(self.to_dict(), indent=2))
+
+    @classmethod
+    def load_from_file(cls, path: str) -> ExecutionTimer:
+        """Load timer state from JSON file.
+
+        Args:
+            path: File path to load from.
+
+        Returns:
+            Restored ExecutionTimer instance.
+        """
+        import json
+        from pathlib import Path
+
+        data = json.loads(Path(path).read_text())
+        return cls.from_dict(data)

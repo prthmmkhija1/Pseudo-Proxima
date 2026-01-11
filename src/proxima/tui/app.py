@@ -135,21 +135,36 @@ class ProximaApp(App):
     def __init__(
         self,
         config_path: Path | None = None,
+        theme: str = "dark",
+        initial_screen: str = "dashboard",
         **kwargs,
     ) -> None:
         """Initialize the Proxima TUI.
 
         Args:
             config_path: Optional path to configuration file
+            theme: Color theme ('dark' or 'light')
+            initial_screen: Screen to show on startup
         """
         super().__init__(**kwargs)
         self._config_path = config_path
-        self._current_screen = "dashboard"
+        self._theme = theme
+        self._current_screen = initial_screen
+        self._apply_theme(theme)
+
+    def _apply_theme(self, theme: str) -> None:
+        """Apply color theme to the app."""
+        if theme == "light":
+            # Light theme overrides
+            self.dark = False
+        else:
+            # Dark theme (default)
+            self.dark = True
 
     def on_mount(self) -> None:
         """Called when app is mounted."""
-        # Start with dashboard
-        self.push_screen("dashboard")
+        # Start with the configured initial screen
+        self.push_screen(self._current_screen)
 
     def action_show_dashboard(self) -> None:
         """Switch to dashboard screen."""

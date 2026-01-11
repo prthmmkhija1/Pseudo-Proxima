@@ -30,10 +30,22 @@ def launch(
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(1)
 
-    typer.echo("Launching Proxima TUI...")
+    # Validate theme option
+    valid_themes = ["dark", "light"]
+    if theme.lower() not in valid_themes:
+        typer.echo(f"Invalid theme '{theme}'. Valid options: {', '.join(valid_themes)}", err=True)
+        raise typer.Exit(1)
+
+    # Validate screen option
+    valid_screens = ["dashboard", "execution", "configuration", "results", "backends"]
+    if screen.lower() not in valid_screens:
+        typer.echo(f"Invalid screen '{screen}'. Valid options: {', '.join(valid_screens)}", err=True)
+        raise typer.Exit(1)
+
+    typer.echo(f"Launching Proxima TUI (theme={theme}, screen={screen})...")
 
     try:
-        app = ProximaApp()
+        app = ProximaApp(theme=theme, initial_screen=screen)
         app.run()
     except Exception as e:
         typer.echo(f"TUI error: {e}", err=True)

@@ -424,6 +424,20 @@ class CompareWorkflow(WorkflowRunner[dict[str, Any]]):
 
     def _execute(self, **kwargs) -> dict[str, Any]:
         """Execute comparison across backends."""
+        if self.options.parallel and len(self.options.backends) > 1:
+            results = self._execute_parallel()
+        else:
+            results = self._execute_sequential()
+
+        return {
+            "objective": self.options.objective,
+            "backends": self.options.backends,
+            "results": results,
+            "comparison": self._generate_comparison(results),
+        }
+
+    def _execute_sequential(self) -> dict[str, Any]:
+        """Execute backends sequentially."""
         results = {}
 
         for backend_name in self.options.backends:
@@ -444,12 +458,56 @@ class CompareWorkflow(WorkflowRunner[dict[str, Any]]):
                 "state": fsm.state,
             }
 
-        return {
-            "objective": self.options.objective,
-            "backends": self.options.backends,
-            "results": results,
-            "comparison": self._generate_comparison(results),
-        }
+        return results
+
+    def _execute_parallel(self) -> dict[str, Any]:
+        """Execute backends in parallel using ThreadPoolExecutor."""
+        import concurrent.futures
+
+        results: dict[str, Any] = {}
+
+        def run_backend(backend_name: str) -> tuple[str, dict[str, Any]]:
+            """Run a single backend and return results."""
+            fsm = ExecutionStateMachine()
+            planner = Planner(fsm)
+            executor = Executor(fsm)
+
+            start_time = time.time()
+            plan = planner.plan(self.options.objective)
+            result = executor.run(plan)
+            elapsed = time.time() - start_time
+
+            return backend_name, {
+                "result": result,
+                "execution_time": elapsed,
+                "state": fsm.state,
+            }
+
+        typer.echo(f"Running {len(self.options.backends)} backends in parallel...")
+
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=len(self.options.backends)
+        ) as executor:
+            futures = {
+                executor.submit(run_backend, backend): backend for backend in self.options.backends
+            }
+
+            for future in concurrent.futures.as_completed(futures):
+                backend_name = futures[future]
+                try:
+                    name, data = future.result()
+                    results[name] = data
+                    typer.echo(f"  ✓ {name} completed in {data['execution_time']:.3f}s")
+                except Exception as exc:
+                    results[backend_name] = {
+                        "result": None,
+                        "execution_time": 0,
+                        "state": "error",
+                        "error": str(exc),
+                    }
+                    typer.echo(f"  ✗ {backend_name} failed: {exc}")
+
+        return results
 
     def _generate_comparison(self, results: dict[str, Any]) -> dict[str, Any]:
         """Generate comparison summary."""

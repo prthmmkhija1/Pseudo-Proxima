@@ -489,7 +489,8 @@ class TestBackendRegistry:
             depth=10,
         )
 
-        compatible = registry.list_compatible(chars)
+        # Without runtime check, all registered backends are compatible
+        compatible = registry.list_compatible(chars, check_runtime=False)
 
         # All backends should be compatible with 5 qubits
         assert len(compatible) >= 5

@@ -44,6 +44,8 @@ class PatternType(Enum):
     OSCILLATING = "oscillating"  # Alternating high/low
     RANDOM = "random"  # No clear pattern
     ENTANGLED = "entangled"  # Bell-state-like correlations
+    GHZ = "ghz"  # GHZ state pattern (all-zeros + all-ones)
+    SPARSE = "sparse"  # Sparse distribution with few non-zero states
 
 
 # =============================================================================
@@ -377,6 +379,16 @@ class PatternDetector:
         if entangled:
             patterns.append(entangled)
 
+        # Check for GHZ state pattern
+        ghz = self._check_ghz(probabilities)
+        if ghz:
+            patterns.append(ghz)
+
+        # Check for sparse distribution
+        sparse = self._check_sparse(probabilities)
+        if sparse:
+            patterns.append(sparse)
+
         # If no patterns found, classify as random
         if not patterns:
             patterns.append(
@@ -490,6 +502,91 @@ class PatternDetector:
                     affected_states=[all_zeros, all_ones],
                     metrics={"combined_probability": combined},
                 )
+
+        return None
+
+    def _check_ghz(self, probs: dict[str, float]) -> PatternInfo | None:
+        """Check for GHZ state pattern (multi-qubit entanglement)."""
+        states = list(probs.keys())
+
+        if not states:
+            return None
+
+        # Check if states are binary strings
+        try:
+            n_qubits = len(states[0])
+            if n_qubits < 3:  # GHZ typically needs 3+ qubits
+                return None
+            if not all(len(s) == n_qubits and set(s) <= {"0", "1"} for s in states):
+                return None
+        except (TypeError, ValueError):
+            return None
+
+        # GHZ state: equal superposition of |00...0⟩ and |11...1⟩
+        all_zeros = "0" * n_qubits
+        all_ones = "1" * n_qubits
+
+        if all_zeros in probs and all_ones in probs:
+            p_zeros = probs[all_zeros]
+            p_ones = probs[all_ones]
+            combined = p_zeros + p_ones
+
+            # Check for roughly equal probabilities (GHZ signature)
+            if combined > 0.9 and abs(p_zeros - p_ones) < 0.1:
+                return PatternInfo(
+                    pattern_type=PatternType.GHZ,
+                    confidence=combined * (1 - abs(p_zeros - p_ones)),
+                    description=(
+                        f"GHZ state pattern detected ({n_qubits} qubits): "
+                        f"equal superposition of |{all_zeros}⟩ and |{all_ones}⟩"
+                    ),
+                    affected_states=[all_zeros, all_ones],
+                    metrics={
+                        "combined_probability": combined,
+                        "p_zeros": p_zeros,
+                        "p_ones": p_ones,
+                        "n_qubits": n_qubits,
+                    },
+                )
+
+        return None
+
+    def _check_sparse(self, probs: dict[str, float]) -> PatternInfo | None:
+        """Check for sparse distribution (few non-zero states)."""
+        values = list(probs.values())
+        n = len(values)
+
+        if n == 0:
+            return None
+
+        # Count non-zero states (above threshold)
+        threshold = 1e-6
+        non_zero = [p for p in values if p > threshold]
+        non_zero_count = len(non_zero)
+
+        # Calculate sparsity ratio
+        sparsity_ratio = 1 - (non_zero_count / n) if n > 0 else 0
+
+        # Consider sparse if less than 10% of states are populated
+        # OR if fewer than 5 states have significant probability
+        if sparsity_ratio > 0.9 or (n > 10 and non_zero_count <= 5):
+            # Get the populated states
+            populated = [s for s, p in probs.items() if p > threshold]
+
+            return PatternInfo(
+                pattern_type=PatternType.SPARSE,
+                confidence=sparsity_ratio,
+                description=(
+                    f"Sparse distribution: only {non_zero_count}/{n} states "
+                    f"({100 * non_zero_count / n:.1f}%) have non-zero probability"
+                ),
+                affected_states=populated,
+                metrics={
+                    "sparsity_ratio": sparsity_ratio,
+                    "non_zero_count": non_zero_count,
+                    "total_states": n,
+                },
+            )
 
         return None
 

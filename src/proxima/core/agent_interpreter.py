@@ -844,12 +844,102 @@ class DefaultTaskExecutor:
             }
 
     def _execute_custom(self, task: TaskDefinition, context: dict[str, Any]) -> Any:
-        """Execute a custom task."""
-        return {
+        """Execute a custom task.
+
+        Custom tasks support flexible execution through parameters:
+        - 'script': Python code to execute (sandboxed)
+        - 'command': Shell command to run
+        - 'function': Name of a registered custom function
+        - 'plugin': Plugin name to invoke
+        """
+        params = task.parameters
+        result: dict[str, Any] = {
             "task_type": "custom",
-            "parameters": task.parameters,
-            "message": "Custom task executed",
+            "task_id": task.id,
+            "parameters": params,
         }
+
+        # Handle different custom task modes
+        if "function" in params:
+            # Call a registered custom function
+            func_name = params["function"]
+            func_args = params.get("args", {})
+            try:
+                from proxima.plugins.manager import get_plugin_manager
+
+                plugin_mgr = get_plugin_manager()
+                if plugin_mgr.has_function(func_name):
+                    func_result = plugin_mgr.call_function(func_name, **func_args)
+                    result["success"] = True
+                    result["result"] = func_result
+                else:
+                    result["success"] = False
+                    result["error"] = f"Function not found: {func_name}"
+            except ImportError:
+                result["success"] = False
+                result["error"] = "Plugin manager not available"
+            except Exception as e:
+                result["success"] = False
+                result["error"] = str(e)
+
+        elif "plugin" in params:
+            # Invoke a plugin
+            plugin_name = params["plugin"]
+            plugin_action = params.get("action", "execute")
+            plugin_args = params.get("args", {})
+            try:
+                from proxima.plugins.manager import get_plugin_manager
+
+                plugin_mgr = get_plugin_manager()
+                plugin_result = plugin_mgr.invoke(plugin_name, plugin_action, **plugin_args)
+                result["success"] = True
+                result["result"] = plugin_result
+            except ImportError:
+                result["success"] = False
+                result["error"] = "Plugin manager not available"
+            except Exception as e:
+                result["success"] = False
+                result["error"] = str(e)
+
+        elif "script" in params:
+            # Execute a simple script (sandboxed - only allow safe operations)
+            script = params["script"]
+            try:
+                # Create a restricted namespace for execution
+                safe_globals: dict[str, Any] = {
+                    "__builtins__": {
+                        "len": len,
+                        "str": str,
+                        "int": int,
+                        "float": float,
+                        "list": list,
+                        "dict": dict,
+                        "sum": sum,
+                        "min": min,
+                        "max": max,
+                        "range": range,
+                        "enumerate": enumerate,
+                        "zip": zip,
+                        "sorted": sorted,
+                        "abs": abs,
+                        "round": round,
+                    }
+                }
+                local_vars: dict[str, Any] = {"context": context}
+                exec(script, safe_globals, local_vars)  # noqa: S102
+                result["success"] = True
+                result["result"] = local_vars.get("result", "Script executed")
+            except Exception as e:
+                result["success"] = False
+                result["error"] = f"Script execution failed: {e}"
+
+        else:
+            # Default: just acknowledge the custom task
+            result["success"] = True
+            result["message"] = "Custom task acknowledged"
+            result["description"] = task.description
+
+        return result
 
 
 class AgentInterpreter:

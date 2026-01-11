@@ -286,8 +286,14 @@ class BackendRegistry:
     def list_compatible(
         self,
         characteristics: CircuitCharacteristics,
+        check_runtime: bool = True,
     ) -> list[BackendCapabilities]:
-        """List backends compatible with given circuit characteristics."""
+        """List backends compatible with given circuit characteristics.
+
+        Args:
+            characteristics: Circuit characteristics to check against.
+            check_runtime: If True, verify backends are actually available at runtime.
+        """
         compatible = []
 
         for backend in self._backends.values():
@@ -299,9 +305,59 @@ class BackendRegistry:
             if characteristics.has_custom_gates and not backend.supports_custom_gates:
                 continue
 
+            # Runtime availability check
+            if check_runtime and not self._is_backend_available(backend.name):
+                continue
+
             compatible.append(backend)
 
         return compatible
+
+    def _is_backend_available(self, backend_name: str) -> bool:
+        """Check if a backend is actually available at runtime.
+
+        Performs import checks and basic validation to ensure the backend
+        can actually be used.
+        """
+        try:
+            if backend_name == "numpy":
+                import numpy  # noqa: F401
+                return True
+            elif backend_name == "cupy":
+                try:
+                    import cupy  # noqa: F401
+                    # Also check if GPU is available
+                    cupy.cuda.runtime.getDeviceCount()
+                    return True
+                except Exception:
+                    return False
+            elif backend_name == "qiskit":
+                try:
+                    from qiskit import QuantumCircuit  # noqa: F401
+                    return True
+                except ImportError:
+                    return False
+            elif backend_name == "cirq":
+                try:
+                    import cirq  # noqa: F401
+                    return True
+                except ImportError:
+                    return False
+            elif backend_name == "pennylane":
+                try:
+                    import pennylane  # noqa: F401
+                    return True
+                except ImportError:
+                    return False
+            else:
+                # Unknown backends are assumed available
+                return True
+        except Exception:
+            return False
+
+    def get_available_backends(self) -> list[BackendCapabilities]:
+        """Get list of backends that are actually available at runtime."""
+        return [b for b in self._backends.values() if self._is_backend_available(b.name)]
 
 
 # =============================================================================

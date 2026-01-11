@@ -111,6 +111,11 @@ class ResultStore(ABC):
         ...
 
     @abstractmethod
+    def update_session(self, session: StoredSession) -> bool:
+        """Update an existing session."""
+        ...
+
+    @abstractmethod
     def delete_session(self, session_id: str) -> bool:
         """Delete a session and all its results."""
         ...
@@ -173,6 +178,13 @@ class MemoryStore(ResultStore):
         sessions = list(self._sessions.values())
         sessions.sort(key=lambda s: s.created_at, reverse=True)
         return sessions[:limit]
+
+    def update_session(self, session: StoredSession) -> bool:
+        """Update an existing session in memory."""
+        if session.id in self._sessions:
+            self._sessions[session.id] = session
+            return True
+        return False
 
     def delete_session(self, session_id: str) -> bool:
         if session_id in self._sessions:
@@ -305,6 +317,14 @@ class JSONStore(ResultStore):
         sessions = list(self._sessions.values())
         sessions.sort(key=lambda s: s.created_at, reverse=True)
         return sessions[:limit]
+
+    def update_session(self, session: StoredSession) -> bool:
+        """Update an existing session and persist to disk."""
+        if session.id in self._sessions:
+            self._sessions[session.id] = session
+            self._save_sessions()
+            return True
+        return False
 
     def delete_session(self, session_id: str) -> bool:
         if session_id in self._sessions:
@@ -548,6 +568,26 @@ class SQLiteStore(ResultStore):
             )
             for row in cursor.fetchall()
         ]
+
+    def update_session(self, session: StoredSession) -> bool:
+        """Update an existing session in the database."""
+        with self._transaction() as cursor:
+            cursor.execute(
+                """
+                UPDATE sessions
+                SET name = ?, updated_at = ?, agent_file = ?, result_count = ?, metadata = ?
+                WHERE id = ?
+                """,
+                (
+                    session.name,
+                    session.updated_at.isoformat(),
+                    session.agent_file,
+                    session.result_count,
+                    json.dumps(session.metadata),
+                    session.id,
+                ),
+            )
+            return cursor.rowcount > 0
 
     def delete_session(self, session_id: str) -> bool:
         with self._transaction() as cursor:

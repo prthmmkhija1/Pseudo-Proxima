@@ -15,6 +15,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum, auto
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -626,3 +627,292 @@ class ResourceMonitor:
         mem_line = self.memory.display_line()
         cpu = self.cpu.current_percent
         return f"{mem_line} | CPU: {cpu:.1f}%"
+
+
+# =============================================================================
+# GPU Monitor
+# =============================================================================
+
+
+@dataclass
+class GPUSnapshot:
+    """Point-in-time GPU measurement."""
+
+    timestamp: float
+    gpu_id: int
+    name: str
+    memory_used_mb: float
+    memory_total_mb: float
+    memory_percent: float
+    gpu_utilization: float
+    temperature: float | None = None
+
+
+class GPUMonitor:
+    """Monitors GPU usage for CUDA-enabled systems."""
+
+    def __init__(self) -> None:
+        self._available = self._check_gpu_available()
+        self._history: list[GPUSnapshot] = []
+
+    def _check_gpu_available(self) -> bool:
+        """Check if GPU monitoring is available."""
+        try:
+            import pynvml
+            pynvml.nvmlInit()
+            return True
+        except Exception:
+            return False
+
+    @property
+    def available(self) -> bool:
+        return self._available
+
+    def sample(self) -> list[GPUSnapshot]:
+        """Take GPU samples for all available GPUs."""
+        if not self._available:
+            return []
+
+        try:
+            import pynvml
+            pynvml.nvmlInit()
+            device_count = pynvml.nvmlDeviceGetCount()
+            snapshots = []
+
+            for i in range(device_count):
+                handle = pynvml.nvmlDeviceGetHandleByIndex(i)
+                name = pynvml.nvmlDeviceGetName(handle)
+                if isinstance(name, bytes):
+                    name = name.decode("utf-8")
+
+                memory = pynvml.nvmlDeviceGetMemoryInfo(handle)
+                utilization = pynvml.nvmlDeviceGetUtilizationRates(handle)
+
+                try:
+                    temp = pynvml.nvmlDeviceGetTemperature(handle, pynvml.NVML_TEMPERATURE_GPU)
+                except Exception:
+                    temp = None
+
+                snapshot = GPUSnapshot(
+                    timestamp=time.time(),
+                    gpu_id=i,
+                    name=name,
+                    memory_used_mb=memory.used / (1024 * 1024),
+                    memory_total_mb=memory.total / (1024 * 1024),
+                    memory_percent=(memory.used / memory.total) * 100,
+                    gpu_utilization=utilization.gpu,
+                    temperature=temp,
+                )
+                snapshots.append(snapshot)
+                self._history.append(snapshot)
+
+            return snapshots
+        except Exception:
+            return []
+
+    @property
+    def latest(self) -> list[GPUSnapshot]:
+        """Get latest snapshot for each GPU."""
+        if not self._history:
+            return []
+        # Get unique GPUs from recent history
+        gpu_ids = {s.gpu_id for s in self._history[-10:]}
+        return [next(s for s in reversed(self._history) if s.gpu_id == gid) for gid in gpu_ids]
+
+
+# =============================================================================
+# Disk Monitor
+# =============================================================================
+
+
+@dataclass
+class DiskSnapshot:
+    """Point-in-time disk measurement."""
+
+    timestamp: float
+    path: str
+    total_gb: float
+    used_gb: float
+    free_gb: float
+    percent_used: float
+
+
+class DiskMonitor:
+    """Monitors disk usage."""
+
+    def __init__(self, paths: list[str] | None = None) -> None:
+        self._paths = paths or ["/", "C:\\\\"]
+        self._history: list[DiskSnapshot] = []
+
+    def sample(self, path: str | None = None) -> DiskSnapshot | None:
+        """Sample disk usage for a path."""
+        try:
+            import psutil
+            target_path = path or self._paths[0]
+            usage = psutil.disk_usage(target_path)
+
+            snapshot = DiskSnapshot(
+                timestamp=time.time(),
+                path=target_path,
+                total_gb=usage.total / (1024**3),
+                used_gb=usage.used / (1024**3),
+                free_gb=usage.free / (1024**3),
+                percent_used=usage.percent,
+            )
+            self._history.append(snapshot)
+            return snapshot
+        except Exception:
+            return None
+
+    def sample_all(self) -> list[DiskSnapshot]:
+        """Sample all configured paths."""
+        snapshots = []
+        for path in self._paths:
+            snapshot = self.sample(path)
+            if snapshot:
+                snapshots.append(snapshot)
+        return snapshots
+
+    @property
+    def latest(self) -> DiskSnapshot | None:
+        return self._history[-1] if self._history else None
+
+
+# =============================================================================
+# Network Monitor
+# =============================================================================
+
+
+@dataclass
+class NetworkSnapshot:
+    """Point-in-time network measurement."""
+
+    timestamp: float
+    bytes_sent: int
+    bytes_recv: int
+    packets_sent: int
+    packets_recv: int
+    bytes_sent_rate: float = 0.0  # bytes/sec
+    bytes_recv_rate: float = 0.0  # bytes/sec
+
+
+class NetworkMonitor:
+    """Monitors network I/O."""
+
+    def __init__(self) -> None:
+        self._history: list[NetworkSnapshot] = []
+        self._last_sample: NetworkSnapshot | None = None
+
+    def sample(self) -> NetworkSnapshot | None:
+        """Take a network sample."""
+        try:
+            import psutil
+            counters = psutil.net_io_counters()
+
+            now = time.time()
+            snapshot = NetworkSnapshot(
+                timestamp=now,
+                bytes_sent=counters.bytes_sent,
+                bytes_recv=counters.bytes_recv,
+                packets_sent=counters.packets_sent,
+                packets_recv=counters.packets_recv,
+            )
+
+            # Calculate rates if we have a previous sample
+            if self._last_sample:
+                time_delta = now - self._last_sample.timestamp
+                if time_delta > 0:
+                    snapshot.bytes_sent_rate = (
+                        (snapshot.bytes_sent - self._last_sample.bytes_sent) / time_delta
+                    )
+                    snapshot.bytes_recv_rate = (
+                        (snapshot.bytes_recv - self._last_sample.bytes_recv) / time_delta
+                    )
+
+            self._last_sample = snapshot
+            self._history.append(snapshot)
+            return snapshot
+        except Exception:
+            return None
+
+    @property
+    def latest(self) -> NetworkSnapshot | None:
+        return self._history[-1] if self._history else None
+
+    def get_bandwidth_display(self) -> str:
+        """Get human-readable bandwidth display."""
+        latest = self.latest
+        if not latest:
+            return "Network: No data"
+
+        def format_rate(rate: float) -> str:
+            if rate > 1024 * 1024:
+                return f"{rate / (1024 * 1024):.1f} MB/s"
+            elif rate > 1024:
+                return f"{rate / 1024:.1f} KB/s"
+            else:
+                return f"{rate:.0f} B/s"
+
+        return f"↑ {format_rate(latest.bytes_sent_rate)} | ↓ {format_rate(latest.bytes_recv_rate)}"
+
+
+# =============================================================================
+# Extended Resource Monitor
+# =============================================================================
+
+
+class ExtendedResourceMonitor(ResourceMonitor):
+    """Extended resource monitor with GPU, disk, and network monitoring."""
+
+    def __init__(
+        self,
+        memory_thresholds: MemoryThresholds | None = None,
+        sample_interval: float = 1.0,
+        disk_paths: list[str] | None = None,
+    ) -> None:
+        super().__init__(memory_thresholds, sample_interval)
+        self.gpu = GPUMonitor()
+        self.disk = DiskMonitor(disk_paths)
+        self.network = NetworkMonitor()
+
+    def sample_all(self) -> dict[str, Any]:
+        """Take samples from all monitors."""
+        return {
+            "memory": self.memory.sample(),
+            "cpu": self.cpu.sample(),
+            "gpu": self.gpu.sample() if self.gpu.available else [],
+            "disk": self.disk.sample_all(),
+            "network": self.network.sample(),
+        }
+
+    def full_summary(self) -> dict[str, Any]:
+        """Get complete resource summary."""
+        summary = self.summary()
+        summary["gpu_available"] = self.gpu.available
+        summary["gpu_snapshots"] = [
+            {"gpu_id": s.gpu_id, "name": s.name, "memory_percent": s.memory_percent, "utilization": s.gpu_utilization}
+            for s in self.gpu.latest
+        ]
+        if self.disk.latest:
+            summary["disk"] = {
+                "path": self.disk.latest.path,
+                "free_gb": self.disk.latest.free_gb,
+                "percent_used": self.disk.latest.percent_used,
+            }
+        summary["network"] = self.network.get_bandwidth_display()
+        return summary
+
+    def full_display_line(self) -> str:
+        """Extended status line with all resources."""
+        lines = [self.display_line()]
+
+        if self.gpu.available and self.gpu.latest:
+            gpu = self.gpu.latest[0]
+            lines.append(f"GPU: {gpu.memory_percent:.0f}% mem, {gpu.gpu_utilization}% util")
+
+        if self.disk.latest:
+            lines.append(f"Disk: {self.disk.latest.free_gb:.1f}GB free")
+
+        lines.append(self.network.get_bandwidth_display())
+
+        return " | ".join(lines)

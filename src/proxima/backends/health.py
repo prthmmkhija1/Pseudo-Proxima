@@ -247,8 +247,8 @@ def create_test_circuit(backend_name: str) -> Any:
             return None
 
     elif backend_name == "lret":
-        # LRET may require custom circuit format
-        # Return a placeholder that LRET can handle
+        # LRET accepts dictionary-based circuit format
+        # This creates a simple Hadamard gate test circuit
         return {"type": "test", "qubits": 1, "gates": [{"name": "H", "qubit": 0}]}
 
     return None

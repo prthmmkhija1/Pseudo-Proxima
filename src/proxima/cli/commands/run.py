@@ -56,11 +56,13 @@ def main(
     force = ctx.obj.get("force", False)
     quiet = ctx.obj.get("quiet", False)
     output_format = ctx.obj.get("output_format", "text")
+    verbose = ctx.obj.get("verbose", 0)
 
     logger = get_logger("cli.run")
     effective_backend = backend or settings.backends.default_backend
 
-    typer.echo(f"[DEBUG] Starting run with backend: {effective_backend}")
+    if verbose >= 2:
+        typer.echo(f"[DEBUG] Starting run with backend: {effective_backend}")
 
     logger.info(
         "run.start",
@@ -168,6 +170,8 @@ def main(
             plan["backend"] = effective_backend
             plan["shots"] = shots or 1024
             plan["objective"] = objective
+            if timeout is not None:
+                plan["timeout_seconds"] = timeout
             progress.advance()
 
             if dry_run:
