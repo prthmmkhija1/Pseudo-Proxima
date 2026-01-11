@@ -684,15 +684,15 @@ class ExecutionTimer:
             "stages": {
                 name: {
                     "name": stage.name,
-                    "elapsed_ms": stage.elapsed_ms,
-                    "started": stage.started,
-                    "completed": stage.completed,
+                    "start_time": stage.start_time,
+                    "end_time": stage.end_time,
+                    "weight": stage.weight,
                 }
                 for name, stage in self._stages.items()
             },
             "progress": {
-                "total": self._progress.total,
-                "completed": self._progress.completed,
+                "total_steps": self._progress.total_steps,
+                "current_step": self._progress.current_step,
             },
             "global_start": self._global_start,
             "global_end": self._global_end,
@@ -710,16 +710,16 @@ class ExecutionTimer:
         for name, stage_data in data.get("stages", {}).items():
             stage = StageInfo(
                 name=stage_data["name"],
-                elapsed_ms=stage_data.get("elapsed_ms", 0.0),
-                started=stage_data.get("started", False),
-                completed=stage_data.get("completed", False),
+                start_time=stage_data.get("start_time", 0.0),
+                end_time=stage_data.get("end_time"),
+                weight=stage_data.get("weight", 1.0),
             )
             timer._stages[name] = stage
 
         progress_data = data.get("progress", {})
-        if progress_data.get("total"):
-            timer._progress.set_total(progress_data["total"])
-            timer._progress.update(progress_data.get("completed", 0))
+        if progress_data.get("total_steps"):
+            timer._progress.total_steps = progress_data["total_steps"]
+            timer._progress.current_step = progress_data.get("current_step", 0)
 
         return timer
 

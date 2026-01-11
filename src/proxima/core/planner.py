@@ -61,6 +61,7 @@ class Planner:
             qubits = 3
             # Try to extract qubit count
             import re
+
             match = re.search(r"(\d+)[-\s]*qubit", objective_lower)
             if match:
                 qubits = int(match.group(1))
@@ -87,6 +88,7 @@ class Planner:
         # Extract shots if mentioned
         shots = 1024
         import re
+
         shots_match = re.search(r"(\d+)\s*shots?", objective_lower)
         if shots_match:
             shots = int(shots_match.group(1))
@@ -114,12 +116,14 @@ class Planner:
         ]
 
         if execution_mode == "comparison":
-            steps.append({
-                "step": 4,
-                "action": "compare",
-                "description": "Compare results across backends",
-                "parameters": {"backends": backends},
-            })
+            steps.append(
+                {
+                    "step": 4,
+                    "action": "compare",
+                    "description": "Compare results across backends",
+                    "parameters": {"backends": backends},
+                }
+            )
 
         return {
             "objective": objective,

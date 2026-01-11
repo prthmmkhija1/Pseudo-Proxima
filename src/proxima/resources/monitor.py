@@ -659,6 +659,7 @@ class GPUMonitor:
         """Check if GPU monitoring is available."""
         try:
             import pynvml
+
             pynvml.nvmlInit()
             return True
         except Exception:
@@ -675,6 +676,7 @@ class GPUMonitor:
 
         try:
             import pynvml
+
             pynvml.nvmlInit()
             device_count = pynvml.nvmlDeviceGetCount()
             snapshots = []
@@ -748,6 +750,7 @@ class DiskMonitor:
         """Sample disk usage for a path."""
         try:
             import psutil
+
             target_path = path or self._paths[0]
             usage = psutil.disk_usage(target_path)
 
@@ -807,6 +810,7 @@ class NetworkMonitor:
         """Take a network sample."""
         try:
             import psutil
+
             counters = psutil.net_io_counters()
 
             now = time.time()
@@ -823,11 +827,11 @@ class NetworkMonitor:
                 time_delta = now - self._last_sample.timestamp
                 if time_delta > 0:
                     snapshot.bytes_sent_rate = (
-                        (snapshot.bytes_sent - self._last_sample.bytes_sent) / time_delta
-                    )
+                        snapshot.bytes_sent - self._last_sample.bytes_sent
+                    ) / time_delta
                     snapshot.bytes_recv_rate = (
-                        (snapshot.bytes_recv - self._last_sample.bytes_recv) / time_delta
-                    )
+                        snapshot.bytes_recv - self._last_sample.bytes_recv
+                    ) / time_delta
 
             self._last_sample = snapshot
             self._history.append(snapshot)
@@ -890,7 +894,12 @@ class ExtendedResourceMonitor(ResourceMonitor):
         summary = self.summary()
         summary["gpu_available"] = self.gpu.available
         summary["gpu_snapshots"] = [
-            {"gpu_id": s.gpu_id, "name": s.name, "memory_percent": s.memory_percent, "utilization": s.gpu_utilization}
+            {
+                "gpu_id": s.gpu_id,
+                "name": s.name,
+                "memory_percent": s.memory_percent,
+                "utilization": s.gpu_utilization,
+            }
             for s in self.gpu.latest
         ]
         if self.disk.latest:

@@ -323,19 +323,22 @@ class SessionLock:
             True if lock acquired, False if timeout.
         """
         import platform
+
         start_time = time.time()
 
         while time.time() - start_time < timeout:
             try:
-                self._lock_file = open(self._lock_path, 'w')
+                self._lock_file = open(self._lock_path, "w")
 
-                if platform.system() != 'Windows':
-                    import fcntl
-                    fcntl.flock(self._lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                if platform.system() != "Windows":
+                    import fcntl  # type: ignore[import]
+
+                    fcntl.flock(self._lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)  # type: ignore[attr-defined]
                 else:
                     # Windows: use msvcrt for file locking
                     import msvcrt
-                    msvcrt.locking(self._lock_file.fileno(), msvcrt.LK_NBLCK, 1)
+
+                    msvcrt.locking(self._lock_file.fileno(), msvcrt.LK_NBLCK, 1)  # type: ignore[attr-defined]
 
                 self._locked = True
                 # Write PID for debugging
@@ -356,12 +359,14 @@ class SessionLock:
 
         if self._lock_file and self._locked:
             try:
-                if platform.system() != 'Windows':
-                    import fcntl
-                    fcntl.flock(self._lock_file.fileno(), fcntl.LOCK_UN)
+                if platform.system() != "Windows":
+                    import fcntl  # type: ignore[import]
+
+                    fcntl.flock(self._lock_file.fileno(), fcntl.LOCK_UN)  # type: ignore[attr-defined]
                 else:
                     import msvcrt
-                    msvcrt.locking(self._lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+
+                    msvcrt.locking(self._lock_file.fileno(), msvcrt.LK_UNLCK, 1)  # type: ignore[attr-defined]
             except OSError:
                 pass
             finally:

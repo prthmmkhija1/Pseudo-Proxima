@@ -84,7 +84,10 @@ class LLMProvider(Protocol):
         ...
 
     def stream_send(
-        self, request: LLMRequest, api_key: str | None, callback: Callable[[str], None] | None = None
+        self,
+        request: LLMRequest,
+        api_key: str | None,
+        callback: Callable[[str], None] | None = None,
     ) -> LLMResponse:  # pragma: no cover
         """Send a streaming request to the LLM provider."""
         ...
@@ -105,6 +108,10 @@ class _BaseProvider:
         self.default_model = default_model
         self.timeout = timeout
         self._client: httpx.Client | None = None
+
+    def send(self, request: LLMRequest, api_key: str | None) -> LLMResponse:
+        """Send a request to the LLM provider. Override in subclasses."""
+        raise NotImplementedError("Subclasses must implement send()")
 
     def _get_client(self) -> httpx.Client:
         """Get or create HTTP client."""

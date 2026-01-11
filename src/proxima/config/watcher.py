@@ -276,25 +276,25 @@ class WatchdogWatcher(FileWatcher):
         class Handler(FileSystemEventHandler):
             def on_created(self, event: FileSystemEvent) -> None:
                 if not event.is_directory:
-                    change = FileChange(Path(event.src_path), WatchEvent.CREATED)
+                    change = FileChange(Path(str(event.src_path)), WatchEvent.CREATED)
                     watcher._notify(change)
 
             def on_modified(self, event: FileSystemEvent) -> None:
                 if not event.is_directory:
-                    change = FileChange(Path(event.src_path), WatchEvent.MODIFIED)
+                    change = FileChange(Path(str(event.src_path)), WatchEvent.MODIFIED)
                     watcher._notify(change)
 
             def on_deleted(self, event: FileSystemEvent) -> None:
                 if not event.is_directory:
-                    change = FileChange(Path(event.src_path), WatchEvent.DELETED)
+                    change = FileChange(Path(str(event.src_path)), WatchEvent.DELETED)
                     watcher._notify(change)
 
             def on_moved(self, event: FileSystemEvent) -> None:
                 if not event.is_directory:
                     change = FileChange(
-                        Path(event.dest_path),
+                        Path(str(event.dest_path)),
                         WatchEvent.MOVED,
-                        old_path=Path(event.src_path),
+                        old_path=Path(str(event.src_path)),
                     )
                     watcher._notify(change)
 

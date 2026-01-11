@@ -322,10 +322,12 @@ class BackendRegistry:
         try:
             if backend_name == "numpy":
                 import numpy  # noqa: F401
+
                 return True
             elif backend_name == "cupy":
                 try:
                     import cupy  # noqa: F401
+
                     # Also check if GPU is available
                     cupy.cuda.runtime.getDeviceCount()
                     return True
@@ -334,18 +336,21 @@ class BackendRegistry:
             elif backend_name == "qiskit":
                 try:
                     from qiskit import QuantumCircuit  # noqa: F401
+
                     return True
                 except ImportError:
                     return False
             elif backend_name == "cirq":
                 try:
                     import cirq  # noqa: F401
+
                     return True
                 except ImportError:
                     return False
             elif backend_name == "pennylane":
                 try:
                     import pennylane  # noqa: F401
+
                     return True
                 except ImportError:
                     return False

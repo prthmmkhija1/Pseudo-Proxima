@@ -39,7 +39,9 @@ def launch(
     # Validate screen option
     valid_screens = ["dashboard", "execution", "configuration", "results", "backends"]
     if screen.lower() not in valid_screens:
-        typer.echo(f"Invalid screen '{screen}'. Valid options: {', '.join(valid_screens)}", err=True)
+        typer.echo(
+            f"Invalid screen '{screen}'. Valid options: {', '.join(valid_screens)}", err=True
+        )
         raise typer.Exit(1)
 
     typer.echo(f"Launching Proxima TUI (theme={theme}, screen={screen})...")

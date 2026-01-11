@@ -597,14 +597,16 @@ class ExportHandler(PipelineHandler):
         rows = []
 
         # Summary row
-        rows.append({
-            "type": "summary",
-            "execution_id": data["execution_id"],
-            "timestamp": data["timestamp"],
-            "input": data["input"],
-            "duration_ms": data["duration_ms"],
-            "backends": ", ".join(data["backends"]),
-        })
+        rows.append(
+            {
+                "type": "summary",
+                "execution_id": data["execution_id"],
+                "timestamp": data["timestamp"],
+                "input": data["input"],
+                "duration_ms": data["duration_ms"],
+                "backends": ", ".join(data["backends"]),
+            }
+        )
 
         # Backend results rows
         for backend, result in data.get("results", {}).items():
@@ -622,15 +624,17 @@ class ExportHandler(PipelineHandler):
 
         # Insights rows
         for i, insight in enumerate(data.get("insights", []), 1):
-            rows.append({
-                "type": "insight",
-                "insight_num": i,
-                "insight_text": insight,
-            })
+            rows.append(
+                {
+                    "type": "insight",
+                    "insight_num": i,
+                    "insight_text": insight,
+                }
+            )
 
         # Write CSV
         if rows:
-            all_keys = set()
+            all_keys: set[str] = set()
             for row in rows:
                 all_keys.update(row.keys())
             fieldnames = sorted(all_keys)
