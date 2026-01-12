@@ -79,7 +79,9 @@ class BackendError(Exception):
             "retry_after_seconds": self.retry_after_seconds,
             "suggestions": self.suggestions,
             "details": self.details,
-            "original_exception": str(self.original_exception) if self.original_exception else None,
+            "original_exception": (
+                str(self.original_exception) if self.original_exception else None
+            ),
         }
 
 

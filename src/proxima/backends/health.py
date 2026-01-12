@@ -193,7 +193,9 @@ def run_simple_execution_test(
 
         # Execute circuit
         start_time = time.perf_counter()
-        result = adapter.execute(circuit, {"simulator_type": SimulatorType.STATE_VECTOR})
+        result = adapter.execute(
+            circuit, {"simulator_type": SimulatorType.STATE_VECTOR}
+        )
         execution_time_ms = (time.perf_counter() - start_time) * 1000
 
         # Verify result
@@ -325,7 +327,9 @@ async def check_backends_health_async(
     async def check_one(adapter: BaseBackendAdapter) -> HealthCheckResult:
         return await loop.run_in_executor(
             None,
-            lambda: check_backend_health(adapter, run_execution_test=run_execution_tests),
+            lambda: check_backend_health(
+                adapter, run_execution_test=run_execution_tests
+            ),
         )
 
     tasks = [check_one(adapter) for adapter in adapters]
@@ -349,7 +353,9 @@ def generate_health_report(results: list[HealthCheckResult]) -> dict[str, Any]:
     overall_status = HealthStatus.HEALTHY
     if unhealthy_count > 0:
         overall_status = (
-            HealthStatus.UNHEALTHY if unhealthy_count == len(results) else HealthStatus.DEGRADED
+            HealthStatus.UNHEALTHY
+            if unhealthy_count == len(results)
+            else HealthStatus.DEGRADED
         )
     elif degraded_count > 0:
         overall_status = HealthStatus.DEGRADED

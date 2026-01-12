@@ -42,9 +42,15 @@ def main(
     all_backends: bool = typer.Option(
         False, "--all", "-a", help="Compare across all available backends"
     ),
-    parallel: bool = typer.Option(False, "--parallel", "-p", help="Run comparisons in parallel"),
-    output_file: Path = typer.Option(None, "--output", "-o", help="Save comparison report to file"),
-    no_progress: bool = typer.Option(False, "--no-progress", help="Disable progress display"),
+    parallel: bool = typer.Option(
+        False, "--parallel", "-p", help="Run comparisons in parallel"
+    ),
+    output_file: Path = typer.Option(
+        None, "--output", "-o", help="Save comparison report to file"
+    ),
+    no_progress: bool = typer.Option(
+        False, "--no-progress", help="Disable progress display"
+    ),
 ):
     """Compare execution results across multiple backends.
 

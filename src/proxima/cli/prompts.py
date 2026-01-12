@@ -135,7 +135,9 @@ class ConfirmPrompt(Prompt[bool]):
                 response = input(f"{self.message} {default_str}: ").strip().lower()
 
                 if not response and self.default is not None:
-                    return PromptResponse(self.default, PromptResult.DEFAULT, used_default=True)
+                    return PromptResponse(
+                        self.default, PromptResult.DEFAULT, used_default=True
+                    )
 
                 result = response in ("y", "yes", "true", "1")
 
@@ -178,7 +180,9 @@ class TextPrompt(Prompt[str]):
                 result = input(f"{self.message}{default_str}: ").strip()
 
                 if not result and self.default:
-                    return PromptResponse(self.default, PromptResult.DEFAULT, used_default=True)
+                    return PromptResponse(
+                        self.default, PromptResult.DEFAULT, used_default=True
+                    )
 
             # Validate length
             if len(result) < self.min_length:
@@ -309,7 +313,9 @@ class SelectPrompt(Prompt[str]):
             response = input(f"Select (1-{len(self.options)}){default_str}: ").strip()
 
             if not response and self.default:
-                return PromptResponse(self.default, PromptResult.DEFAULT, used_default=True)
+                return PromptResponse(
+                    self.default, PromptResult.DEFAULT, used_default=True
+                )
 
             try:
                 index = int(response) - 1
@@ -367,7 +373,9 @@ class MultiSelectPrompt(Prompt[list[str]]):
             # Display options
             if RICH_AVAILABLE and self._console:
                 self._console.print(f"\n[bold]{self.message}[/bold]")
-                self._console.print("[dim]Enter comma-separated numbers or 'all'/'none'[/dim]")
+                self._console.print(
+                    "[dim]Enter comma-separated numbers or 'all'/'none'[/dim]"
+                )
                 for i, opt in enumerate(self.options, 1):
                     disabled_marker = " [dim](disabled)[/dim]" if opt.disabled else ""
                     self._console.print(f"  {i}. {opt.label}{disabled_marker}")
@@ -449,7 +457,9 @@ class ConsentPrompt(Prompt[bool]):
 
             # Get response
             if self.require_explicit:
-                response = input("Type 'I AGREE' to consent (or 'no' to decline): ").strip()
+                response = input(
+                    "Type 'I AGREE' to consent (or 'no' to decline): "
+                ).strip()
                 agreed = response.upper() == "I AGREE"
             else:
                 confirm = ConfirmPrompt("Do you consent?", default=False)

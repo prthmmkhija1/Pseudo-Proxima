@@ -320,7 +320,11 @@ class ChoiceModal(BaseModal):
                     result=DialogResult.CONFIRMED,
                     data={
                         "index": self._selected_index,
-                        "choice": self._choices[self._selected_index] if self._choices else None,
+                        "choice": (
+                            self._choices[self._selected_index]
+                            if self._choices
+                            else None
+                        ),
                     },
                 )
             )

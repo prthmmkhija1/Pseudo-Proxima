@@ -33,14 +33,18 @@ def launch(
     # Validate theme option
     valid_themes = ["dark", "light"]
     if theme.lower() not in valid_themes:
-        typer.echo(f"Invalid theme '{theme}'. Valid options: {', '.join(valid_themes)}", err=True)
+        typer.echo(
+            f"Invalid theme '{theme}'. Valid options: {', '.join(valid_themes)}",
+            err=True,
+        )
         raise typer.Exit(1)
 
     # Validate screen option
     valid_screens = ["dashboard", "execution", "configuration", "results", "backends"]
     if screen.lower() not in valid_screens:
         typer.echo(
-            f"Invalid screen '{screen}'. Valid options: {', '.join(valid_screens)}", err=True
+            f"Invalid screen '{screen}'. Valid options: {', '.join(valid_screens)}",
+            err=True,
         )
         raise typer.Exit(1)
 

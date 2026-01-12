@@ -165,7 +165,9 @@ class ConfigService:
         except ValidationError as exc:
             raise ValueError(f"Invalid configuration: {exc}") from exc
 
-    def save(self, settings: Settings, scope: Literal["user", "project"] = "user") -> Path:
+    def save(
+        self, settings: Settings, scope: Literal["user", "project"] = "user"
+    ) -> Path:
         target = self.user_config_path if scope == "user" else self.project_config_path
         _ensure_dir(target)
         with target.open("w", encoding="utf-8") as handle:
@@ -184,7 +186,9 @@ class ConfigService:
             yaml.safe_dump(current_data, handle, sort_keys=False)
         return target
 
-    def get_value(self, key_path: str, cli_overrides: dict[str, Any] | None = None) -> Any:
+    def get_value(
+        self, key_path: str, cli_overrides: dict[str, Any] | None = None
+    ) -> Any:
         data = self.load(cli_overrides=cli_overrides).model_dump()
         parts = self._normalize_key_path(key_path)
         return _get_nested(data, parts)

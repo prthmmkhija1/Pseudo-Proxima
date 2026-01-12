@@ -153,7 +153,11 @@ def _python_type_to_field_type(python_type: type) -> FieldType:
         return FieldType.BOOLEAN
     elif origin is list:
         return FieldType.ARRAY
-    elif origin is dict or isinstance(python_type, type) and issubclass(python_type, dict):
+    elif (
+        origin is dict
+        or isinstance(python_type, type)
+        and issubclass(python_type, dict)
+    ):
         return FieldType.OBJECT
     elif isinstance(python_type, type) and issubclass(python_type, Enum):
         return FieldType.ENUM
@@ -225,7 +229,9 @@ def introspect_model(model_class: type[BaseModel], prefix: str = "") -> SectionI
                 field_type=_python_type_to_field_type(python_type),
                 python_type=_type_to_string(python_type),
                 default=field_info.default,
-                description=FIELD_DESCRIPTIONS.get(field_path, field_info.description or ""),
+                description=FIELD_DESCRIPTIONS.get(
+                    field_path, field_info.description or ""
+                ),
                 required=field_info.is_required(),
                 examples=FIELD_EXAMPLES.get(field_path, []),
             )
@@ -272,7 +278,9 @@ def generate_markdown_docs(section: SectionInfo, level: int = 1) -> str:
             if field.deprecated:
                 desc = f"⚠️ **Deprecated**: {desc}"
 
-            lines.append(f"| `{field.name}` | {field.python_type} | {default_str} | {desc} |")
+            lines.append(
+                f"| `{field.name}` | {field.python_type} | {default_str} | {desc} |"
+            )
 
         lines.append("")
 

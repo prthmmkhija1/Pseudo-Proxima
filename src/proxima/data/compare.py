@@ -80,10 +80,14 @@ class ComparisonMetrics:
     """Metrics comparing results across backends."""
 
     # Execution Time metrics
-    execution_times: dict[str, float] = field(default_factory=dict)  # backend -> time_ms
+    execution_times: dict[str, float] = field(
+        default_factory=dict
+    )  # backend -> time_ms
     fastest_backend: str | None = None
     slowest_backend: str | None = None
-    time_ratios: dict[str, float] = field(default_factory=dict)  # backend -> ratio to fastest
+    time_ratios: dict[str, float] = field(
+        default_factory=dict
+    )  # backend -> ratio to fastest
 
     # Memory metrics
     memory_peaks: dict[str, float] = field(default_factory=dict)  # backend -> memory_mb
@@ -337,7 +341,8 @@ class ResultAnalyzer:
 
         # Execution time metrics
         metrics.execution_times = {
-            name: result.execution_time_ms for name, result in successful_backends.items()
+            name: result.execution_time_ms
+            for name, result in successful_backends.items()
         }
 
         if metrics.execution_times:
@@ -351,7 +356,8 @@ class ResultAnalyzer:
             fastest_time = metrics.execution_times[metrics.fastest_backend]
             if fastest_time > 0:
                 metrics.time_ratios = {
-                    name: time / fastest_time for name, time in metrics.execution_times.items()
+                    name: time / fastest_time
+                    for name, time in metrics.execution_times.items()
                 }
 
         # Memory metrics
@@ -381,9 +387,9 @@ class ResultAnalyzer:
                     agreements.append(agreement)
                 else:
                     # Symmetric
-                    metrics.pairwise_agreements[name_a][name_b] = metrics.pairwise_agreements[
-                        name_b
-                    ][name_a]
+                    metrics.pairwise_agreements[name_a][name_b] = (
+                        metrics.pairwise_agreements[name_b][name_a]
+                    )
 
         if agreements:
             metrics.result_agreement = sum(agreements) / len(agreements)
@@ -407,11 +413,15 @@ class ResultAnalyzer:
                     if i == j:
                         metrics.fidelities[name_a][name_b] = 1.0
                     elif i < j:
-                        fid = self.calculate_fidelity(statevectors[name_a], statevectors[name_b])
+                        fid = self.calculate_fidelity(
+                            statevectors[name_a], statevectors[name_b]
+                        )
                         metrics.fidelities[name_a][name_b] = fid
                         fidelities.append(fid)
                     else:
-                        metrics.fidelities[name_a][name_b] = metrics.fidelities[name_b][name_a]
+                        metrics.fidelities[name_a][name_b] = metrics.fidelities[name_b][
+                            name_a
+                        ]
 
             if fidelities:
                 metrics.average_fidelity = sum(fidelities) / len(fidelities)
@@ -440,7 +450,9 @@ class ResultAnalyzer:
                 if v < 1.0  # Exclude self-comparison
             ]
             avg_agreement = (
-                sum(agreement_scores) / len(agreement_scores) if agreement_scores else 1.0
+                sum(agreement_scores) / len(agreement_scores)
+                if agreement_scores
+                else 1.0
             )
 
             # Combined score: time ratio penalty + agreement bonus
@@ -457,7 +469,9 @@ class ResultAnalyzer:
             if metrics.recommended_backend == metrics.lowest_memory_backend:
                 reasons.append("lowest memory usage")
 
-            backend_agreement = metrics.pairwise_agreements.get(metrics.recommended_backend, {})
+            backend_agreement = metrics.pairwise_agreements.get(
+                metrics.recommended_backend, {}
+            )
             avg_agree = sum(v for v in backend_agreement.values() if v < 1.0)
             if avg_agree > 0.95:
                 reasons.append("high result agreement")
@@ -528,7 +542,9 @@ class MultiBackendComparator:
             else:
                 # Run sync adapter in executor to not block
                 loop = asyncio.get_event_loop()
-                result = await loop.run_in_executor(None, adapter.execute, circuit, options)
+                result = await loop.run_in_executor(
+                    None, adapter.execute, circuit, options
+                )
 
             execution_time = (time.perf_counter() - start_time) * 1000
 
@@ -576,7 +592,9 @@ class MultiBackendComparator:
         options: dict[str, Any] | None,
     ) -> list[BackendResult]:
         """Execute circuit on multiple backends in parallel."""
-        tasks = [self._execute_backend(adapter, circuit, options) for adapter in adapters]
+        tasks = [
+            self._execute_backend(adapter, circuit, options) for adapter in adapters
+        ]
         return await asyncio.gather(*tasks)
 
     async def _execute_batch_sequential(
@@ -716,10 +734,14 @@ class MultiBackendComparator:
         all_results: list[BackendResult] = []
 
         for batch_idx, batch in enumerate(batches):
-            batch_adapters = [adapter_map[name] for name in batch if name in adapter_map]
+            batch_adapters = [
+                adapter_map[name] for name in batch if name in adapter_map
+            ]
 
             if actual_strategy == ExecutionStrategy.PARALLEL:
-                batch_results = await self._execute_batch_parallel(batch_adapters, circuit, options)
+                batch_results = await self._execute_batch_parallel(
+                    batch_adapters, circuit, options
+                )
             else:
                 batch_results = await self._execute_batch_sequential(
                     batch_adapters, circuit, options
@@ -974,7 +996,8 @@ class BackendComparisonMatrix:
     def get_backends_for_qubit_count(cls, qubit_count: int) -> list[str]:
         """Get backends that can handle specified qubit count."""
         return [
-            name for name, entry in cls.MATRIX.items()
+            name
+            for name, entry in cls.MATRIX.items()
             if entry.max_qubits >= qubit_count
         ]
 
@@ -1103,7 +1126,11 @@ class BackendComparisonMatrix:
         if winner_entry.max_qubits >= qubit_count + 5:
             reasons.append(f"supports up to {winner_entry.max_qubits} qubits")
 
-        reason = f"Best for {qubit_count}-qubit circuit: " + ", ".join(reasons) if reasons else winner_entry.use_case
+        reason = (
+            f"Best for {qubit_count}-qubit circuit: " + ", ".join(reasons)
+            if reasons
+            else winner_entry.use_case
+        )
 
         return (winner_name, reason)
 

@@ -155,7 +155,9 @@ def configure_logging(
     logging.getLogger("transitions").setLevel(logging.WARNING)
 
 
-def configure_from_settings(settings: Settings, *, log_file: Path | None = None) -> None:
+def configure_from_settings(
+    settings: Settings, *, log_file: Path | None = None
+) -> None:
     """Configure logging using Settings values."""
 
     configure_logging(

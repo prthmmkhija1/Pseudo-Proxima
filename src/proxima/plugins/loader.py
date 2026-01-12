@@ -40,7 +40,9 @@ class PluginRegistry:
 
     def __init__(self) -> None:
         self._plugins: dict[str, Plugin] = {}
-        self._by_type: dict[PluginType, dict[str, Plugin]] = {pt: {} for pt in PluginType}
+        self._by_type: dict[PluginType, dict[str, Plugin]] = {
+            pt: {} for pt in PluginType
+        }
         self._load_callbacks: list[Callable[[Plugin], None]] = []
         self._unload_callbacks: list[Callable[[Plugin], None]] = []
 
@@ -52,7 +54,9 @@ class PluginRegistry:
         # Validate before registering
         errors = plugin.validate()
         if errors:
-            raise PluginValidationError(f"Plugin '{name}' validation failed: {'; '.join(errors)}")
+            raise PluginValidationError(
+                f"Plugin '{name}' validation failed: {'; '.join(errors)}"
+            )
 
         if name in self._plugins:
             raise PluginError(f"Plugin '{name}' is already registered")
@@ -153,7 +157,9 @@ class PluginLoader:
         """
         loaded = 0
         groups = (
-            [ENTRY_POINT_GROUPS[plugin_type]] if plugin_type else list(ENTRY_POINT_GROUPS.values())
+            [ENTRY_POINT_GROUPS[plugin_type]]
+            if plugin_type
+            else list(ENTRY_POINT_GROUPS.values())
         )
 
         for group in groups:
@@ -167,7 +173,9 @@ class PluginLoader:
             for ep in eps:
                 try:
                     plugin_class = ep.load()
-                    if isinstance(plugin_class, type) and issubclass(plugin_class, Plugin):
+                    if isinstance(plugin_class, type) and issubclass(
+                        plugin_class, Plugin
+                    ):
                         plugin = plugin_class()
                         self.registry.register(plugin)
                         loaded += 1
@@ -211,7 +219,9 @@ class PluginLoader:
 
         return loaded
 
-    def load_from_class(self, plugin_class: type[Plugin], config: dict | None = None) -> Plugin:
+    def load_from_class(
+        self, plugin_class: type[Plugin], config: dict | None = None
+    ) -> Plugin:
         """Load a plugin from a class directly."""
         plugin = plugin_class(config)
         self.registry.register(plugin)

@@ -18,7 +18,11 @@ ExecuteFunction = Callable[[dict[str, Any]], Any]
 class Executor:
     """Executes a prepared plan using a provided runner callable."""
 
-    def __init__(self, state_machine: ExecutionStateMachine, runner: ExecuteFunction | None = None):
+    def __init__(
+        self,
+        state_machine: ExecutionStateMachine,
+        runner: ExecuteFunction | None = None,
+    ):
         self.state_machine = state_machine
         self.runner = runner
         self.logger = get_logger("executor")

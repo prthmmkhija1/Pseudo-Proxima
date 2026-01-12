@@ -128,7 +128,10 @@ class StatusPanel(Static):
     """
 
     def __init__(
-        self, title: str = "System Status", items: list[StatusItem] | None = None, **kwargs
+        self,
+        title: str = "System Status",
+        items: list[StatusItem] | None = None,
+        **kwargs,
     ) -> None:
         super().__init__(**kwargs)
         self._title = title
@@ -147,7 +150,9 @@ class StatusPanel(Static):
         """Mount initial items."""
         self._refresh_items()
 
-    def set_status(self, key: str, label: str, value: str, status: str = "info") -> None:
+    def set_status(
+        self, key: str, label: str, value: str, status: str = "info"
+    ) -> None:
         self._status_items[key] = (label, value, status)
         self._refresh_items()
 
@@ -219,7 +224,9 @@ class LogViewer(Static):
         Binding("f", "toggle_filter", "Filter"),
     ]
 
-    def __init__(self, max_entries: int = 1000, auto_scroll: bool = True, **kwargs) -> None:
+    def __init__(
+        self, max_entries: int = 1000, auto_scroll: bool = True, **kwargs
+    ) -> None:
         super().__init__(**kwargs)
         self._entries: list[LogEntry] = []
         self._max_entries = max_entries
@@ -244,7 +251,9 @@ class LogViewer(Static):
 
     def log(self, message: str, level: str = "info", component: str = "") -> None:
         self.add_entry(
-            LogEntry(timestamp=time.time(), level=level, message=message, component=component)
+            LogEntry(
+                timestamp=time.time(), level=level, message=message, component=component
+            )
         )
 
     def log_debug(self, message: str, component: str = "") -> None:
@@ -311,7 +320,10 @@ class LogViewer(Static):
             row = Horizontal(classes="log-entry")
             row.mount(Label(entry.format_timestamp(), classes="log-timestamp"))
             row.mount(
-                Label(f"[{entry.format_level()}]", classes=f"log-level log-level-{entry.level}")
+                Label(
+                    f"[{entry.format_level()}]",
+                    classes=f"log-level log-level-{entry.level}",
+                )
             )
             row.mount(Label(entry.message, classes="log-message"))
             content.mount(row)
@@ -406,7 +418,8 @@ class BackendCard(Static):
             BackendStatus.CONNECTING: "🟡",
         }
         yield Label(
-            f"{icons.get(self._backend.status, '⚪')} {self._backend.name}", classes="backend-name"
+            f"{icons.get(self._backend.status, '⚪')} {self._backend.name}",
+            classes="backend-name",
         )
         yield Label(f"Type: {self._backend.backend_type}", classes="backend-type")
         if self._backend.total_executions > 0:
@@ -415,7 +428,9 @@ class BackendCard(Static):
                 stats += f" | Avg: {self._backend.avg_latency_ms:.1f}ms"
             yield Label(stats, classes="backend-stats")
         if self._backend.error_message:
-            yield Label(f"Error: {self._backend.error_message}", classes="backend-error")
+            yield Label(
+                f"Error: {self._backend.error_message}", classes="backend-error"
+            )
 
     def on_click(self) -> None:
         self.post_message(self.Selected(self._backend))
@@ -456,7 +471,9 @@ class ResultsTable(Static):
         table.clear()
         for result in results:
             icon = "✓" if result.get("status") == "success" else "✗"
-            ts = datetime.fromtimestamp(result.get("timestamp", time.time())).strftime("%H:%M:%S")
+            ts = datetime.fromtimestamp(result.get("timestamp", time.time())).strftime(
+                "%H:%M:%S"
+            )
             table.add_row(
                 result.get("id", ""),
                 result.get("backend", ""),
@@ -527,7 +544,11 @@ class ExecutionTimer(Static):
             await asyncio.sleep(0.05)
 
     def _update_display(self) -> None:
-        m, s, ms = int(self.elapsed // 60), int(self.elapsed % 60), int((self.elapsed % 1) * 1000)
+        m, s, ms = (
+            int(self.elapsed // 60),
+            int(self.elapsed % 60),
+            int((self.elapsed % 1) * 1000),
+        )
         self.query_one("#timer-value", Label).update(f"{m:02d}:{s:02d}.{ms:03d}")
 
 
@@ -549,14 +570,21 @@ class MetricDisplay(Static):
     value = reactive("0")
 
     def __init__(
-        self, label: str, value: str = "0", unit: str = "", trend: float | None = None, **kwargs
+        self,
+        label: str,
+        value: str = "0",
+        unit: str = "",
+        trend: float | None = None,
+        **kwargs,
     ) -> None:
         super().__init__(**kwargs)
         self._label, self._unit, self._trend = label, unit, trend
         self.value = value
 
     def compose(self) -> ComposeResult:
-        yield Label(f"{self.value}{self._unit}", classes="metric-value", id="metric-value")
+        yield Label(
+            f"{self.value}{self._unit}", classes="metric-value", id="metric-value"
+        )
         yield Label(self._label, classes="metric-label")
         if self._trend is not None:
             cls = (
@@ -565,7 +593,9 @@ class MetricDisplay(Static):
                 else ("trend-down" if self._trend < 0 else "trend-neutral")
             )
             icon = "↑" if self._trend > 0 else ("↓" if self._trend < 0 else "→")
-            yield Label(f"{icon} {abs(self._trend):.1f}%", classes=f"metric-trend {cls}")
+            yield Label(
+                f"{icon} {abs(self._trend):.1f}%", classes=f"metric-trend {cls}"
+            )
 
     def watch_value(self, new_value: str) -> None:
         try:
@@ -611,7 +641,9 @@ class ExecutionProgress(Static):
         self.progress = progress
         if stage:
             self.stage = stage
-        self.query_one("#exec-progress-bar", TextualProgressBar).update(progress=progress)
+        self.query_one("#exec-progress-bar", TextualProgressBar).update(
+            progress=progress
+        )
         self.query_one("#stage-label", Label).update(f"[{stage}]" if stage else "")
         if self._start_time:
             elapsed = time.time() - self._start_time
@@ -680,12 +712,21 @@ class ConfigInput(Static):
         self, key: str, label: str, value: str = "", placeholder: str = "", **kwargs
     ) -> None:
         super().__init__(**kwargs)
-        self._key, self._label, self._value, self._placeholder = key, label, value, placeholder
+        self._key, self._label, self._value, self._placeholder = (
+            key,
+            label,
+            value,
+            placeholder,
+        )
 
     def compose(self) -> ComposeResult:
         with Horizontal():
             yield Label(f"{self._label}:", classes="config-label")
-            yield Input(value=self._value, placeholder=self._placeholder, id=f"input-{self._key}")
+            yield Input(
+                value=self._value,
+                placeholder=self._placeholder,
+                id=f"input-{self._key}",
+            )
 
     def on_input_changed(self, event: Input.Changed) -> None:
         self.post_message(self.Changed(self._key, event.value))
@@ -776,7 +817,11 @@ class ProgressBar(Static):
     progress = reactive(0.0)
 
     def __init__(
-        self, label: str = "", total: float = 100.0, show_percentage: bool = True, **kwargs
+        self,
+        label: str = "",
+        total: float = 100.0,
+        show_percentage: bool = True,
+        **kwargs,
     ) -> None:
         super().__init__(**kwargs)
         self._label, self._total, self._show_percentage = label, total, show_percentage
@@ -792,4 +837,6 @@ class ProgressBar(Static):
         self.progress = value
         self.query_one("#inner-progress", TextualProgressBar).update(progress=value)
         if self._show_percentage:
-            self.query_one("#progress-value", Label).update(f"{(value / self._total) * 100:.0f}%")
+            self.query_one("#progress-value", Label).update(
+                f"{(value / self._total) * 100:.0f}%"
+            )

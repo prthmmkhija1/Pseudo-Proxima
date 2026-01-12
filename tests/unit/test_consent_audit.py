@@ -115,7 +115,11 @@ class TestMemoryAuditStorage:
 
     def test_append_and_read(self):
         """Test appending and reading events."""
-        from proxima.resources.audit import AuditEvent, AuditEventType, MemoryAuditStorage
+        from proxima.resources.audit import (
+            AuditEvent,
+            AuditEventType,
+            MemoryAuditStorage,
+        )
 
         storage = MemoryAuditStorage(max_events=100)
 
@@ -134,7 +138,11 @@ class TestMemoryAuditStorage:
 
     def test_max_events_limit(self):
         """Test that storage respects max_events limit."""
-        from proxima.resources.audit import AuditEvent, AuditEventType, MemoryAuditStorage
+        from proxima.resources.audit import (
+            AuditEvent,
+            AuditEventType,
+            MemoryAuditStorage,
+        )
 
         storage = MemoryAuditStorage(max_events=5)
 
@@ -151,7 +159,11 @@ class TestMemoryAuditStorage:
 
     def test_read_range(self):
         """Test reading events by time range."""
-        from proxima.resources.audit import AuditEvent, AuditEventType, MemoryAuditStorage
+        from proxima.resources.audit import (
+            AuditEvent,
+            AuditEventType,
+            MemoryAuditStorage,
+        )
 
         storage = MemoryAuditStorage()
         now = time.time()
@@ -171,7 +183,11 @@ class TestMemoryAuditStorage:
 
     def test_clear(self):
         """Test clearing storage."""
-        from proxima.resources.audit import AuditEvent, AuditEventType, MemoryAuditStorage
+        from proxima.resources.audit import (
+            AuditEvent,
+            AuditEventType,
+            MemoryAuditStorage,
+        )
 
         storage = MemoryAuditStorage()
 
@@ -371,9 +387,19 @@ class TestAuditQueryBuilder:
         from proxima.resources.consent import ConsentCategory
 
         log = AuditLog()
-        log.log(AuditEventType.CONSENT_GRANTED, topic="a", category=ConsentCategory.LOCAL_LLM)
-        log.log(AuditEventType.CONSENT_GRANTED, topic="b", category=ConsentCategory.REMOTE_LLM)
-        log.log(AuditEventType.CONSENT_DENIED, topic="c", category=ConsentCategory.LOCAL_LLM)
+        log.log(
+            AuditEventType.CONSENT_GRANTED,
+            topic="a",
+            category=ConsentCategory.LOCAL_LLM,
+        )
+        log.log(
+            AuditEventType.CONSENT_GRANTED,
+            topic="b",
+            category=ConsentCategory.REMOTE_LLM,
+        )
+        log.log(
+            AuditEventType.CONSENT_DENIED, topic="c", category=ConsentCategory.LOCAL_LLM
+        )
 
         results = (
             log.query()
@@ -606,12 +632,18 @@ class TestConsentEventBus:
 
     def test_event_history(self):
         """Test event history tracking."""
-        from proxima.resources.hooks import ConsentEvent, ConsentEventBus, ConsentEventKind
+        from proxima.resources.hooks import (
+            ConsentEvent,
+            ConsentEventBus,
+            ConsentEventKind,
+        )
 
         bus = ConsentEventBus()
 
         for i in range(5):
-            bus.emit(ConsentEvent(kind=ConsentEventKind.CONSENT_GRANTED, topic=f"hist-{i}"))
+            bus.emit(
+                ConsentEvent(kind=ConsentEventKind.CONSENT_GRANTED, topic=f"hist-{i}")
+            )
 
         history = bus.get_history()
         assert len(history) == 5
@@ -622,7 +654,11 @@ class TestLoggingHandler:
 
     def test_logs_events(self):
         """Test that events are logged."""
-        from proxima.resources.hooks import ConsentEvent, ConsentEventKind, LoggingHandler
+        from proxima.resources.hooks import (
+            ConsentEvent,
+            ConsentEventKind,
+            LoggingHandler,
+        )
 
         handler = LoggingHandler()
         event = ConsentEvent(
@@ -640,13 +676,23 @@ class TestMetricsHandler:
 
     def test_tracks_metrics(self):
         """Test that metrics are tracked."""
-        from proxima.resources.hooks import ConsentEvent, ConsentEventKind, MetricsHandler
+        from proxima.resources.hooks import (
+            ConsentEvent,
+            ConsentEventKind,
+            MetricsHandler,
+        )
 
         handler = MetricsHandler()
 
-        handler.handle(ConsentEvent(kind=ConsentEventKind.CONSENT_GRANTED, granted=True))
-        handler.handle(ConsentEvent(kind=ConsentEventKind.CONSENT_GRANTED, granted=True))
-        handler.handle(ConsentEvent(kind=ConsentEventKind.CONSENT_DENIED, granted=False))
+        handler.handle(
+            ConsentEvent(kind=ConsentEventKind.CONSENT_GRANTED, granted=True)
+        )
+        handler.handle(
+            ConsentEvent(kind=ConsentEventKind.CONSENT_GRANTED, granted=True)
+        )
+        handler.handle(
+            ConsentEvent(kind=ConsentEventKind.CONSENT_DENIED, granted=False)
+        )
 
         metrics = handler.get_metrics()
         assert metrics["counters"]["total_grants"] == 2
@@ -654,23 +700,37 @@ class TestMetricsHandler:
 
     def test_grant_rate(self):
         """Test grant rate calculation."""
-        from proxima.resources.hooks import ConsentEvent, ConsentEventKind, MetricsHandler
+        from proxima.resources.hooks import (
+            ConsentEvent,
+            ConsentEventKind,
+            MetricsHandler,
+        )
 
         handler = MetricsHandler()
 
         for _ in range(7):
-            handler.handle(ConsentEvent(kind=ConsentEventKind.CONSENT_GRANTED, granted=True))
+            handler.handle(
+                ConsentEvent(kind=ConsentEventKind.CONSENT_GRANTED, granted=True)
+            )
         for _ in range(3):
-            handler.handle(ConsentEvent(kind=ConsentEventKind.CONSENT_DENIED, granted=False))
+            handler.handle(
+                ConsentEvent(kind=ConsentEventKind.CONSENT_DENIED, granted=False)
+            )
 
         assert handler.grant_rate == 70.0
 
     def test_reset_metrics(self):
         """Test resetting metrics."""
-        from proxima.resources.hooks import ConsentEvent, ConsentEventKind, MetricsHandler
+        from proxima.resources.hooks import (
+            ConsentEvent,
+            ConsentEventKind,
+            MetricsHandler,
+        )
 
         handler = MetricsHandler()
-        handler.handle(ConsentEvent(kind=ConsentEventKind.CONSENT_GRANTED, granted=True))
+        handler.handle(
+            ConsentEvent(kind=ConsentEventKind.CONSENT_GRANTED, granted=True)
+        )
 
         handler.reset()
         assert handler.total_events == 0
@@ -708,7 +768,9 @@ class TestPolicyHandler:
             PolicyHandler,
         )
 
-        policy = CategoryBlacklistPolicy(blocked_categories=[ConsentCategory.DATA_COLLECTION])
+        policy = CategoryBlacklistPolicy(
+            blocked_categories=[ConsentCategory.DATA_COLLECTION]
+        )
         handler = PolicyHandler()
         handler.add_policy(policy)
 
@@ -739,12 +801,16 @@ class TestEventAwareConsentManager:
 
         received = []
         manager = EventAwareConsentManager()
-        manager.event_bus.register(CallbackHandler(callback=lambda e: received.append(e)))
+        manager.event_bus.register(
+            CallbackHandler(callback=lambda e: received.append(e))
+        )
 
         manager.grant("event_test")
 
         # Filter for grant events
-        grant_events = [e for e in received if e.kind == ConsentEventKind.CONSENT_GRANTED]
+        grant_events = [
+            e for e in received if e.kind == ConsentEventKind.CONSENT_GRANTED
+        ]
         assert len(grant_events) >= 1
 
     def test_emits_revoke_event(self):
@@ -757,12 +823,16 @@ class TestEventAwareConsentManager:
 
         received = []
         manager = EventAwareConsentManager()
-        manager.event_bus.register(CallbackHandler(callback=lambda e: received.append(e)))
+        manager.event_bus.register(
+            CallbackHandler(callback=lambda e: received.append(e))
+        )
 
         manager.grant("to_revoke")
         manager.revoke("to_revoke")
 
-        revoke_events = [e for e in received if e.kind == ConsentEventKind.CONSENT_REVOKED]
+        revoke_events = [
+            e for e in received if e.kind == ConsentEventKind.CONSENT_REVOKED
+        ]
         assert len(revoke_events) >= 1
 
 

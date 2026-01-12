@@ -21,8 +21,12 @@ def history_callback(ctx: typer.Context) -> None:
 @app.command("list")
 def list_history(
     limit: int = typer.Option(20, "--limit", "-n", help="Maximum entries to show"),
-    session_id: str | None = typer.Option(None, "--session", "-s", help="Filter by session"),
-    backend: str | None = typer.Option(None, "--backend", "-b", help="Filter by backend"),
+    session_id: str | None = typer.Option(
+        None, "--session", "-s", help="Filter by session"
+    ),
+    backend: str | None = typer.Option(
+        None, "--backend", "-b", help="Filter by backend"
+    ),
 ) -> None:
     """List execution history entries."""
     store = get_store()
@@ -42,7 +46,9 @@ def list_history(
     typer.echo("-" * 100)
 
     for result in results:
-        timestamp = result.timestamp.strftime("%Y-%m-%d %H:%M") if result.timestamp else "N/A"
+        timestamp = (
+            result.timestamp.strftime("%Y-%m-%d %H:%M") if result.timestamp else "N/A"
+        )
         typer.echo(
             f"{result.id:<36} {result.backend_name:<12} {result.qubit_count:<8} "
             f"{result.shots:<8} {result.execution_time_ms:>8.1f}ms  {timestamp}"
@@ -110,7 +116,9 @@ def delete_result(
 @app.command("clear")
 def clear_history(
     confirm: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation"),
-    session_id: str | None = typer.Option(None, "--session", "-s", help="Clear only this session"),
+    session_id: str | None = typer.Option(
+        None, "--session", "-s", help="Clear only this session"
+    ),
 ) -> None:
     """Clear execution history."""
     store = get_store()
@@ -140,8 +148,12 @@ def clear_history(
 @app.command("export")
 def export_history(
     output_path: str = typer.Argument(..., help="Output file path (CSV or JSON)"),
-    session_id: str | None = typer.Option(None, "--session", "-s", help="Export only this session"),
-    format: str = typer.Option("csv", "--format", "-f", help="Output format (csv|json)"),
+    session_id: str | None = typer.Option(
+        None, "--session", "-s", help="Export only this session"
+    ),
+    format: str = typer.Option(
+        "csv", "--format", "-f", help="Output format (csv|json)"
+    ),
 ) -> None:
     """Export execution history to file."""
     import csv

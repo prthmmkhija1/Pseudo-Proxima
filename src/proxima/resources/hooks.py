@@ -157,7 +157,9 @@ class ConsentEventBus:
     def __init__(self) -> None:
         self._handlers: list[ConsentEventHandler] = []
         self._async_handlers: list[ConsentEventHandler] = []
-        self._type_handlers: dict[ConsentEventKind, list[ConsentEventHandler]] = defaultdict(list)
+        self._type_handlers: dict[ConsentEventKind, list[ConsentEventHandler]] = (
+            defaultdict(list)
+        )
         self._lock = threading.Lock()
         self._event_history: list[ConsentEvent] = []
         self._max_history = 1000
@@ -318,8 +320,12 @@ class MetricsHandler(BaseConsentHandler):
     def __init__(self, name: str = "MetricsHandler") -> None:
         super().__init__(name)
         self._counters: dict[str, int] = defaultdict(int)
-        self._by_category: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
-        self._by_topic: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+        self._by_category: dict[str, dict[str, int]] = defaultdict(
+            lambda: defaultdict(int)
+        )
+        self._by_topic: dict[str, dict[str, int]] = defaultdict(
+            lambda: defaultdict(int)
+        )
         self._lock = threading.Lock()
 
     def _handle_event(self, event: ConsentEvent) -> None:
@@ -675,7 +681,9 @@ class EventAwareConsentManager:
         self._bus.emit(
             ConsentEvent(
                 kind=(
-                    ConsentEventKind.CONSENT_GRANTED if granted else ConsentEventKind.CONSENT_DENIED
+                    ConsentEventKind.CONSENT_GRANTED
+                    if granted
+                    else ConsentEventKind.CONSENT_DENIED
                 ),
                 topic=topic,
                 category=category,

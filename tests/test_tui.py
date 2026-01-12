@@ -235,7 +235,9 @@ def main():
         print("    - Consistent color theme")
         print("    - Contextual help (press ? for help)")
         print("\nTo run the TUI interactively:")
-        print('  python -c "from src.proxima.tui import ProximaApp; ProximaApp().run()"')
+        print(
+            '  python -c "from src.proxima.tui import ProximaApp; ProximaApp().run()"'
+        )
 
     except AssertionError as e:
         print(f"\n[FAILED] {e}")

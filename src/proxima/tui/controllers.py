@@ -497,7 +497,11 @@ class DataController:
 
             event_bus.publish(
                 TUIEvent(
-                    event_type=EventType.DATA_LOADED if response.success else EventType.DATA_ERROR,
+                    event_type=(
+                        EventType.DATA_LOADED
+                        if response.success
+                        else EventType.DATA_ERROR
+                    ),
                     data={"source": request.source, "error": response.error},
                     source="data",
                 )

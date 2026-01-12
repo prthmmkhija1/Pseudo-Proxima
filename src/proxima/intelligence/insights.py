@@ -498,7 +498,9 @@ class PatternDetector:
                 return PatternInfo(
                     pattern_type=PatternType.ENTANGLED,
                     confidence=combined,
-                    description=(f"Bell-state-like entanglement: |{all_zeros}⟩ + |{all_ones}⟩"),
+                    description=(
+                        f"Bell-state-like entanglement: |{all_zeros}⟩ + |{all_ones}⟩"
+                    ),
                     affected_states=[all_zeros, all_ones],
                     metrics={"combined_probability": combined},
                 )
@@ -1031,7 +1033,9 @@ class InsightEngine:
             parts.append(main_pattern.description)
 
         # Entropy characterization
-        max_entropy = math.log2(statistics.total_states) if statistics.total_states > 0 else 0
+        max_entropy = (
+            math.log2(statistics.total_states) if statistics.total_states > 0 else 0
+        )
         if max_entropy > 0:
             entropy_ratio = statistics.entropy / max_entropy
             if entropy_ratio < 0.2:
@@ -1090,7 +1094,8 @@ class InsightEngine:
 
         if statistics.non_zero_states == 1:
             warnings.append(
-                "Only one state has non-zero probability - " "may indicate deterministic circuit"
+                "Only one state has non-zero probability - "
+                "may indicate deterministic circuit"
             )
 
         return warnings

@@ -9,7 +9,9 @@ import numpy as np
 from proxima.backends.base import ExecutionResult, ResultType
 
 
-def normalize_counts(counts: dict[str, int], *, little_endian: bool = True) -> dict[str, float]:
+def normalize_counts(
+    counts: dict[str, int], *, little_endian: bool = True
+) -> dict[str, float]:
     """Normalize measurement counts to probabilities.
 
     Args:

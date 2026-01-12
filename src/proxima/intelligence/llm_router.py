@@ -79,7 +79,9 @@ class LLMProvider(Protocol):
     is_local: bool
     requires_api_key: bool
 
-    def send(self, request: LLMRequest, api_key: str | None) -> LLMResponse:  # pragma: no cover
+    def send(
+        self, request: LLMRequest, api_key: str | None
+    ) -> LLMResponse:  # pragma: no cover
         """Send a request to the LLM provider."""
         ...
 
@@ -398,9 +400,9 @@ class AnthropicProvider(_BaseProvider):
 
             elapsed = (time.perf_counter() - start) * 1000
             text = data["content"][0]["text"] if data.get("content") else ""
-            tokens = data.get("usage", {}).get("input_tokens", 0) + data.get("usage", {}).get(
-                "output_tokens", 0
-            )
+            tokens = data.get("usage", {}).get("input_tokens", 0) + data.get(
+                "usage", {}
+            ).get("output_tokens", 0)
 
             return LLMResponse(
                 text=text,
@@ -525,7 +527,9 @@ class OllamaProvider(_BaseProvider):
 
     def health_check(self, endpoint: str | None = None) -> bool:
         """Check if Ollama is running and reachable."""
-        check_endpoint = endpoint or self._endpoint or f"http://localhost:{DEFAULT_PORTS['ollama']}"
+        check_endpoint = (
+            endpoint or self._endpoint or f"http://localhost:{DEFAULT_PORTS['ollama']}"
+        )
         try:
             client = self._get_client()
             response = client.get(f"{check_endpoint}/api/tags", timeout=2.0)
@@ -539,7 +543,9 @@ class OllamaProvider(_BaseProvider):
 
     def list_models(self, endpoint: str | None = None) -> list[str]:
         """List available models on the Ollama server."""
-        check_endpoint = endpoint or self._endpoint or f"http://localhost:{DEFAULT_PORTS['ollama']}"
+        check_endpoint = (
+            endpoint or self._endpoint or f"http://localhost:{DEFAULT_PORTS['ollama']}"
+        )
         try:
             client = self._get_client()
             response = client.get(f"{check_endpoint}/api/tags", timeout=5.0)
@@ -594,7 +600,9 @@ class LMStudioProvider(_BaseProvider):
             data = response.json()
 
             elapsed = (time.perf_counter() - start) * 1000
-            text = data["choices"][0]["message"]["content"] if data.get("choices") else ""
+            text = (
+                data["choices"][0]["message"]["content"] if data.get("choices") else ""
+            )
             tokens = data.get("usage", {}).get("total_tokens", 0)
 
             return LLMResponse(
@@ -627,7 +635,9 @@ class LMStudioProvider(_BaseProvider):
     def health_check(self, endpoint: str | None = None) -> bool:
         """Check if LM Studio is running and reachable."""
         check_endpoint = (
-            endpoint or self._endpoint or f"http://localhost:{DEFAULT_PORTS['lmstudio']}"
+            endpoint
+            or self._endpoint
+            or f"http://localhost:{DEFAULT_PORTS['lmstudio']}"
         )
         try:
             client = self._get_client()
@@ -690,7 +700,8 @@ class LlamaCppProvider(_BaseProvider):
                 provider=self.name,
                 model=model,
                 latency_ms=elapsed,
-                tokens_used=data.get("tokens_evaluated", 0) + data.get("tokens_predicted", 0),
+                tokens_used=data.get("tokens_evaluated", 0)
+                + data.get("tokens_predicted", 0),
                 raw=data,
             )
         except httpx.ConnectError:
@@ -715,7 +726,9 @@ class LlamaCppProvider(_BaseProvider):
     def health_check(self, endpoint: str | None = None) -> bool:
         """Check if llama.cpp server is running and reachable."""
         check_endpoint = (
-            endpoint or self._endpoint or f"http://localhost:{DEFAULT_PORTS['llama_cpp']}"
+            endpoint
+            or self._endpoint
+            or f"http://localhost:{DEFAULT_PORTS['llama_cpp']}"
         )
         try:
             client = self._get_client()
@@ -899,7 +912,10 @@ class APIKeyManager:
             return self.settings.llm.api_key
 
         # Check custom env var from settings
-        if hasattr(self.settings.llm, "api_key_env_var") and self.settings.llm.api_key_env_var:
+        if (
+            hasattr(self.settings.llm, "api_key_env_var")
+            and self.settings.llm.api_key_env_var
+        ):
             key = os.environ.get(self.settings.llm.api_key_env_var)
             if key:
                 self._cache[provider_name] = key
@@ -1083,7 +1099,9 @@ class ConsentGate:
         if existing is True:
             return
         if existing is False:
-            raise PermissionError(f"Previously denied consent for provider {provider.name}")
+            raise PermissionError(
+                f"Previously denied consent for provider {provider.name}"
+            )
 
         # Need to prompt
         if not self.prompt_func:
@@ -1120,7 +1138,9 @@ class LLMRouter:
         """Pick the appropriate provider for the request."""
         provider_name: ProviderName = request.provider or self.settings.llm.provider or "none"  # type: ignore
         if provider_name == "none":
-            raise ValueError("No LLM provider configured. Set llm.provider in config or request.")
+            raise ValueError(
+                "No LLM provider configured. Set llm.provider in config or request."
+            )
         return self.registry.get(provider_name)
 
     def _ensure_local_available(self, provider: LLMProvider) -> None:

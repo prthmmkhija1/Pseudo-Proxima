@@ -98,7 +98,9 @@ class ExecutionRecord:
         return {
             "id": self.id,
             "started_at": self.started_at.isoformat(),
-            "completed_at": self.completed_at.isoformat() if self.completed_at else None,
+            "completed_at": (
+                self.completed_at.isoformat() if self.completed_at else None
+            ),
             "status": self.status,
             "backend": self.backend,
             "objective": self.objective,
@@ -114,7 +116,9 @@ class ExecutionRecord:
             id=data["id"],
             started_at=datetime.fromisoformat(data["started_at"]),
             completed_at=(
-                datetime.fromisoformat(data["completed_at"]) if data.get("completed_at") else None
+                datetime.fromisoformat(data["completed_at"])
+                if data.get("completed_at")
+                else None
             ),
             status=data.get("status", "unknown"),
             backend=data.get("backend"),
@@ -224,7 +228,9 @@ class Session:
         """Update the updated_at timestamp."""
         self.updated_at = datetime.utcnow()
 
-    def initialize_state_machine(self, execution_id: str | None = None) -> ExecutionStateMachine:
+    def initialize_state_machine(
+        self, execution_id: str | None = None
+    ) -> ExecutionStateMachine:
         """Create or reset the state machine for a new execution.
 
         Args:
@@ -259,7 +265,9 @@ class Session:
             New ExecutionRecord.
         """
         if self.status != SessionStatus.ACTIVE:
-            raise RuntimeError(f"Cannot start execution: session status is {self.status}")
+            raise RuntimeError(
+                f"Cannot start execution: session status is {self.status}"
+            )
 
         exec_id = str(uuid.uuid4())[:8]
         self._current_plan = plan or {}
@@ -298,7 +306,10 @@ class Session:
             self._current_execution.result = result or {}
 
             if self._current_execution.started_at:
-                delta = self._current_execution.completed_at - self._current_execution.started_at
+                delta = (
+                    self._current_execution.completed_at
+                    - self._current_execution.started_at
+                )
                 self._current_execution.duration_ms = delta.total_seconds() * 1000
 
             self.logger.info(
@@ -322,7 +333,10 @@ class Session:
             self._current_execution.error = error
 
             if self._current_execution.started_at:
-                delta = self._current_execution.completed_at - self._current_execution.started_at
+                delta = (
+                    self._current_execution.completed_at
+                    - self._current_execution.started_at
+                )
                 self._current_execution.duration_ms = delta.total_seconds() * 1000
 
             self.logger.error(
@@ -372,13 +386,19 @@ class Session:
         Returns:
             True if restored successfully.
         """
-        checkpoint = next((cp for cp in self._checkpoints if cp.id == checkpoint_id), None)
+        checkpoint = next(
+            (cp for cp in self._checkpoints if cp.id == checkpoint_id), None
+        )
         if not checkpoint:
-            self.logger.warning("session.checkpoint_not_found", checkpoint_id=checkpoint_id)
+            self.logger.warning(
+                "session.checkpoint_not_found", checkpoint_id=checkpoint_id
+            )
             return False
 
         # Restore executions
-        self._executions = [ExecutionRecord.from_dict(data) for data in checkpoint.results_snapshot]
+        self._executions = [
+            ExecutionRecord.from_dict(data) for data in checkpoint.results_snapshot
+        ]
         self._current_plan = dict(checkpoint.plan_snapshot)
 
         # Reset state machine to checkpoint state
@@ -405,7 +425,10 @@ class Session:
 
         # Pause state machine if running
         # Note: pause is a dynamically added trigger method from transitions library
-        if self._state_machine and self._state_machine.state == ExecutionState.RUNNING.value:
+        if (
+            self._state_machine
+            and self._state_machine.state == ExecutionState.RUNNING.value
+        ):
             self._state_machine.pause()  # type: ignore[attr-defined]
 
         self.status = SessionStatus.PAUSED
@@ -426,7 +449,10 @@ class Session:
 
         # Resume state machine if paused
         # Note: resume is a dynamically added trigger method from transitions library
-        if self._state_machine and self._state_machine.state == ExecutionState.PAUSED.value:
+        if (
+            self._state_machine
+            and self._state_machine.state == ExecutionState.PAUSED.value
+        ):
             self._state_machine.resume()  # type: ignore[attr-defined]
 
         self.status = SessionStatus.ACTIVE
@@ -479,7 +505,9 @@ class Session:
             "current_plan": self._current_plan,
             "metadata": self._metadata,
             "tags": self._tags,
-            "state_machine": (self._state_machine.snapshot() if self._state_machine else None),
+            "state_machine": (
+                self._state_machine.snapshot() if self._state_machine else None
+            ),
         }
 
         self.session_file.write_text(json.dumps(data, indent=2, default=str))
@@ -517,8 +545,12 @@ class Session:
         session.status = SessionStatus(data.get("status", "active"))
         session.created_at = datetime.fromisoformat(data["created_at"])
         session.updated_at = datetime.fromisoformat(data["updated_at"])
-        session._executions = [ExecutionRecord.from_dict(e) for e in data.get("executions", [])]
-        session._checkpoints = [Checkpoint.from_dict(c) for c in data.get("checkpoints", [])]
+        session._executions = [
+            ExecutionRecord.from_dict(e) for e in data.get("executions", [])
+        ]
+        session._checkpoints = [
+            Checkpoint.from_dict(c) for c in data.get("checkpoints", [])
+        ]
         session._current_plan = data.get("current_plan", {})
         session._metadata = data.get("metadata", {})
         session._tags = data.get("tags", [])
@@ -611,7 +643,9 @@ class SessionManager:
         self._current_session = session
         self._session_cache[session.id] = session
 
-        self.logger.info("session_manager.new_session", session_id=session.id, name=name)
+        self.logger.info(
+            "session_manager.new_session", session_id=session.id, name=name
+        )
         return session
 
     def get_session(self, session_id: str) -> Session | None:
@@ -704,7 +738,9 @@ class SessionManager:
             except (KeyError, ValueError):
                 continue
 
-        self.logger.info("session_manager.cleanup", deleted=deleted, max_age_days=max_age_days)
+        self.logger.info(
+            "session_manager.cleanup", deleted=deleted, max_age_days=max_age_days
+        )
         return deleted
 
 

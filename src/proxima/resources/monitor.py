@@ -298,9 +298,13 @@ class MemoryMonitor:
         """Handle memory level transition."""
         # Generate appropriate message
         if current == MemoryLevel.ABORT:
-            message = f"CRITICAL: Memory at {snapshot.percent_used:.1f}% - OOM imminent!"
+            message = (
+                f"CRITICAL: Memory at {snapshot.percent_used:.1f}% - OOM imminent!"
+            )
         elif current == MemoryLevel.CRITICAL:
-            message = f"Memory critical at {snapshot.percent_used:.1f}% - consider aborting"
+            message = (
+                f"Memory critical at {snapshot.percent_used:.1f}% - consider aborting"
+            )
         elif current == MemoryLevel.WARNING:
             message = f"Memory warning: {snapshot.percent_used:.1f}% used"
         elif current == MemoryLevel.INFO:
@@ -323,7 +327,11 @@ class MemoryMonitor:
                 else (
                     logging.ERROR
                     if current == MemoryLevel.CRITICAL
-                    else logging.WARNING if current == MemoryLevel.WARNING else logging.INFO
+                    else (
+                        logging.WARNING
+                        if current == MemoryLevel.WARNING
+                        else logging.INFO
+                    )
                 )
             ),
             message,
@@ -426,7 +434,9 @@ class MemoryMonitor:
         num_qubits: int,
     ) -> tuple[MemoryCheckResult, MemoryEstimate]:
         """Check if enough memory for a specific backend execution."""
-        estimate = MemoryEstimator.estimate_for_backend(backend_name, simulator_type, num_qubits)
+        estimate = MemoryEstimator.estimate_for_backend(
+            backend_name, simulator_type, num_qubits
+        )
         result = self.check_memory_for_execution(
             required_mb=estimate.estimated_mb,
             operation_name=f"{backend_name}/{simulator_type}/{num_qubits}q",
@@ -691,7 +701,9 @@ class GPUMonitor:
                 utilization = pynvml.nvmlDeviceGetUtilizationRates(handle)
 
                 try:
-                    temp = pynvml.nvmlDeviceGetTemperature(handle, pynvml.NVML_TEMPERATURE_GPU)
+                    temp = pynvml.nvmlDeviceGetTemperature(
+                        handle, pynvml.NVML_TEMPERATURE_GPU
+                    )
                 except Exception:
                     temp = None
 
@@ -719,7 +731,10 @@ class GPUMonitor:
             return []
         # Get unique GPUs from recent history
         gpu_ids = {s.gpu_id for s in self._history[-10:]}
-        return [next(s for s in reversed(self._history) if s.gpu_id == gid) for gid in gpu_ids]
+        return [
+            next(s for s in reversed(self._history) if s.gpu_id == gid)
+            for gid in gpu_ids
+        ]
 
 
 # =============================================================================
@@ -917,7 +932,9 @@ class ExtendedResourceMonitor(ResourceMonitor):
 
         if self.gpu.available and self.gpu.latest:
             gpu = self.gpu.latest[0]
-            lines.append(f"GPU: {gpu.memory_percent:.0f}% mem, {gpu.gpu_utilization}% util")
+            lines.append(
+                f"GPU: {gpu.memory_percent:.0f}% mem, {gpu.gpu_utilization}% util"
+            )
 
         if self.disk.latest:
             lines.append(f"Disk: {self.disk.latest.free_gb:.1f}GB free")

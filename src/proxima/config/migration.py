@@ -108,7 +108,9 @@ class MigrationRegistry:
             # Downgrading
             return self._get_downgrade_path(from_version, to_version)
 
-    def _get_upgrade_path(self, from_version: str, to_version: str) -> list[MigrationStep]:
+    def _get_upgrade_path(
+        self, from_version: str, to_version: str
+    ) -> list[MigrationStep]:
         """Get upgrade migration path."""
         path = []
         current = from_version
@@ -130,7 +132,9 @@ class MigrationRegistry:
 
         return path
 
-    def _get_downgrade_path(self, from_version: str, to_version: str) -> list[MigrationStep]:
+    def _get_downgrade_path(
+        self, from_version: str, to_version: str
+    ) -> list[MigrationStep]:
         """Get downgrade migration path."""
         path = []
         current = from_version
@@ -294,7 +298,9 @@ class ConfigMigrator:
         if not path:
             # No direct path - check if versions are valid
             if from_version != target_version:
-                result.errors.append(f"No migration path from {from_version} to {target_version}")
+                result.errors.append(
+                    f"No migration path from {from_version} to {target_version}"
+                )
                 return result
 
         # Create backup if requested

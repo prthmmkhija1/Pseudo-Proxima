@@ -349,7 +349,9 @@ class CheckpointManager:
                     to_keep.append(checkpoint)
                 else:
                     # Remove the file
-                    checkpoint_path = self._get_checkpoint_path(checkpoint.checkpoint_id)
+                    checkpoint_path = self._get_checkpoint_path(
+                        checkpoint.checkpoint_id
+                    )
                     try:
                         if checkpoint_path.exists():
                             checkpoint_path.unlink()
@@ -581,7 +583,11 @@ class ExecutionController:
             True if started successfully
         """
         with self._lock:
-            if self._state not in (ControlState.IDLE, ControlState.COMPLETED, ControlState.ABORTED):
+            if self._state not in (
+                ControlState.IDLE,
+                ControlState.COMPLETED,
+                ControlState.ABORTED,
+            ):
                 logger.warning(f"Cannot start from state {self._state}")
                 return False
 
@@ -617,7 +623,9 @@ class ExecutionController:
             previous=previous,
             current=ControlState.RUNNING,
             signal=ControlSignal.START,
-            reason="Execution started" if not resume_from else "Resumed from checkpoint",
+            reason=(
+                "Execution started" if not resume_from else "Resumed from checkpoint"
+            ),
             checkpoint_id=checkpoint_id,
         )
         self._emit_event(event)
@@ -640,7 +648,11 @@ class ExecutionController:
             True if state changed
         """
         with self._lock:
-            if self._state in (ControlState.ABORTED, ControlState.COMPLETED, ControlState.IDLE):
+            if self._state in (
+                ControlState.ABORTED,
+                ControlState.COMPLETED,
+                ControlState.IDLE,
+            ):
                 return False
 
             previous = self._state
@@ -791,7 +803,9 @@ class ExecutionController:
             target_checkpoint = self._checkpoint_manager.load_checkpoint(checkpoint_id)
         elif stage_index is not None:
             # Find checkpoint by stage index
-            target_checkpoint = self._checkpoint_manager.get_checkpoint_by_stage(stage_index)
+            target_checkpoint = self._checkpoint_manager.get_checkpoint_by_stage(
+                stage_index
+            )
         else:
             # Get the previous checkpoint (one before current)
             target_checkpoint = self._checkpoint_manager.get_previous_checkpoint()
@@ -855,7 +869,11 @@ class ExecutionController:
             True if state changed
         """
         with self._lock:
-            if self._state in (ControlState.ABORTED, ControlState.COMPLETED, ControlState.IDLE):
+            if self._state in (
+                ControlState.ABORTED,
+                ControlState.COMPLETED,
+                ControlState.IDLE,
+            ):
                 return False
 
             previous = self._state
@@ -937,7 +955,9 @@ class ExecutionController:
             if custom_state:
                 self._custom_state.update(custom_state)
 
-    def checkpoint_now(self, custom_state: dict[str, Any] | None = None) -> CheckpointData | None:
+    def checkpoint_now(
+        self, custom_state: dict[str, Any] | None = None
+    ) -> CheckpointData | None:
         """Create a checkpoint at the current location.
 
         Args:
@@ -1001,7 +1021,9 @@ class AbortException(Exception):
 class PauseException(Exception):
     """Raised when execution should pause."""
 
-    def __init__(self, reason: str | None = None, checkpoint: CheckpointData | None = None) -> None:
+    def __init__(
+        self, reason: str | None = None, checkpoint: CheckpointData | None = None
+    ) -> None:
         self.reason = reason
         self.checkpoint = checkpoint
         super().__init__(reason or "Execution paused")

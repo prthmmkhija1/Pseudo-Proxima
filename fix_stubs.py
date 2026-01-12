@@ -536,7 +536,7 @@ from proxima.resources.session import (
 
 __all__ = [
     "Session",
-    "SessionManager", 
+    "SessionManager",
     "SessionStatus",
     "SessionMetadata",
     "SessionCheckpoint",
@@ -622,6 +622,7 @@ def merge_dicts(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any
             result[key] = value
     return result
 '''
+
 
 # ============================================================================
 # Write all files

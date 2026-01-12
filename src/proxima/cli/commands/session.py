@@ -36,7 +36,11 @@ def list_sessions(
     typer.echo("-" * 90)
 
     for session in sessions:
-        created = session.created_at.strftime("%Y-%m-%d %H:%M") if session.created_at else "N/A"
+        created = (
+            session.created_at.strftime("%Y-%m-%d %H:%M")
+            if session.created_at
+            else "N/A"
+        )
         name = session.name or "(unnamed)"
         typer.echo(f"{session.id:<36} {name:<20} {session.result_count:<10} {created}")
 
@@ -44,7 +48,9 @@ def list_sessions(
 @app.command("new")
 def new_session(
     name: str | None = typer.Option(None, "--name", "-n", help="Session name"),
-    agent_file: str | None = typer.Option(None, "--agent", "-a", help="Associated agent file"),
+    agent_file: str | None = typer.Option(
+        None, "--agent", "-a", help="Associated agent file"
+    ),
 ) -> None:
     """Create a new session."""
     store = get_store()

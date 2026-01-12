@@ -80,7 +80,9 @@ class SecretStorage(ABC):
     SERVICE_NAME = "proxima"
 
     @abstractmethod
-    def store(self, key: str, value: str, metadata: dict[str, Any] | None = None) -> SecretResult:
+    def store(
+        self, key: str, value: str, metadata: dict[str, Any] | None = None
+    ) -> SecretResult:
         """Store a secret value."""
         pass
 
@@ -145,7 +147,9 @@ class KeyringStorage(SecretStorage):
     def is_available(self) -> bool:
         return self._available
 
-    def store(self, key: str, value: str, metadata: dict[str, Any] | None = None) -> SecretResult:
+    def store(
+        self, key: str, value: str, metadata: dict[str, Any] | None = None
+    ) -> SecretResult:
         if not self._available:
             return SecretResult.fail("Keyring not available")
 
@@ -174,7 +178,9 @@ class KeyringStorage(SecretStorage):
             # Try to get metadata
             metadata = None
             try:
-                meta_value = self._keyring.get_password(self.SERVICE_NAME, f"{key}__meta")
+                meta_value = self._keyring.get_password(
+                    self.SERVICE_NAME, f"{key}__meta"
+                )
                 if meta_value:
                     meta_dict = json.loads(meta_value)
                     metadata = SecretMetadata(
@@ -303,7 +309,9 @@ class EncryptedFileStorage(SecretStorage):
             keystream = b""
             counter = 0
             while len(keystream) < len(data_bytes):
-                keystream += hashlib.sha256(key + iv + counter.to_bytes(4, "big")).digest()
+                keystream += hashlib.sha256(
+                    key + iv + counter.to_bytes(4, "big")
+                ).digest()
                 counter += 1
 
             encrypted = bytes(b ^ keystream[i] for i, b in enumerate(data_bytes))
@@ -383,7 +391,9 @@ class EncryptedFileStorage(SecretStorage):
         encrypted = self._encrypt(content)
         self.storage_path.write_bytes(encrypted)
 
-    def store(self, key: str, value: str, metadata: dict[str, Any] | None = None) -> SecretResult:
+    def store(
+        self, key: str, value: str, metadata: dict[str, Any] | None = None
+    ) -> SecretResult:
         try:
             now = datetime.now().isoformat()
             self._cache[key] = {
@@ -446,7 +456,9 @@ class EnvironmentStorage(SecretStorage):
 
     PREFIX = "PROXIMA_SECRET_"
 
-    def store(self, key: str, value: str, metadata: dict[str, Any] | None = None) -> SecretResult:
+    def store(
+        self, key: str, value: str, metadata: dict[str, Any] | None = None
+    ) -> SecretResult:
         # Can't actually store - just set in current process
         env_key = f"{self.PREFIX}{key.upper()}"
         os.environ[env_key] = value
@@ -503,7 +515,9 @@ class MemoryStorage(SecretStorage):
     def __init__(self) -> None:
         self._secrets: dict[str, dict[str, Any]] = {}
 
-    def store(self, key: str, value: str, metadata: dict[str, Any] | None = None) -> SecretResult:
+    def store(
+        self, key: str, value: str, metadata: dict[str, Any] | None = None
+    ) -> SecretResult:
         now = datetime.now()
         self._secrets[key] = {
             "value": value,
@@ -560,7 +574,9 @@ class SecretManager:
         "azure_quantum_key": "Azure Quantum API key",
     }
 
-    def __init__(self, preferred_backend: SecretBackend = SecretBackend.KEYRING) -> None:
+    def __init__(
+        self, preferred_backend: SecretBackend = SecretBackend.KEYRING
+    ) -> None:
         self._backends: dict[SecretBackend, SecretStorage] = {}
         self._preferred_backend = preferred_backend
         self._init_backends()
@@ -716,13 +732,20 @@ def mask_secret(value: str, visible_chars: int = 4) -> str:
     if len(value) <= visible_chars * 2:
         return "*" * len(value)
 
-    return value[:visible_chars] + "*" * (len(value) - visible_chars * 2) + value[-visible_chars:]
+    return (
+        value[:visible_chars]
+        + "*" * (len(value) - visible_chars * 2)
+        + value[-visible_chars:]
+    )
 
 
 def validate_api_key_format(key: str, provider: str) -> tuple[bool, str]:
     """Validate API key format for common providers."""
     validations = {
-        "openai": (lambda k: k.startswith("sk-") and len(k) > 20, "OpenAI keys start with 'sk-'"),
+        "openai": (
+            lambda k: k.startswith("sk-") and len(k) > 20,
+            "OpenAI keys start with 'sk-'",
+        ),
         "anthropic": (
             lambda k: k.startswith("sk-ant-") and len(k) > 30,
             "Anthropic keys start with 'sk-ant-'",

@@ -92,7 +92,9 @@ class CirqBackendAdapter(BaseBackendAdapter):
         }
         return ResourceEstimate(memory_mb=memory_mb, time_ms=None, metadata=metadata)
 
-    def execute(self, circuit: Any, options: dict[str, Any] | None = None) -> ExecutionResult:
+    def execute(
+        self, circuit: Any, options: dict[str, Any] | None = None
+    ) -> ExecutionResult:
         if not self.is_available():
             raise BackendNotInstalledError("cirq", ["cirq"])
 
@@ -177,7 +179,11 @@ class CirqBackendAdapter(BaseBackendAdapter):
                 raw_result=raw_result,
             )
 
-        except (BackendNotInstalledError, CircuitValidationError, QubitLimitExceededError):
+        except (
+            BackendNotInstalledError,
+            CircuitValidationError,
+            QubitLimitExceededError,
+        ):
             raise
         except Exception as exc:
             raise wrap_backend_exception(exc, "cirq", "execution")

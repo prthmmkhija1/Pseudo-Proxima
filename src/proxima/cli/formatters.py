@@ -339,7 +339,9 @@ class TableFormatter(OutputFormatter):
         # Rows
         for row in data:
             if isinstance(row, dict):
-                line = " | ".join(str(row.get(col, "")).ljust(widths[col]) for col in columns)
+                line = " | ".join(
+                    str(row.get(col, "")).ljust(widths[col]) for col in columns
+                )
                 lines.append(line)
 
         return "\n".join(lines)
@@ -393,7 +395,9 @@ class RichFormatter(OutputFormatter):
             text = Text(data, style=style if style != "default" else None)
             console.print(text)
         elif isinstance(data, dict):
-            self._print_dict_tree(console, data, kwargs.get("title", "Result"), style=style)
+            self._print_dict_tree(
+                console, data, kwargs.get("title", "Result"), style=style
+            )
         elif isinstance(data, (list, tuple)):
             self._print_list(console, data, kwargs.get("title", "Items"), style=style)
         else:

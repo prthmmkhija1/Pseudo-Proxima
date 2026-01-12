@@ -538,7 +538,9 @@ class LockingSessionManager(SessionManager):
     ) -> None:
         super().__init__(storage_dir)
         self._locks: dict[str, SessionLock] = {}
-        self._cleanup = SessionCleanup(storage_dir, max_age_days) if storage_dir else None
+        self._cleanup = (
+            SessionCleanup(storage_dir, max_age_days) if storage_dir else None
+        )
         self._lock = threading.Lock()
 
         # Register cleanup on exit

@@ -19,9 +19,8 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import Any
-from unittest.mock import MagicMock, patch, PropertyMock
-import numpy as np
+from unittest.mock import MagicMock, patch
+
 import pytest
 
 # Add src to path for imports
@@ -33,9 +32,7 @@ from proxima.backends.base import (
     ResourceEstimate,
     ResultType,
     SimulatorType,
-    ValidationResult,
 )
-
 
 # =============================================================================
 # FIXTURES
@@ -47,25 +44,25 @@ def mock_pyquest():
     """Mock pyQuEST module for testing without actual installation."""
     mock_module = MagicMock()
     mock_module.__version__ = "0.9.0"
-    
+
     # Mock QuEST environment
     mock_env = MagicMock()
     mock_env.num_ranks = 1
     mock_env.num_threads = 4
     mock_module.createQuESTEnv.return_value = mock_env
-    
+
     # Mock Qureg (quantum register)
     mock_qureg = MagicMock()
     mock_qureg.numQubitsRepresented = 3
     mock_qureg.numAmps = 8
     mock_module.createQureg.return_value = mock_qureg
     mock_module.createDensityQureg.return_value = mock_qureg
-    
+
     # Mock measurement functions
     mock_module.measure.return_value = 0
     mock_module.calcProbOfOutcome.return_value = 0.5
     mock_module.getAmp.return_value = complex(0.707, 0.0)
-    
+
     return mock_module
 
 
@@ -74,6 +71,7 @@ def mock_quest_adapter(mock_pyquest):
     """Create a QuEST adapter with mocked dependencies."""
     with patch.dict("sys.modules", {"pyquest": mock_pyquest}):
         from proxima.backends.quest_adapter import QuestAdapter
+
         adapter = QuestAdapter()
         return adapter
 
@@ -131,7 +129,7 @@ class TestQuestAdapterInitialization:
         """Test that adapter instantiates successfully when pyQuEST is available."""
         with patch.dict("sys.modules", {"pyquest": mock_pyquest}):
             from proxima.backends.quest_adapter import QuestAdapter
-            
+
             adapter = QuestAdapter()
             assert adapter is not None
             assert adapter.get_name() == "quest"
@@ -145,7 +143,7 @@ class TestQuestAdapterInitialization:
     def test_capabilities_detection(self, mock_quest_adapter):
         """Test that adapter reports correct capabilities."""
         caps = mock_quest_adapter.get_capabilities()
-        
+
         assert isinstance(caps, Capabilities)
         assert SimulatorType.STATE_VECTOR in caps.simulator_types
         assert SimulatorType.DENSITY_MATRIX in caps.simulator_types
@@ -155,10 +153,10 @@ class TestQuestAdapterInitialization:
     def test_gpu_availability_detection(self, mock_pyquest):
         """Test GPU availability detection during initialization."""
         mock_pyquest.QuESTEnv.return_value.is_gpu = True
-        
+
         with patch.dict("sys.modules", {"pyquest": mock_pyquest}):
             from proxima.backends.quest_adapter import QuestAdapter
-            
+
             adapter = QuestAdapter()
             caps = adapter.get_capabilities()
             # GPU support depends on build configuration
@@ -168,7 +166,7 @@ class TestQuestAdapterInitialization:
         """Test that adapter handles missing pyQuEST gracefully."""
         with patch.dict("sys.modules", {"pyquest": None}):
             from proxima.backends.quest_adapter import QuestAdapter
-            
+
             adapter = QuestAdapter()
             assert adapter.is_available() is False
 
@@ -192,14 +190,16 @@ class TestQuestCircuitTranslation:
     def test_basic_gate_translation(self, mock_quest_adapter, simple_circuit):
         """Test translation of basic gates (H, CNOT)."""
         validation = mock_quest_adapter.validate_circuit(simple_circuit)
-        
+
         assert validation.valid is True
         assert validation.message is None or "error" not in validation.message.lower()
 
-    def test_parameterized_gate_translation(self, mock_quest_adapter, parameterized_circuit):
+    def test_parameterized_gate_translation(
+        self, mock_quest_adapter, parameterized_circuit
+    ):
         """Test translation of parameterized gates (Rx, Ry, Rz)."""
         validation = mock_quest_adapter.validate_circuit(parameterized_circuit)
-        
+
         assert validation.valid is True
 
     def test_unsupported_gate_detection(self, mock_quest_adapter):
@@ -210,7 +210,7 @@ class TestQuestCircuitTranslation:
                 {"name": "UnsupportedGate", "qubits": [0]},
             ],
         }
-        
+
         validation = mock_quest_adapter.validate_circuit(invalid_circuit)
         # Should either reject or warn about unsupported gates
         if not validation.valid:
@@ -225,7 +225,7 @@ class TestQuestCircuitTranslation:
             ],
             "measurements": [0, 1, 2],
         }
-        
+
         validation = mock_quest_adapter.validate_circuit(circuit)
         # Multi-qubit gates should be supported
         assert validation.valid is True
@@ -237,7 +237,7 @@ class TestQuestCircuitTranslation:
             "gates": [],
             "measurements": [],
         }
-        
+
         validation = mock_quest_adapter.validate_circuit(empty_circuit)
         assert validation.valid is True  # Empty circuit should be valid
 
@@ -249,7 +249,7 @@ class TestQuestCircuitTranslation:
                 {"name": "H", "qubits": [5]},  # Invalid index
             ],
         }
-        
+
         validation = mock_quest_adapter.validate_circuit(invalid_circuit)
         assert validation.valid is False
 
@@ -270,7 +270,7 @@ class TestQuestExecution:
             simple_circuit,
             options={"shots": 1024, "simulator_type": "state_vector"},
         )
-        
+
         assert isinstance(result, ExecutionResult)
         assert result.backend == "quest"
         assert result.qubit_count == 2
@@ -282,7 +282,7 @@ class TestQuestExecution:
             simple_circuit,
             options={"simulator_type": "state_vector"},
         )
-        
+
         assert result.simulator_type == SimulatorType.STATE_VECTOR
 
     def test_density_matrix_mode(self, mock_quest_adapter, simple_circuit):
@@ -291,7 +291,7 @@ class TestQuestExecution:
             simple_circuit,
             options={"simulator_type": "density_matrix"},
         )
-        
+
         assert result.simulator_type == SimulatorType.DENSITY_MATRIX
 
     def test_shot_based_measurement(self, mock_quest_adapter, simple_circuit):
@@ -300,7 +300,7 @@ class TestQuestExecution:
             simple_circuit,
             options={"shots": 1000},
         )
-        
+
         assert result.result_type == ResultType.COUNTS
         assert "counts" in result.data or result.data.get("counts") is not None
 
@@ -310,20 +310,20 @@ class TestQuestExecution:
             simple_circuit,
             options={"return_statevector": True},
         )
-        
+
         # Should have statevector or amplitude data
         assert result.data is not None
 
     def test_execution_timing(self, mock_quest_adapter, simple_circuit):
         """Test that execution time is measured."""
         result = mock_quest_adapter.execute(simple_circuit)
-        
+
         assert result.execution_time_ms >= 0
 
     def test_metadata_included(self, mock_quest_adapter, simple_circuit):
         """Test that backend-specific metadata is included."""
         result = mock_quest_adapter.execute(simple_circuit)
-        
+
         assert result.metadata is not None
         # Should include QuEST-specific info
         assert isinstance(result.metadata, dict)
@@ -343,16 +343,16 @@ class TestQuestErrorHandling:
         """Test clear error when pyQuEST is not installed."""
         with patch.dict("sys.modules", {"pyquest": None}):
             from proxima.backends.quest_adapter import QuestAdapter
-            
+
             adapter = QuestAdapter()
-            
+
             # Should not crash, should indicate unavailability
             assert adapter.is_available() is False
 
     def test_resource_exceeded_error(self, mock_quest_adapter, large_circuit):
         """Test handling of resource limit exceeded."""
         estimate = mock_quest_adapter.estimate_resources(large_circuit)
-        
+
         assert isinstance(estimate, ResourceEstimate)
         assert estimate.memory_mb is not None
         assert estimate.memory_mb > 0
@@ -360,7 +360,7 @@ class TestQuestErrorHandling:
     def test_invalid_circuit_error(self, mock_quest_adapter):
         """Test handling of invalid circuit structure."""
         invalid_circuit = {"invalid": "structure"}
-        
+
         validation = mock_quest_adapter.validate_circuit(invalid_circuit)
         assert validation.valid is False
 
@@ -370,11 +370,14 @@ class TestQuestErrorHandling:
             "num_qubits": 100,  # Too many qubits
             "gates": [],
         }
-        
+
         validation = mock_quest_adapter.validate_circuit(huge_circuit)
         # Should detect resource limits
         if not validation.valid:
-            assert "qubit" in validation.message.lower() or "limit" in validation.message.lower()
+            assert (
+                "qubit" in validation.message.lower()
+                or "limit" in validation.message.lower()
+            )
 
     def test_execution_timeout(self, mock_quest_adapter, simple_circuit):
         """Test handling of execution timeout."""
@@ -383,18 +386,18 @@ class TestQuestErrorHandling:
             simple_circuit,
             options={"timeout_seconds": 60},
         )
-        
+
         assert isinstance(result, ExecutionResult)
 
     def test_cleanup_on_error(self, mock_pyquest):
         """Test that resources are cleaned up on error."""
         mock_pyquest.hadamard.side_effect = RuntimeError("Simulated error")
-        
+
         with patch.dict("sys.modules", {"pyquest": mock_pyquest}):
             from proxima.backends.quest_adapter import QuestAdapter
-            
+
             adapter = QuestAdapter()
-            
+
             # Execute should handle error gracefully
             try:
                 adapter.execute(
@@ -402,7 +405,7 @@ class TestQuestErrorHandling:
                 )
             except Exception:
                 pass  # Expected
-            
+
             # Cleanup should still work
             adapter._cleanup()
 
@@ -424,7 +427,7 @@ class TestQuestAdvancedFeatures:
                 simple_circuit,
                 options={"precision": precision},
             )
-            
+
             assert isinstance(result, ExecutionResult)
 
     def test_thread_count_configuration(self, mock_quest_adapter, simple_circuit):
@@ -433,7 +436,7 @@ class TestQuestAdvancedFeatures:
             simple_circuit,
             options={"num_threads": 4},
         )
-        
+
         assert isinstance(result, ExecutionResult)
 
     def test_gpu_fallback(self, mock_quest_adapter, simple_circuit):
@@ -442,7 +445,7 @@ class TestQuestAdvancedFeatures:
             simple_circuit,
             options={"use_gpu": True},
         )
-        
+
         # Should complete even if GPU unavailable
         assert isinstance(result, ExecutionResult)
 
@@ -460,7 +463,7 @@ class TestQuestResourceEstimation:
     def test_memory_estimation_small_circuit(self, mock_quest_adapter, simple_circuit):
         """Test memory estimation for small circuits."""
         estimate = mock_quest_adapter.estimate_resources(simple_circuit)
-        
+
         assert estimate.memory_mb is not None
         assert estimate.memory_mb > 0
         assert estimate.memory_mb < 100  # Small circuit should need little memory
@@ -468,7 +471,7 @@ class TestQuestResourceEstimation:
     def test_memory_estimation_large_circuit(self, mock_quest_adapter, large_circuit):
         """Test memory estimation for large circuits."""
         estimate = mock_quest_adapter.estimate_resources(large_circuit)
-        
+
         assert estimate.memory_mb is not None
         # 20 qubits should require significant memory (2^20 amplitudes)
         assert estimate.memory_mb > 10
@@ -476,13 +479,13 @@ class TestQuestResourceEstimation:
     def test_density_matrix_memory_scaling(self, mock_quest_adapter):
         """Test that density matrix mode estimates higher memory."""
         circuit = {"num_qubits": 5, "gates": []}
-        
+
         sv_estimate = mock_quest_adapter.estimate_resources(circuit)
-        
+
         # DM requires O(4^n) vs SV O(2^n)
         dm_circuit = {**circuit, "simulator_type": "density_matrix"}
         dm_estimate = mock_quest_adapter.estimate_resources(dm_circuit)
-        
+
         # Both should have valid estimates
         assert sv_estimate.memory_mb is not None
         assert dm_estimate.memory_mb is not None

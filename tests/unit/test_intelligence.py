@@ -357,9 +357,15 @@ class TestLocalLLMDetector:
 
         # Mock the detect_all method to avoid actual network calls
         mock_statuses = [
-            LocalLLMStatus(provider="ollama", available=False, endpoint="http://localhost:11434"),
-            LocalLLMStatus(provider="lm_studio", available=False, endpoint="http://localhost:1234"),
-            LocalLLMStatus(provider="llama_cpp", available=False, endpoint="http://localhost:8080"),
+            LocalLLMStatus(
+                provider="ollama", available=False, endpoint="http://localhost:11434"
+            ),
+            LocalLLMStatus(
+                provider="lm_studio", available=False, endpoint="http://localhost:1234"
+            ),
+            LocalLLMStatus(
+                provider="llama_cpp", available=False, endpoint="http://localhost:8080"
+            ),
         ]
         with patch.object(detector, "detect_all", return_value=mock_statuses):
             statuses = detector.detect_all()
@@ -378,13 +384,19 @@ class TestLocalLLMDetector:
             "detect_all",
             return_value=[
                 LocalLLMStatus(
-                    provider="ollama", available=False, endpoint="http://localhost:11434"
+                    provider="ollama",
+                    available=False,
+                    endpoint="http://localhost:11434",
                 ),
                 LocalLLMStatus(
-                    provider="lm_studio", available=False, endpoint="http://localhost:1234"
+                    provider="lm_studio",
+                    available=False,
+                    endpoint="http://localhost:1234",
                 ),
                 LocalLLMStatus(
-                    provider="llama_cpp", available=False, endpoint="http://localhost:8080"
+                    provider="llama_cpp",
+                    available=False,
+                    endpoint="http://localhost:8080",
                 ),
             ],
         ):
@@ -407,7 +419,9 @@ class TestLocalLLMDetector:
                     models=["llama2"],
                 ),
                 LocalLLMStatus(
-                    provider="lm_studio", available=False, endpoint="http://localhost:1234"
+                    provider="lm_studio",
+                    available=False,
+                    endpoint="http://localhost:1234",
                 ),
             ],
         ):
@@ -745,7 +759,9 @@ class TestInsightEngine:
         assert report.statistics.dominant_probability == 0.9
 
         # Should detect peaked pattern
-        peaked_patterns = [p for p in report.patterns if p.pattern_type == PatternType.PEAKED]
+        peaked_patterns = [
+            p for p in report.patterns if p.pattern_type == PatternType.PEAKED
+        ]
         assert len(peaked_patterns) > 0
 
     def test_analyze_bell_state(self) -> None:
@@ -756,7 +772,9 @@ class TestInsightEngine:
         report = engine.analyze(probs)
 
         # Should detect entanglement pattern
-        entangled = [p for p in report.patterns if p.pattern_type == PatternType.ENTANGLED]
+        entangled = [
+            p for p in report.patterns if p.pattern_type == PatternType.ENTANGLED
+        ]
         assert len(entangled) > 0
 
     def test_analyze_with_amplitudes(self) -> None:

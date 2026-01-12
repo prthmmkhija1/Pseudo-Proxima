@@ -56,7 +56,12 @@ def sample_data() -> ReportData:
         },
         raw_results=[
             {"backend": "openai", "latency": 120.5, "status": "success", "tokens": 150},
-            {"backend": "anthropic", "latency": 130.2, "status": "success", "tokens": 145},
+            {
+                "backend": "anthropic",
+                "latency": 130.2,
+                "status": "success",
+                "tokens": 145,
+            },
             {"backend": "local", "latency": None, "status": "failed", "tokens": 0},
         ],
         comparison={

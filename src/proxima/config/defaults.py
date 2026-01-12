@@ -133,6 +133,7 @@ DEFAULT_CONFIG_RELATIVE_PATH = Path("configs") / "default.yaml"
 # Step 1.5: QuEST Configuration Helper Functions
 # ==============================================================================
 
+
 def get_quest_config(config: dict[str, Any] | None = None) -> dict[str, Any]:
     """Get QuEST-specific configuration with defaults.
 
@@ -167,12 +168,16 @@ def validate_quest_config(config: dict[str, Any]) -> tuple[bool, list[str]]:
     # Validate precision
     precision = config.get("precision", "double")
     if precision not in ("single", "double", "quad"):
-        errors.append(f"Invalid precision '{precision}'. Must be 'single', 'double', or 'quad'")
+        errors.append(
+            f"Invalid precision '{precision}'. Must be 'single', 'double', or 'quad'"
+        )
 
     # Validate gpu_enabled
     gpu_enabled = config.get("gpu_enabled", "auto")
     if gpu_enabled not in ("auto", True, False, "true", "false"):
-        errors.append(f"Invalid gpu_enabled '{gpu_enabled}'. Must be 'auto', true, or false")
+        errors.append(
+            f"Invalid gpu_enabled '{gpu_enabled}'. Must be 'auto', true, or false"
+        )
 
     # Validate numeric values
     numeric_fields = [
@@ -189,7 +194,9 @@ def validate_quest_config(config: dict[str, Any]) -> tuple[bool, list[str]]:
             try:
                 int_val = int(value)
                 if int_val < min_val or int_val > max_val:
-                    errors.append(f"{field} must be between {min_val} and {max_val}, got {int_val}")
+                    errors.append(
+                        f"{field} must be between {min_val} and {max_val}, got {int_val}"
+                    )
             except (TypeError, ValueError):
                 errors.append(f"{field} must be an integer, got {type(value).__name__}")
 
@@ -199,9 +206,13 @@ def validate_quest_config(config: dict[str, Any]) -> tuple[bool, list[str]]:
         try:
             float_val = float(threshold)
             if float_val < 0 or float_val > 1:
-                errors.append(f"truncation_threshold must be between 0 and 1, got {float_val}")
+                errors.append(
+                    f"truncation_threshold must be between 0 and 1, got {float_val}"
+                )
         except (TypeError, ValueError):
-            errors.append(f"truncation_threshold must be a float, got {type(threshold).__name__}")
+            errors.append(
+                f"truncation_threshold must be a float, got {type(threshold).__name__}"
+            )
 
     return (len(errors) == 0, errors)
 
@@ -209,6 +220,7 @@ def validate_quest_config(config: dict[str, Any]) -> tuple[bool, list[str]]:
 # ==============================================================================
 # Step 2.3: cuQuantum Configuration Helper Functions
 # ==============================================================================
+
 
 def get_cuquantum_config(config: dict[str, Any] | None = None) -> dict[str, Any]:
     """Get cuQuantum-specific configuration with defaults.
@@ -244,7 +256,9 @@ def validate_cuquantum_config(config: dict[str, Any]) -> tuple[bool, list[str]]:
     # Validate execution_mode
     execution_mode = config.get("execution_mode", "gpu_preferred")
     if execution_mode not in ("gpu_only", "gpu_preferred", "auto"):
-        errors.append(f"Invalid execution_mode '{execution_mode}'. Must be 'gpu_only', 'gpu_preferred', or 'auto'")
+        errors.append(
+            f"Invalid execution_mode '{execution_mode}'. Must be 'gpu_only', 'gpu_preferred', or 'auto'"
+        )
 
     # Validate precision
     precision = config.get("precision", "double")
@@ -265,7 +279,9 @@ def validate_cuquantum_config(config: dict[str, Any]) -> tuple[bool, list[str]]:
             try:
                 int_val = int(value)
                 if int_val < min_val or int_val > max_val:
-                    errors.append(f"{field} must be between {min_val} and {max_val}, got {int_val}")
+                    errors.append(
+                        f"{field} must be between {min_val} and {max_val}, got {int_val}"
+                    )
             except (TypeError, ValueError):
                 errors.append(f"{field} must be an integer, got {type(value).__name__}")
 
@@ -295,7 +311,7 @@ def estimate_gpu_memory_required(num_qubits: int, precision: str = "double") -> 
     bytes_per_amplitude = 16 if precision == "double" else 8
 
     # State vector size
-    sv_size = (2 ** num_qubits) * bytes_per_amplitude
+    sv_size = (2**num_qubits) * bytes_per_amplitude
 
     # Add workspace (default 1GB)
     workspace = 1024 * 1024 * 1024
@@ -309,6 +325,7 @@ def estimate_gpu_memory_required(num_qubits: int, precision: str = "double") -> 
 # ==============================================================================
 # Step 3.5: qsim Configuration Helper Functions
 # ==============================================================================
+
 
 def get_qsim_config(config: dict[str, Any] | None = None) -> dict[str, Any]:
     """Get qsim-specific configuration with defaults.
@@ -344,7 +361,9 @@ def validate_qsim_config(config: dict[str, Any]) -> tuple[bool, list[str]]:
     # Validate gate_fusion level
     gate_fusion = config.get("gate_fusion", "medium")
     if gate_fusion not in ("off", "low", "medium", "high"):
-        errors.append(f"Invalid gate_fusion '{gate_fusion}'. Must be 'off', 'low', 'medium', or 'high'")
+        errors.append(
+            f"Invalid gate_fusion '{gate_fusion}'. Must be 'off', 'low', 'medium', or 'high'"
+        )
 
     # Validate numeric values
     numeric_fields = [
@@ -360,7 +379,9 @@ def validate_qsim_config(config: dict[str, Any]) -> tuple[bool, list[str]]:
             try:
                 int_val = int(value)
                 if int_val < min_val or int_val > max_val:
-                    errors.append(f"{field} must be between {min_val} and {max_val}, got {int_val}")
+                    errors.append(
+                        f"{field} must be between {min_val} and {max_val}, got {int_val}"
+                    )
             except (TypeError, ValueError):
                 errors.append(f"{field} must be an integer, got {type(value).__name__}")
 
@@ -395,7 +416,7 @@ def estimate_qsim_memory_required(num_qubits: int) -> float:
     bytes_per_amplitude = 16  # complex128
 
     # State vector size
-    sv_size = (2 ** num_qubits) * bytes_per_amplitude
+    sv_size = (2**num_qubits) * bytes_per_amplitude
 
     # Add overhead (20% for workspace)
     total = sv_size * 1.2
@@ -406,7 +427,7 @@ def estimate_qsim_memory_required(num_qubits: int) -> float:
 def get_backend_priority(
     simulation_type: str,
     gpu_available: bool = False,
-    config: dict[str, Any] | None = None
+    config: dict[str, Any] | None = None,
 ) -> list[str]:
     """Get backend priority list for auto-selection.
 
@@ -424,7 +445,9 @@ def get_backend_priority(
 
     if simulation_type == "state_vector":
         if gpu_available:
-            return priorities.get("state_vector_gpu", ["cuquantum", "quest", "qsim", "cirq", "qiskit"])
+            return priorities.get(
+                "state_vector_gpu", ["cuquantum", "quest", "qsim", "cirq", "qiskit"]
+            )
         return priorities.get("state_vector_cpu", ["qsim", "quest", "cirq", "qiskit"])
     elif simulation_type == "density_matrix":
         return priorities.get("density_matrix", ["quest", "cirq", "qiskit"])
@@ -577,8 +600,12 @@ def get_simulation_type_priority(
 
     if simulation_type == "state_vector":
         if gpu_available:
-            return type_config.get("gpu_priority", ["cuquantum", "quest", "qsim", "cirq", "qiskit"])
-        return type_config.get("cpu_priority", ["qsim", "quest", "cirq", "qiskit", "numpy"])
+            return type_config.get(
+                "gpu_priority", ["cuquantum", "quest", "qsim", "cirq", "qiskit"]
+            )
+        return type_config.get(
+            "cpu_priority", ["qsim", "quest", "cirq", "qiskit", "numpy"]
+        )
     elif simulation_type == "density_matrix":
         return type_config.get("priority", ["quest", "cirq", "qiskit", "lret"])
     elif simulation_type == "noisy_circuit":
@@ -611,12 +638,16 @@ def get_recommended_backend_for_circuit(
 
     # Handle noisy circuits
     if needs_noise:
-        priorities = get_simulation_type_priority("noisy_circuit", gpu_available, config)
+        priorities = get_simulation_type_priority(
+            "noisy_circuit", gpu_available, config
+        )
         return priorities[0] if priorities else "qiskit"
 
     # Handle density matrix
     if simulation_type == "density_matrix":
-        priorities = get_simulation_type_priority("density_matrix", gpu_available, config)
+        priorities = get_simulation_type_priority(
+            "density_matrix", gpu_available, config
+        )
         return priorities[0] if priorities else "quest"
 
     # Handle state vector based on circuit size

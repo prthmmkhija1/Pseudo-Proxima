@@ -217,7 +217,9 @@ class JSONExporter(BaseExporter):
             # Build export data
             export_data: dict[str, Any] = {
                 "title": data.title,
-                "generated_at": self._format_timestamp(data.generated_at, options.timestamp_format),
+                "generated_at": self._format_timestamp(
+                    data.generated_at, options.timestamp_format
+                ),
                 "summary": data.summary if data.summary else {},
             }
 
@@ -400,7 +402,9 @@ class XLSXExporter(BaseExporter):
 
             # Define styles
             header_font = Font(bold=True, color="FFFFFF")
-            header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
+            header_fill = PatternFill(
+                start_color="4472C4", end_color="4472C4", fill_type="solid"
+            )
             header_alignment = Alignment(horizontal="center", vertical="center")
             thin_border = Border(
                 left=Side(style="thin"),
@@ -866,17 +870,23 @@ class HTMLExporter(BaseExporter):
 
             # Flatten nested dicts for display
             flat_summary = self._flatten_dict(data.summary) if data.summary else {}
-            flat_comparison = self._flatten_dict(data.comparison) if data.comparison else {}
+            flat_comparison = (
+                self._flatten_dict(data.comparison) if data.comparison else {}
+            )
             flat_metadata = self._flatten_dict(data.metadata) if data.metadata else {}
 
             # Round floats
             flat_summary = self._round_floats(flat_summary, options.decimal_places)
-            flat_comparison = self._round_floats(flat_comparison, options.decimal_places)
+            flat_comparison = self._round_floats(
+                flat_comparison, options.decimal_places
+            )
             flat_metadata = self._round_floats(flat_metadata, options.decimal_places)
 
             html = template.render(
                 title=data.title,
-                generated_at=self._format_timestamp(data.generated_at, options.timestamp_format),
+                generated_at=self._format_timestamp(
+                    data.generated_at, options.timestamp_format
+                ),
                 summary=flat_summary if data.summary else None,
                 raw_results=data.raw_results if options.include_raw_results else [],
                 comparison=flat_comparison if options.include_comparison else None,
@@ -947,7 +957,9 @@ class HTMLExporter(BaseExporter):
 
             # Summary
             if data.summary:
-                html_parts.append("<h2>Summary</h2><table><tr><th>Metric</th><th>Value</th></tr>")
+                html_parts.append(
+                    "<h2>Summary</h2><table><tr><th>Metric</th><th>Value</th></tr>"
+                )
                 for k, v in self._flatten_dict(data.summary).items():
                     html_parts.append(f"<tr><td>{k}</td><td>{v}</td></tr>")
                 html_parts.append("</table>")
@@ -1189,7 +1201,9 @@ class YAMLExporter(BaseExporter):
             # Build export data
             export_data: dict[str, Any] = {
                 "title": data.title,
-                "generated_at": self._format_timestamp(data.generated_at, options.timestamp_format),
+                "generated_at": self._format_timestamp(
+                    data.generated_at, options.timestamp_format
+                ),
                 "summary": data.summary if data.summary else {},
             }
 
@@ -1233,7 +1247,11 @@ class YAMLExporter(BaseExporter):
                     file_size_bytes=len(yaml_content.encode("utf-8")),
                     export_time_ms=export_time,
                     content=yaml_content,
-                    warnings=[] if HAS_YAML else ["PyYAML not installed, using simple YAML format"],
+                    warnings=(
+                        []
+                        if HAS_YAML
+                        else ["PyYAML not installed, using simple YAML format"]
+                    ),
                 )
 
             # File output
@@ -1257,7 +1275,11 @@ class YAMLExporter(BaseExporter):
                 output_path=options.output_path,
                 file_size_bytes=file_size,
                 export_time_ms=export_time,
-                warnings=[] if HAS_YAML else ["PyYAML not installed, using simple YAML format"],
+                warnings=(
+                    []
+                    if HAS_YAML
+                    else ["PyYAML not installed, using simple YAML format"]
+                ),
             )
 
         except Exception as e:
@@ -1520,5 +1542,9 @@ def export_to_string(
     engine = ExportEngine()
     result = engine.export_to_string(data, format, **kwargs)
     if result.success and result.content:
-        return result.content if isinstance(result.content, str) else result.content.decode("utf-8")
+        return (
+            result.content
+            if isinstance(result.content, str)
+            else result.content.decode("utf-8")
+        )
     return None

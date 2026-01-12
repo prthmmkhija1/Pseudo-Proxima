@@ -516,11 +516,15 @@ class AuditLog:
 
     def get_grants(self) -> list[AuditEvent]:
         """Get all consent grant events."""
-        return [e for e in self.get_all() if e.event_type == AuditEventType.CONSENT_GRANTED]
+        return [
+            e for e in self.get_all() if e.event_type == AuditEventType.CONSENT_GRANTED
+        ]
 
     def get_denials(self) -> list[AuditEvent]:
         """Get all consent denial events."""
-        return [e for e in self.get_all() if e.event_type == AuditEventType.CONSENT_DENIED]
+        return [
+            e for e in self.get_all() if e.event_type == AuditEventType.CONSENT_DENIED
+        ]
 
     def get_revocations(self) -> list[AuditEvent]:
         """Get all consent revocation events."""
@@ -600,7 +604,9 @@ class AuditQueryBuilder:
         """Filter by topic pattern (simple glob with *)."""
         import fnmatch
 
-        self._filters.append(lambda e: e.topic is not None and fnmatch.fnmatch(e.topic, pattern))
+        self._filters.append(
+            lambda e: e.topic is not None and fnmatch.fnmatch(e.topic, pattern)
+        )
         return self
 
     def by_category(self, *categories: ConsentCategory) -> AuditQueryBuilder:
@@ -662,7 +668,9 @@ class AuditQueryBuilder:
         cutoff = time.time() - (days * 86400)
         return self.since(cutoff)
 
-    def sort_by(self, key: Callable[[AuditEvent], Any], reverse: bool = False) -> AuditQueryBuilder:
+    def sort_by(
+        self, key: Callable[[AuditEvent], Any], reverse: bool = False
+    ) -> AuditQueryBuilder:
         """Sort results by a key function."""
         self._sort_key = key
         self._sort_reverse = reverse
@@ -751,7 +759,10 @@ class AuditStatistics:
 
         for event in events:
             # Update time range
-            if stats.time_range_start is None or event.timestamp < stats.time_range_start:
+            if (
+                stats.time_range_start is None
+                or event.timestamp < stats.time_range_start
+            ):
                 stats.time_range_start = event.timestamp
             if stats.time_range_end is None or event.timestamp > stats.time_range_end:
                 stats.time_range_end = event.timestamp
@@ -891,13 +902,19 @@ class AuditReport:
         sections: list[ComplianceReportSection] = []
 
         # Check for force overrides
-        force_events = self._audit_log.query().by_type(AuditEventType.FORCE_OVERRIDE_USED).execute()
+        force_events = (
+            self._audit_log.query()
+            .by_type(AuditEventType.FORCE_OVERRIDE_USED)
+            .execute()
+        )
         if force_events:
             section = ComplianceReportSection(
                 title="Force Override Usage",
                 content=f"Found {len(force_events)} force override events.",
                 events=force_events,
-                warnings=["Force overrides bypass consent checks - review for compliance."],
+                warnings=[
+                    "Force overrides bypass consent checks - review for compliance."
+                ],
             )
             sections.append(section)
 
@@ -1228,7 +1245,9 @@ def create_audit_log(
     if in_memory:
         storage: AuditStorage = MemoryAuditStorage()
     else:
-        audit_path = Path(path) if path else Path.home() / ".proxima" / "consent_audit.log"
+        audit_path = (
+            Path(path) if path else Path.home() / ".proxima" / "consent_audit.log"
+        )
         storage = FileAuditStorage(audit_path, max_size_mb=max_size_mb)
 
     return AuditLog(storage=storage, session_id=session_id)

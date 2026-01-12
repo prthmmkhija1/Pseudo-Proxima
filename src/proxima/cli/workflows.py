@@ -286,12 +286,16 @@ class RunWorkflow(WorkflowRunner[dict[str, Any]]):
 
     def _check_preconditions(self, **kwargs) -> bool:
         """Verify backend is available."""
-        backend_name = self.options.backend or self.context.settings.backends.default_backend
+        backend_name = (
+            self.options.backend or self.context.settings.backends.default_backend
+        )
 
         try:
             status = backend_registry.get_status(backend_name)
             if not status.available:
-                typer.echo(f"Backend '{backend_name}' is not available: {status.reason}")
+                typer.echo(
+                    f"Backend '{backend_name}' is not available: {status.reason}"
+                )
                 return False
         except KeyError:
             typer.echo(f"Backend '{backend_name}' is not registered")
@@ -305,7 +309,11 @@ class RunWorkflow(WorkflowRunner[dict[str, Any]]):
             return True
 
         # Check if using remote LLM
-        if self.context.settings.llm.provider.lower() in ("openai", "anthropic", "remote"):
+        if self.context.settings.llm.provider.lower() in (
+            "openai",
+            "anthropic",
+            "remote",
+        ):
             if not self.context.consent_manager.request_consent(
                 "remote_llm_usage",
                 category=ConsentCategory.REMOTE_LLM,
@@ -327,7 +335,9 @@ class RunWorkflow(WorkflowRunner[dict[str, Any]]):
 
     def _plan(self, **kwargs) -> dict[str, Any]:
         """Create execution plan."""
-        backend_name = self.options.backend or self.context.settings.backends.default_backend
+        backend_name = (
+            self.options.backend or self.context.settings.backends.default_backend
+        )
 
         return {
             "objective": self.options.objective,
@@ -489,7 +499,8 @@ class CompareWorkflow(WorkflowRunner[dict[str, Any]]):
             max_workers=len(self.options.backends)
         ) as executor:
             futures = {
-                executor.submit(run_backend, backend): backend for backend in self.options.backends
+                executor.submit(run_backend, backend): backend
+                for backend in self.options.backends
             }
 
             for future in concurrent.futures.as_completed(futures):
@@ -552,8 +563,12 @@ class ValidationWorkflow(WorkflowRunner[dict[str, Any]]):
     def _plan(self, **kwargs) -> dict[str, Any]:
         """Create validation plan."""
         return {
-            "config_path": str(self.options.config_path) if self.options.config_path else None,
-            "circuit_path": str(self.options.circuit_path) if self.options.circuit_path else None,
+            "config_path": (
+                str(self.options.config_path) if self.options.config_path else None
+            ),
+            "circuit_path": (
+                str(self.options.circuit_path) if self.options.circuit_path else None
+            ),
             "backend": self.options.backend,
             "strict": self.options.strict,
         }
@@ -626,7 +641,9 @@ class ValidationWorkflow(WorkflowRunner[dict[str, Any]]):
     def _validate_backend(self) -> list[dict[str, Any]]:
         """Validate backend availability."""
         issues = []
-        backend_name = self.options.backend or self.context.settings.backends.default_backend
+        backend_name = (
+            self.options.backend or self.context.settings.backends.default_backend
+        )
 
         try:
             status = backend_registry.get_status(backend_name)

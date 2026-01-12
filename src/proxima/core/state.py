@@ -28,19 +28,51 @@ class ExecutionState(str, Enum):
 
 
 TRANSITIONS: list[dict[str, Any]] = [
-    {"trigger": "start", "source": ExecutionState.IDLE, "dest": ExecutionState.PLANNING},
-    {"trigger": "plan_complete", "source": ExecutionState.PLANNING, "dest": ExecutionState.READY},
-    {"trigger": "plan_failed", "source": ExecutionState.PLANNING, "dest": ExecutionState.ERROR},
-    {"trigger": "execute", "source": ExecutionState.READY, "dest": ExecutionState.RUNNING},
-    {"trigger": "pause", "source": ExecutionState.RUNNING, "dest": ExecutionState.PAUSED},
-    {"trigger": "resume", "source": ExecutionState.PAUSED, "dest": ExecutionState.RUNNING},
-    {"trigger": "complete", "source": ExecutionState.RUNNING, "dest": ExecutionState.COMPLETED},
+    {
+        "trigger": "start",
+        "source": ExecutionState.IDLE,
+        "dest": ExecutionState.PLANNING,
+    },
+    {
+        "trigger": "plan_complete",
+        "source": ExecutionState.PLANNING,
+        "dest": ExecutionState.READY,
+    },
+    {
+        "trigger": "plan_failed",
+        "source": ExecutionState.PLANNING,
+        "dest": ExecutionState.ERROR,
+    },
+    {
+        "trigger": "execute",
+        "source": ExecutionState.READY,
+        "dest": ExecutionState.RUNNING,
+    },
+    {
+        "trigger": "pause",
+        "source": ExecutionState.RUNNING,
+        "dest": ExecutionState.PAUSED,
+    },
+    {
+        "trigger": "resume",
+        "source": ExecutionState.PAUSED,
+        "dest": ExecutionState.RUNNING,
+    },
+    {
+        "trigger": "complete",
+        "source": ExecutionState.RUNNING,
+        "dest": ExecutionState.COMPLETED,
+    },
     {
         "trigger": "abort",
         "source": [ExecutionState.RUNNING, ExecutionState.PAUSED],
         "dest": ExecutionState.ABORTED,
     },
-    {"trigger": "error", "source": ExecutionState.RUNNING, "dest": ExecutionState.ERROR},
+    {
+        "trigger": "error",
+        "source": ExecutionState.RUNNING,
+        "dest": ExecutionState.ERROR,
+    },
     {"trigger": "reset", "source": "*", "dest": ExecutionState.IDLE},
 ]
 

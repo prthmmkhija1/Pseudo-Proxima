@@ -97,9 +97,7 @@ class DisplayUpdate:
         """Format as a single display line."""
         stage = self.current_stage or "idle"
         elapsed_sec = self.elapsed_ms / 1000
-        return (
-            f"[{stage}] {elapsed_sec:.1f}s | {self.progress_percent:.0f}% | ETA: {self.eta_display}"
-        )
+        return f"[{stage}] {elapsed_sec:.1f}s | {self.progress_percent:.0f}% | ETA: {self.eta_display}"
 
 
 # =============================================================================
@@ -143,7 +141,11 @@ class DisplayController:
         now = time.perf_counter() * 1000  # ms
 
         # Always update for transitions and completion
-        if reason in (UpdateReason.STAGE_TRANSITION, UpdateReason.COMPLETION, UpdateReason.MANUAL):
+        if reason in (
+            UpdateReason.STAGE_TRANSITION,
+            UpdateReason.COMPLETION,
+            UpdateReason.MANUAL,
+        ):
             return True
 
         # Check 100ms interval for timer ticks
@@ -276,7 +278,9 @@ class ProgressTracker:
     @property
     def current_milestone(self) -> int:
         """Get current 10% milestone (0, 10, 20, ..., 100)."""
-        return int(self.percentage // self.MILESTONE_INCREMENT) * int(self.MILESTONE_INCREMENT)
+        return int(self.percentage // self.MILESTONE_INCREMENT) * int(
+            self.MILESTONE_INCREMENT
+        )
 
     def reset(self) -> None:
         """Reset progress to 0."""
@@ -590,7 +594,11 @@ class ExecutionTimer:
             if self._current_stage == name:
                 self._current_stage = None
 
-            reason = UpdateReason.PROGRESS_MILESTONE if milestone else UpdateReason.STAGE_TRANSITION
+            reason = (
+                UpdateReason.PROGRESS_MILESTONE
+                if milestone
+                else UpdateReason.STAGE_TRANSITION
+            )
             self._emit_update(reason, f"Stage '{name}' completed")
 
     def update_stage_progress(self, percent_within_stage: float) -> None:
@@ -600,7 +608,9 @@ class ExecutionTimer:
 
         # Calculate overall progress
         completed_progress = (self._completed_stages / self._total_stages) * 100
-        current_stage_contribution = (percent_within_stage / 100) * (100 / self._total_stages)
+        current_stage_contribution = (percent_within_stage / 100) * (
+            100 / self._total_stages
+        )
         total_progress = completed_progress + current_stage_contribution
 
         milestone = self._progress.set_percentage(total_progress)

@@ -43,7 +43,9 @@ def load_settings_with_cli_overrides(
 
     if config_path:
         extra = (
-            yaml.safe_load(config_path.read_text(encoding="utf-8")) if config_path.exists() else {}
+            yaml.safe_load(config_path.read_text(encoding="utf-8"))
+            if config_path.exists()
+            else {}
         )
         if extra:
             base = _deep_merge(base, extra)

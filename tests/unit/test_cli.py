@@ -571,7 +571,9 @@ class TestSelectPrompt:
         """Test SelectOption with custom label."""
         from proxima.cli.prompts import SelectOption
 
-        option = SelectOption(value="opt1", label="Option 1", description="First option")
+        option = SelectOption(
+            value="opt1", label="Option 1", description="First option"
+        )
         assert option.value == "opt1"
         assert option.label == "Option 1"
         assert option.description == "First option"

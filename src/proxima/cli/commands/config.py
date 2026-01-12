@@ -27,7 +27,9 @@ def _parse_cli_value(raw: str) -> Any:
 
 
 @app.command()
-def show(format: str = typer.Option("yaml", help="Output format: yaml or json")) -> None:
+def show(
+    format: str = typer.Option("yaml", help="Output format: yaml or json")
+) -> None:
     """Show the effective configuration after all layers are merged."""
 
     settings = config_service.load()
@@ -40,7 +42,9 @@ def show(format: str = typer.Option("yaml", help="Output format: yaml or json"))
 
 
 @app.command()
-def get(key: str = typer.Argument(..., help="Dot path (e.g., general.verbosity)")) -> None:
+def get(
+    key: str = typer.Argument(..., help="Dot path (e.g., general.verbosity)")
+) -> None:
     """Get a configuration value by key path."""
 
     try:
@@ -54,7 +58,9 @@ def get(key: str = typer.Argument(..., help="Dot path (e.g., general.verbosity)"
 def set(
     key: str = typer.Argument(..., help="Dot path (e.g., general.verbosity)"),
     value: str = typer.Argument(..., help="Value to set (JSON or plain text)"),
-    scope: str = typer.Option("user", case_sensitive=False, help="Scope: user or project"),
+    scope: str = typer.Option(
+        "user", case_sensitive=False, help="Scope: user or project"
+    ),
 ) -> None:
     """Set a configuration value in the selected scope."""
 
@@ -86,7 +92,9 @@ def set(
 
 @app.command()
 def reset(
-    scope: str = typer.Option("user", case_sensitive=False, help="Scope: user or project")
+    scope: str = typer.Option(
+        "user", case_sensitive=False, help="Scope: user or project"
+    )
 ) -> None:
     """Remove scoped config file to fall back to lower-priority sources."""
 

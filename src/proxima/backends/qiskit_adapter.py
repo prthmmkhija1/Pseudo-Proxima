@@ -56,31 +56,41 @@ class QiskitBackendAdapter(BaseBackendAdapter):
 
     def validate_circuit(self, circuit: Any) -> ValidationResult:
         if not self.is_available():
-            return ValidationResult(valid=False, message="qiskit/qiskit-aer not installed")
+            return ValidationResult(
+                valid=False, message="qiskit/qiskit-aer not installed"
+            )
         try:
             from qiskit import QuantumCircuit
         except Exception as exc:  # pragma: no cover - defensive
             return ValidationResult(valid=False, message=f"qiskit import failed: {exc}")
 
         if not isinstance(circuit, QuantumCircuit):
-            return ValidationResult(valid=False, message="input is not a qiskit.QuantumCircuit")
+            return ValidationResult(
+                valid=False, message="input is not a qiskit.QuantumCircuit"
+            )
         return ValidationResult(valid=True, message="ok")
 
     def estimate_resources(self, circuit: Any) -> ResourceEstimate:
         if not self.is_available():
             return ResourceEstimate(
-                memory_mb=None, time_ms=None, metadata={"reason": "qiskit/qiskit-aer not installed"}
+                memory_mb=None,
+                time_ms=None,
+                metadata={"reason": "qiskit/qiskit-aer not installed"},
             )
         try:
             from qiskit import QuantumCircuit
         except Exception:
             return ResourceEstimate(
-                memory_mb=None, time_ms=None, metadata={"reason": "qiskit import failed"}
+                memory_mb=None,
+                time_ms=None,
+                metadata={"reason": "qiskit import failed"},
             )
 
         if not isinstance(circuit, QuantumCircuit):
             return ResourceEstimate(
-                memory_mb=None, time_ms=None, metadata={"reason": "not a QuantumCircuit"}
+                memory_mb=None,
+                time_ms=None,
+                metadata={"reason": "not a QuantumCircuit"},
             )
 
         qubits = circuit.num_qubits
@@ -95,7 +105,9 @@ class QiskitBackendAdapter(BaseBackendAdapter):
         }
         return ResourceEstimate(memory_mb=memory_mb, time_ms=None, metadata=metadata)
 
-    def execute(self, circuit: Any, options: dict[str, Any] | None = None) -> ExecutionResult:
+    def execute(
+        self, circuit: Any, options: dict[str, Any] | None = None
+    ) -> ExecutionResult:
         if not self.is_available():
             raise BackendNotInstalledError("qiskit", ["qiskit", "qiskit-aer"])
 
@@ -153,7 +165,9 @@ class QiskitBackendAdapter(BaseBackendAdapter):
                     exec_circuit.save_statevector()
 
             start = time.perf_counter()
-            result = simulator.run(exec_circuit, shots=shots if shots > 0 else None).result()
+            result = simulator.run(
+                exec_circuit, shots=shots if shots > 0 else None
+            ).result()
             execution_time_ms = (time.perf_counter() - start) * 1000.0
 
             if shots > 0:
@@ -186,7 +200,11 @@ class QiskitBackendAdapter(BaseBackendAdapter):
                 raw_result=raw_result,
             )
 
-        except (BackendNotInstalledError, CircuitValidationError, QubitLimitExceededError):
+        except (
+            BackendNotInstalledError,
+            CircuitValidationError,
+            QubitLimitExceededError,
+        ):
             raise
         except Exception as exc:
             raise wrap_backend_exception(exc, "qiskit", "execution")

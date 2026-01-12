@@ -181,7 +181,9 @@ def export_config(
         if options.include_comments:
             content = _add_yaml_comments(export_data)
         else:
-            content = yaml.safe_dump(export_data, sort_keys=False, default_flow_style=False)
+            content = yaml.safe_dump(
+                export_data, sort_keys=False, default_flow_style=False
+            )
         output_path.write_text(content, encoding="utf-8")
 
     elif format == ExportFormat.JSON:
@@ -300,7 +302,9 @@ def import_config(source_path: Path) -> ImportResult:
                 toml_bytes = source_path.read_bytes()
                 result.config = tomllib.loads(toml_bytes.decode("utf-8"))
             except ImportError:
-                result.errors.append("TOML support requires Python 3.11+ or tomli package")
+                result.errors.append(
+                    "TOML support requires Python 3.11+ or tomli package"
+                )
                 return result
 
         elif format == ExportFormat.ENV:
@@ -537,7 +541,10 @@ def generate_template(
 
     template = templates.get(template_type, templates["full"])
     return export_config(
-        template, output_path, format, ExportOptions(redact_secrets=False, include_comments=True)
+        template,
+        output_path,
+        format,
+        ExportOptions(redact_secrets=False, include_comments=True),
     )
 
 

@@ -7,11 +7,11 @@ from dataclasses import dataclass
 
 from proxima.backends.base import BaseBackendAdapter, Capabilities
 from proxima.backends.cirq_adapter import CirqBackendAdapter
+from proxima.backends.cuquantum_adapter import CuQuantumAdapter
 from proxima.backends.lret import LRETBackendAdapter
 from proxima.backends.qiskit_adapter import QiskitBackendAdapter
-from proxima.backends.quest_adapter import QuestBackendAdapter
-from proxima.backends.cuquantum_adapter import CuQuantumAdapter
 from proxima.backends.qsim_adapter import QsimAdapter  # Step 3.5: qsim added
+from proxima.backends.quest_adapter import QuestBackendAdapter
 
 
 @dataclass
@@ -124,7 +124,11 @@ class BackendRegistry:
             "cirqbackendadapter": ["cirq"],
             "qiskitbackendadapter": ["qiskit", "qiskit_aer"],
             "questbackendadapter": ["pyQuEST"],
-            "cuquantumadapter": ["qiskit", "qiskit_aer", "cuquantum"],  # cuQuantum dependencies
+            "cuquantumadapter": [
+                "qiskit",
+                "qiskit_aer",
+                "cuquantum",
+            ],  # cuQuantum dependencies
             "qsimadapter": ["cirq", "qsimcirq"],  # Step 3.5: qsim dependencies
         }
         missing = []
@@ -146,7 +150,9 @@ class BackendRegistry:
         if not status:
             raise KeyError(f"Backend '{name}' not registered")
         if not status.available or not status.adapter:
-            raise KeyError(f"Backend '{name}' is unavailable: {status.reason or 'unknown reason'}")
+            raise KeyError(
+                f"Backend '{name}' is unavailable: {status.reason or 'unknown reason'}"
+            )
         return status.adapter
 
     def is_available(self, name: str) -> bool:

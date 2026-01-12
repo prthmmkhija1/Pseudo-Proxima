@@ -30,7 +30,9 @@ app = typer.Typer(
 @app.callback(invoke_without_command=True)
 def main(
     ctx: typer.Context,
-    config: Path | None = typer.Option(None, "--config", "-c", help="Path to config YAML"),
+    config: Path | None = typer.Option(
+        None, "--config", "-c", help="Path to config YAML"
+    ),
     backend: str | None = typer.Option(
         None, "--backend", "-b", help="Select backend (lret|cirq|qiskit|auto)"
     ),

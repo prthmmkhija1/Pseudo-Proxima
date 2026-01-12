@@ -424,7 +424,9 @@ class StepProgress:
             self.steps[0].status = ProgressStatus.RUNNING
 
         if not self.no_progress and RICH_AVAILABLE:
-            self._live = Live(self._render(), console=self.console, refresh_per_second=4)
+            self._live = Live(
+                self._render(), console=self.console, refresh_per_second=4
+            )
             self._live.start()
         elif not self.no_progress:
             self._print_steps()
@@ -627,7 +629,9 @@ def track(
         except TypeError:
             pass
 
-    with progress_context(description, total=total, no_progress=no_progress) as progress:
+    with progress_context(
+        description, total=total, no_progress=no_progress
+    ) as progress:
         for item in iterable:
             yield item
             progress.update(1)
@@ -649,9 +653,13 @@ class ProgressCallback:
         if RICH_AVAILABLE and not no_progress:
             self._progress = RichProgress(message, total=total, no_progress=no_progress)
         else:
-            self._progress = SimpleProgress(message, total=total, no_progress=no_progress)
+            self._progress = SimpleProgress(
+                message, total=total, no_progress=no_progress
+            )
 
-    def __call__(self, current: int, total: int | None = None, message: str | None = None) -> None:
+    def __call__(
+        self, current: int, total: int | None = None, message: str | None = None
+    ) -> None:
         """Update progress."""
         if total and self._progress.total != total:
             self._progress.total = total

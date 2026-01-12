@@ -21,9 +21,13 @@ def agent_callback(ctx: typer.Context) -> None:
 @app.command("run")
 def run_agent(
     agent_file: Path = typer.Argument(..., help="Path to proxima_agent.md file"),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Show plan without executing"),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Show plan without executing"
+    ),
     step: bool = typer.Option(False, "--step", help="Execute one task at a time"),
-    resume_from: int | None = typer.Option(None, "--resume", "-r", help="Resume from task N"),
+    resume_from: int | None = typer.Option(
+        None, "--resume", "-r", help="Resume from task N"
+    ),
 ) -> None:
     """Execute a proxima_agent.md file."""
     from proxima.core.agent_interpreter import AgentFileParser, AgentInterpreter
@@ -84,7 +88,9 @@ def run_agent(
         # Display results
         for result in report.task_results:
             status_str = "✓" if result.status.value == "completed" else "✗"
-            typer.echo(f"  {status_str} Task {result.task_id}: {result.duration_ms:.1f}ms")
+            typer.echo(
+                f"  {status_str} Task {result.task_id}: {result.duration_ms:.1f}ms"
+            )
             if result.error:
                 typer.echo(f"      Error: {result.error}")
 
@@ -145,7 +151,9 @@ def validate_agent(
 
 @app.command("new")
 def new_agent(
-    output_file: Path = typer.Argument(Path("proxima_agent.md"), help="Output file path"),
+    output_file: Path = typer.Argument(
+        Path("proxima_agent.md"), help="Output file path"
+    ),
     name: str = typer.Option("My Agent", "--name", "-n", help="Agent name"),
     force: bool = typer.Option(False, "--force", "-f", help="Overwrite existing file"),
 ) -> None:
@@ -283,7 +291,9 @@ def _execute_step_mode(agent_config, interpreter, display_callback) -> None:
 
             # Ask if user wants to continue
             if i < total_tasks:
-                continue_exec = typer.confirm("Continue with remaining tasks?", default=True)
+                continue_exec = typer.confirm(
+                    "Continue with remaining tasks?", default=True
+                )
                 if not continue_exec:
                     typer.echo("\n⚠ Execution stopped by user")
                     break

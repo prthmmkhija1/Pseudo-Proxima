@@ -323,12 +323,17 @@ class ConsentManager:
             record = self._persistent_records[topic]
             if record.is_valid():
                 return ConsentCheckResult(
-                    found=True, granted=record.granted, record=record, source="persistent"
+                    found=True,
+                    granted=record.granted,
+                    record=record,
+                    source="persistent",
                 )
             del self._persistent_records[topic]
             self.save()
 
-        return ConsentCheckResult(found=False, granted=None, record=None, source="not_found")
+        return ConsentCheckResult(
+            found=False, granted=None, record=None, source="not_found"
+        )
 
     def request_consent(
         self,
@@ -377,7 +382,8 @@ class ConsentManager:
         request = ConsentRequest(
             topic=topic,
             category=category,
-            description=description or (config.description if config else f"Allow {topic}?"),
+            description=description
+            or (config.description if config else f"Allow {topic}?"),
             details=details,
             allow_remember=allow_remember,
             allow_force_override=allow_force,
@@ -536,7 +542,9 @@ class ConsentManager:
         revoked = 0
 
         session_to_remove = [
-            topic for topic, record in self._session_records.items() if record.category == category
+            topic
+            for topic, record in self._session_records.items()
+            if record.category == category
         ]
         for topic in session_to_remove:
             del self._session_records[topic]
@@ -561,7 +569,10 @@ class ConsentManager:
     def list_granted(self) -> list[str]:
         """List all topics with granted consent."""
         granted = []
-        for topic, record in {**self._persistent_records, **self._session_records}.items():
+        for topic, record in {
+            **self._persistent_records,
+            **self._session_records,
+        }.items():
             if record.is_valid() and record.granted:
                 granted.append(topic)
         return granted
@@ -569,7 +580,10 @@ class ConsentManager:
     def list_denied(self) -> list[str]:
         """List all topics with denied consent."""
         denied = []
-        for topic, record in {**self._persistent_records, **self._session_records}.items():
+        for topic, record in {
+            **self._persistent_records,
+            **self._session_records,
+        }.items():
             if record.is_valid() and not record.granted:
                 denied.append(topic)
         return denied
@@ -596,7 +610,10 @@ class ConsentManager:
         if not self._storage_path:
             return
 
-        data = {topic: record.to_dict() for topic, record in self._persistent_records.items()}
+        data = {
+            topic: record.to_dict()
+            for topic, record in self._persistent_records.items()
+        }
 
         self._storage_path.parent.mkdir(parents=True, exist_ok=True)
         self._storage_path.write_text(json.dumps(data, indent=2))
@@ -609,7 +626,8 @@ class ConsentManager:
         try:
             data = json.loads(self._storage_path.read_text())
             self._persistent_records = {
-                topic: ConsentRecord.from_dict(record_data) for topic, record_data in data.items()
+                topic: ConsentRecord.from_dict(record_data)
+                for topic, record_data in data.items()
             }
         except Exception:
             self._persistent_records = {}

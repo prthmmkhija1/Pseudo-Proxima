@@ -45,7 +45,11 @@ def slugify(value: str, allow_unicode: bool = False) -> str:
     if allow_unicode:
         value = unicodedata.normalize("NFKC", value)
     else:
-        value = unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode("ascii")
+        value = (
+            unicodedata.normalize("NFKD", value)
+            .encode("ascii", "ignore")
+            .decode("ascii")
+        )
     value = re.sub(r"[^\w\s-]", "", value.lower())
     return re.sub(r"[-\s]+", "-", value).strip("-_")
 
@@ -282,7 +286,9 @@ def format_bytes(num_bytes: int | float) -> str:
     """
     for unit in ("B", "KB", "MB", "GB", "TB", "PB"):
         if abs(num_bytes) < 1024.0:
-            return f"{num_bytes:.2f} {unit}" if unit != "B" else f"{int(num_bytes)} {unit}"
+            return (
+                f"{num_bytes:.2f} {unit}" if unit != "B" else f"{int(num_bytes)} {unit}"
+            )
         num_bytes /= 1024.0
     return f"{num_bytes:.2f} EB"
 
@@ -553,7 +559,9 @@ def deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]
     return result
 
 
-def flatten_dict(d: dict[str, Any], parent_key: str = "", sep: str = ".") -> dict[str, Any]:
+def flatten_dict(
+    d: dict[str, Any], parent_key: str = "", sep: str = "."
+) -> dict[str, Any]:
     """Flatten a nested dictionary.
 
     Args:
@@ -578,7 +586,9 @@ def flatten_dict(d: dict[str, Any], parent_key: str = "", sep: str = ".") -> dic
     return dict(items)
 
 
-def get_nested(d: dict[str, Any], path: str, default: Any = None, sep: str = ".") -> Any:
+def get_nested(
+    d: dict[str, Any], path: str, default: Any = None, sep: str = "."
+) -> Any:
     """Get a value from a nested dictionary using dot notation.
 
     Args:

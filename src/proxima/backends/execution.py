@@ -38,7 +38,9 @@ class TimeoutConfig:
 
 
 @contextmanager
-def execution_timeout(seconds: float, operation: str = "execution") -> Generator[None, None, None]:
+def execution_timeout(
+    seconds: float, operation: str = "execution"
+) -> Generator[None, None, None]:
     """Context manager for synchronous timeout (thread-based).
 
     Note: This uses a signal-based approach on Unix, falls back to
@@ -357,7 +359,9 @@ def execute_batch(
     start_time = time.perf_counter()
 
     if config.parallel and config.max_workers > 1:
-        batch_result = _execute_batch_parallel(execute_fn, circuits, options, config, backend_name)
+        batch_result = _execute_batch_parallel(
+            execute_fn, circuits, options, config, backend_name
+        )
     else:
         batch_result = _execute_batch_sequential(
             execute_fn, circuits, options, config, backend_name
@@ -405,7 +409,9 @@ def _execute_batch_parallel(
     result = BatchResult(total=len(circuits))
 
     with ThreadPoolExecutor(max_workers=config.max_workers) as executor:
-        futures = [executor.submit(execute_fn, circuit, options) for circuit in circuits]
+        futures = [
+            executor.submit(execute_fn, circuit, options) for circuit in circuits
+        ]
 
         for future in futures:
             try:
@@ -484,7 +490,9 @@ async def execute_batch_async(
 
     semaphore = asyncio.Semaphore(max_concurrent)
 
-    async def execute_one(circuit: Any) -> tuple[ExecutionResult | None, Exception | None]:
+    async def execute_one(
+        circuit: Any,
+    ) -> tuple[ExecutionResult | None, Exception | None]:
         async with semaphore:
             try:
                 exec_result = await execute_async(

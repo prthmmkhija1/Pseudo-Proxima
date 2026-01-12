@@ -201,7 +201,11 @@ class QuantumIntegration(ExternalIntegration):
             status=IntegrationStatus.AVAILABLE,
             message=f"{len(available)} libraries available",
             capabilities=available,
-            metadata={"libraries": {k: v.__dict__ for k, v in self._available_libraries.items()}},
+            metadata={
+                "libraries": {
+                    k: v.__dict__ for k, v in self._available_libraries.items()
+                }
+            },
         )
 
     async def _discover_libraries(self) -> dict[str, QuantumLibraryInfo]:
@@ -383,7 +387,9 @@ class LLMIntegration(ExternalIntegration):
         )
 
         # Check LM Studio (local)
-        lmstudio_available = await self._check_local_llm(self.DEFAULT_ENDPOINTS["lmstudio"])
+        lmstudio_available = await self._check_local_llm(
+            self.DEFAULT_ENDPOINTS["lmstudio"]
+        )
         providers["lmstudio"] = LLMProviderInfo(
             name="lmstudio",
             provider_type="local",
@@ -424,7 +430,9 @@ class LLMIntegration(ExternalIntegration):
     def local_providers(self) -> list[str]:
         """Get list of available local providers."""
         return [
-            k for k, v in self._providers.items() if v.is_available and v.provider_type == "local"
+            k
+            for k, v in self._providers.items()
+            if v.is_available and v.provider_type == "local"
         ]
 
 
@@ -704,7 +712,9 @@ class StorageIntegration(ExternalIntegration):
                 )
                 logger.debug("gcs_storage_detected", bucket=gcs_bucket)
             except ImportError:
-                logger.debug("gcs_not_available", reason="google-cloud-storage not installed")
+                logger.debug(
+                    "gcs_not_available", reason="google-cloud-storage not installed"
+                )
 
         # Check for Azure Blob configuration
         azure_container = os.environ.get("PROXIMA_AZURE_CONTAINER")
@@ -722,7 +732,9 @@ class StorageIntegration(ExternalIntegration):
                 )
                 logger.debug("azure_storage_detected", container=azure_container)
             except ImportError:
-                logger.debug("azure_not_available", reason="azure-storage-blob not installed")
+                logger.debug(
+                    "azure_not_available", reason="azure-storage-blob not installed"
+                )
 
         return backends
 
@@ -999,13 +1011,17 @@ class NotificationIntegration(ExternalIntegration):
 
                 elif channel.channel_type == "email":
                     # Email notification
-                    results[channel_name] = await self._send_email(title, message, level, metadata)
+                    results[channel_name] = await self._send_email(
+                        title, message, level, metadata
+                    )
 
                 else:
                     results[channel_name] = False
 
             except Exception as e:
-                logger.error("notification_send_failed", channel=channel_name, error=str(e))
+                logger.error(
+                    "notification_send_failed", channel=channel_name, error=str(e)
+                )
                 results[channel_name] = False
 
         return results
@@ -1161,7 +1177,11 @@ class NotificationIntegration(ExternalIntegration):
         Returns:
             Dict mapping channel names to success status.
         """
-        level = "success" if status == "success" else "error" if status == "failed" else "warning"
+        level = (
+            "success"
+            if status == "success"
+            else "error" if status == "failed" else "warning"
+        )
 
         return await self.send(
             message=f"Execution '{execution_id}' completed with status: {status}",

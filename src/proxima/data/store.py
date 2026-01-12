@@ -190,7 +190,9 @@ class MemoryStore(ResultStore):
         if session_id in self._sessions:
             del self._sessions[session_id]
             # Delete associated results
-            to_delete = [rid for rid, r in self._results.items() if r.session_id == session_id]
+            to_delete = [
+                rid for rid, r in self._results.items() if r.session_id == session_id
+            ]
             for rid in to_delete:
                 del self._results[rid]
             return True
@@ -538,7 +540,9 @@ class SQLiteStore(ResultStore):
         return session.id
 
     def get_session(self, session_id: str) -> StoredSession | None:
-        cursor = self._conn.execute("SELECT * FROM sessions WHERE id = ?", (session_id,))
+        cursor = self._conn.execute(
+            "SELECT * FROM sessions WHERE id = ?", (session_id,)
+        )
         row = cursor.fetchone()
         if row:
             return StoredSession(

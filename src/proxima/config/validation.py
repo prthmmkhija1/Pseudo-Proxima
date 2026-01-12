@@ -173,7 +173,10 @@ def validate_output_format(value: Any, path: str, result: ValidationResult) -> N
     valid_formats = {"text", "json", "rich"}
     if not isinstance(value, str):
         result.add_error(
-            path, "Output format must be a string", current_value=value, expected_type="str"
+            path,
+            "Output format must be a string",
+            current_value=value,
+            expected_type="str",
         )
     elif value.lower() not in valid_formats:
         result.add_error(
@@ -188,7 +191,9 @@ def validate_backend(value: Any, path: str, result: ValidationResult) -> None:
     """Validate default backend setting."""
     valid_backends = {"auto", "lret", "cirq", "qiskit"}
     if not isinstance(value, str):
-        result.add_error(path, "Backend must be a string", current_value=value, expected_type="str")
+        result.add_error(
+            path, "Backend must be a string", current_value=value, expected_type="str"
+        )
     elif value.lower() not in valid_backends:
         result.add_warning(
             path,
@@ -203,7 +208,10 @@ def validate_timeout(value: Any, path: str, result: ValidationResult) -> None:
     """Validate timeout value."""
     if not isinstance(value, (int, float)):
         result.add_error(
-            path, "Timeout must be a number", current_value=value, expected_type="int or float"
+            path,
+            "Timeout must be a number",
+            current_value=value,
+            expected_type="int or float",
         )
     elif value <= 0:
         result.add_error(
@@ -226,7 +234,10 @@ def validate_llm_provider(value: Any, path: str, result: ValidationResult) -> No
     valid_providers = {"none", "openai", "anthropic", "ollama", "lmstudio", "local"}
     if not isinstance(value, str):
         result.add_error(
-            path, "LLM provider must be a string", current_value=value, expected_type="str"
+            path,
+            "LLM provider must be a string",
+            current_value=value,
+            expected_type="str",
         )
     elif value.lower() not in valid_providers:
         result.add_warning(
@@ -242,7 +253,9 @@ def validate_url(value: Any, path: str, result: ValidationResult) -> None:
     if not value:  # Empty is allowed
         return
     if not isinstance(value, str):
-        result.add_error(path, "URL must be a string", current_value=value, expected_type="str")
+        result.add_error(
+            path, "URL must be a string", current_value=value, expected_type="str"
+        )
         return
 
     try:
@@ -271,7 +284,10 @@ def validate_memory_threshold(value: Any, path: str, result: ValidationResult) -
     """Validate memory threshold in MB."""
     if not isinstance(value, int):
         result.add_error(
-            path, "Memory threshold must be an integer", current_value=value, expected_type="int"
+            path,
+            "Memory threshold must be an integer",
+            current_value=value,
+            expected_type="int",
         )
     elif value < 128:
         result.add_warning(
@@ -294,7 +310,9 @@ def validate_path(value: Any, path: str, result: ValidationResult) -> None:
     if not value:  # Empty is allowed
         return
     if not isinstance(value, str):
-        result.add_error(path, "Path must be a string", current_value=value, expected_type="str")
+        result.add_error(
+            path, "Path must be a string", current_value=value, expected_type="str"
+        )
         return
 
     try:
@@ -316,7 +334,10 @@ def validate_storage_backend(value: Any, path: str, result: ValidationResult) ->
     valid_backends = {"sqlite", "json", "memory"}
     if not isinstance(value, str):
         result.add_error(
-            path, "Storage backend must be a string", current_value=value, expected_type="str"
+            path,
+            "Storage backend must be a string",
+            current_value=value,
+            expected_type="str",
         )
     elif value.lower() not in valid_backends:
         result.add_error(
@@ -333,7 +354,10 @@ def validate_model_name(value: Any, path: str, result: ValidationResult) -> None
         return
     if not isinstance(value, str):
         result.add_error(
-            path, "Model name must be a string", current_value=value, expected_type="str"
+            path,
+            "Model name must be a string",
+            current_value=value,
+            expected_type="str",
         )
         return
 
@@ -395,7 +419,9 @@ def validate_settings(config: dict[str, Any]) -> ValidationResult:
     # General settings
     general = config.get("general", {})
     if isinstance(general, dict):
-        validate_verbosity(general.get("verbosity", "info"), "general.verbosity", result)
+        validate_verbosity(
+            general.get("verbosity", "info"), "general.verbosity", result
+        )
         validate_output_format(
             general.get("output_format", "text"), "general.output_format", result
         )
@@ -420,7 +446,9 @@ def validate_settings(config: dict[str, Any]) -> ValidationResult:
         validate_backend(
             backends.get("default_backend", "auto"), "backends.default_backend", result
         )
-        validate_timeout(backends.get("timeout_seconds", 300), "backends.timeout_seconds", result)
+        validate_timeout(
+            backends.get("timeout_seconds", 300), "backends.timeout_seconds", result
+        )
 
         if not isinstance(backends.get("parallel_execution", False), bool):
             result.add_error(
@@ -438,7 +466,9 @@ def validate_settings(config: dict[str, Any]) -> ValidationResult:
         validate_llm_provider(llm.get("provider", "none"), "llm.provider", result)
         validate_model_name(llm.get("model", ""), "llm.model", result)
         validate_url(llm.get("local_endpoint", ""), "llm.local_endpoint", result)
-        validate_env_var_name(llm.get("api_key_env_var", ""), "llm.api_key_env_var", result)
+        validate_env_var_name(
+            llm.get("api_key_env_var", ""), "llm.api_key_env_var", result
+        )
 
         if not isinstance(llm.get("require_consent", True), bool):
             result.add_error(
@@ -486,7 +516,11 @@ def validate_settings(config: dict[str, Any]) -> ValidationResult:
     # Consent settings
     consent = config.get("consent", {})
     if isinstance(consent, dict):
-        for key in ["auto_approve_local_llm", "auto_approve_remote_llm", "remember_decisions"]:
+        for key in [
+            "auto_approve_local_llm",
+            "auto_approve_remote_llm",
+            "remember_decisions",
+        ]:
             if key in consent and not isinstance(consent[key], bool):
                 result.add_error(
                     f"consent.{key}",
@@ -515,7 +549,9 @@ def validate_config_file(path: Path) -> ValidationResult:
 
     if not path.exists():
         result.add_info(
-            str(path), "Configuration file not found", suggestion="Using default configuration"
+            str(path),
+            "Configuration file not found",
+            suggestion="Using default configuration",
         )
         return result
 

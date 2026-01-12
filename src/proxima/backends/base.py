@@ -81,7 +81,9 @@ class BaseBackendAdapter(ABC):
         """Estimate resources for execution."""
 
     @abstractmethod
-    def execute(self, circuit: Any, options: dict[str, Any] | None = None) -> ExecutionResult:
+    def execute(
+        self, circuit: Any, options: dict[str, Any] | None = None
+    ) -> ExecutionResult:
         """Execute a circuit and return results."""
 
     @abstractmethod

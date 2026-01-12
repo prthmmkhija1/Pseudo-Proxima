@@ -142,7 +142,10 @@ class TestConfigValidation:
 
     def test_validate_memory_threshold_low_warning(self):
         """Test memory threshold warns on very low values."""
-        from proxima.config.validation import ValidationResult, validate_memory_threshold
+        from proxima.config.validation import (
+            ValidationResult,
+            validate_memory_threshold,
+        )
 
         result = ValidationResult()
         validate_memory_threshold(64, "resources.memory_warn_threshold_mb", result)
@@ -253,14 +256,21 @@ class TestConfigExportImport:
 
     def test_export_no_redact(self):
         """Test export without redaction."""
-        from proxima.config.export_import import ExportFormat, ExportOptions, export_config
+        from proxima.config.export_import import (
+            ExportFormat,
+            ExportOptions,
+            export_config,
+        )
 
         with tempfile.TemporaryDirectory() as tmpdir:
             config = {"llm": {"api_key": "sk-secret123"}}
             output_path = Path(tmpdir) / "config.yaml"
 
             export_config(
-                config, output_path, ExportFormat.YAML, options=ExportOptions(redact_secrets=False)
+                config,
+                output_path,
+                ExportFormat.YAML,
+                options=ExportOptions(redact_secrets=False),
             )
 
             content = yaml.safe_load(output_path.read_text())
@@ -693,7 +703,12 @@ class TestConfigSchema:
 
     def test_generate_json_schema(self):
         """Test JSON schema generation."""
-        from proxima.config.schema import FieldInfo, FieldType, SectionInfo, generate_json_schema
+        from proxima.config.schema import (
+            FieldInfo,
+            FieldType,
+            SectionInfo,
+            generate_json_schema,
+        )
 
         section = SectionInfo(
             name="test",
@@ -880,7 +895,11 @@ class TestConfigIntegration:
 
     def test_full_workflow_export_import_validate(self):
         """Test full workflow: export, import, validate."""
-        from proxima.config.export_import import ExportFormat, export_config, import_config
+        from proxima.config.export_import import (
+            ExportFormat,
+            export_config,
+            import_config,
+        )
         from proxima.config.validation import validate_settings
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -983,11 +1002,17 @@ class TestConfigEdgeCases:
         result = validate_settings(config)
         # Extra keys should be allowed (for forward compatibility)
         # Only validate known fields
-        assert result.is_valid or all("unknown_key" not in str(e) for e in result.errors())
+        assert result.is_valid or all(
+            "unknown_key" not in str(e) for e in result.errors()
+        )
 
     def test_unicode_values(self):
         """Test handling of unicode values."""
-        from proxima.config.export_import import ExportFormat, export_config, import_config
+        from proxima.config.export_import import (
+            ExportFormat,
+            export_config,
+            import_config,
+        )
 
         with tempfile.TemporaryDirectory() as tmpdir:
             config = {"general": {"description": "测试 🚀 тест"}}

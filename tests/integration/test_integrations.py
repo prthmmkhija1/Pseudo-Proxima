@@ -122,11 +122,17 @@ class TestLLMProviderIntegration:
         """Test LLM returns appropriate canned responses."""
         # Test "explain" keyword
         response = await mock_llm_provider.generate("Please explain this")
-        assert "entanglement" in response.content.lower() or "circuit" in response.content.lower()
+        assert (
+            "entanglement" in response.content.lower()
+            or "circuit" in response.content.lower()
+        )
 
         # Test "analyze" keyword
         response = await mock_llm_provider.generate("Analyze the results")
-        assert "bell" in response.content.lower() or "superposition" in response.content.lower()
+        assert (
+            "bell" in response.content.lower()
+            or "superposition" in response.content.lower()
+        )
 
     async def test_llm_failure_simulation(self):
         """Test LLM failure scenarios."""

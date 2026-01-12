@@ -38,10 +38,18 @@ def main(
     objective: str = typer.Argument("demo", help="Objective or plan target"),
     backend: str = typer.Option(None, "--backend", "-b", help="Backend override"),
     shots: int = typer.Option(None, "--shots", "-s", help="Number of shots"),
-    timeout: float = typer.Option(None, "--timeout", "-t", help="Execution timeout in seconds"),
-    validate: bool = typer.Option(False, "--validate", "-v", help="Validate config before run"),
-    no_progress: bool = typer.Option(False, "--no-progress", help="Disable progress display"),
-    save_results: bool = typer.Option(True, "--save/--no-save", help="Save results to history"),
+    timeout: float = typer.Option(
+        None, "--timeout", "-t", help="Execution timeout in seconds"
+    ),
+    validate: bool = typer.Option(
+        False, "--validate", "-v", help="Validate config before run"
+    ),
+    no_progress: bool = typer.Option(
+        False, "--no-progress", help="Disable progress display"
+    ),
+    save_results: bool = typer.Option(
+        True, "--save/--no-save", help="Save results to history"
+    ),
 ):
     """Plan (via model) and execute a run.
 
@@ -102,7 +110,11 @@ def main(
                 for issue in issues:
                     severity = issue.get("severity", "info")
                     msg = issue.get("message", "")
-                    icon = "X" if severity == "error" else "!" if severity == "warning" else "i"
+                    icon = (
+                        "X"
+                        if severity == "error"
+                        else "!" if severity == "warning" else "i"
+                    )
                     typer.echo(f"  [{icon}] {msg}")
 
                 if not force and any(i.get("severity") == "error" for i in issues):
@@ -242,7 +254,9 @@ def main(
                     typer.echo(
                         f"🎯 Circuit: {result.get('circuit_type', 'unknown')} ({result.get('qubits', 0)} qubits)"
                     )
-                    typer.echo(f"⏱️  Execution time: {result.get('execution_time_ms', 0):.2f} ms")
+                    typer.echo(
+                        f"⏱️  Execution time: {result.get('execution_time_ms', 0):.2f} ms"
+                    )
                     typer.echo(f"🔢 Shots: {result.get('shots', 0)}")
                     typer.echo("\n📊 Measurement Results:")
 
@@ -274,7 +288,9 @@ def main(
 def validate_cmd(
     ctx: typer.Context,
     backend: str = typer.Option(None, "--backend", "-b", help="Backend to validate"),
-    config_path: Path = typer.Option(None, "--config", "-c", help="Config file to validate"),
+    config_path: Path = typer.Option(
+        None, "--config", "-c", help="Config file to validate"
+    ),
     strict: bool = typer.Option(False, "--strict", help="Enable strict validation"),
 ):
     """Validate configuration before execution."""
@@ -314,7 +330,11 @@ def validate_cmd(
                 msg = issue.get("message", "")
                 suggestion = issue.get("suggestion", "")
 
-                icon = "X" if severity == "error" else "!" if severity == "warning" else "i"
+                icon = (
+                    "X"
+                    if severity == "error"
+                    else "!" if severity == "warning" else "i"
+                )
                 typer.echo(f"  [{icon}] [{path}] {msg}")
                 if suggestion:
                     typer.echo(f"      Hint: {suggestion}")

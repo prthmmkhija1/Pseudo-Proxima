@@ -121,14 +121,20 @@ class LRETBackendAdapter(BaseBackendAdapter):
                 # Check for native LRET circuit type
                 if hasattr(lret, "Circuit"):
                     if isinstance(circuit, lret.Circuit):
-                        return ValidationResult(valid=True, message="LRET native circuit")
+                        return ValidationResult(
+                            valid=True, message="LRET native circuit"
+                        )
 
                 # Check for LRET-compatible dict format
                 if hasattr(lret, "validate_circuit"):
                     is_valid = lret.validate_circuit(circuit)
                     return ValidationResult(
                         valid=is_valid,
-                        message="Validated via LRET" if is_valid else "LRET validation failed",
+                        message=(
+                            "Validated via LRET"
+                            if is_valid
+                            else "LRET validation failed"
+                        ),
                     )
             except Exception as exc:
                 logging.debug("LRET validation check failed: %s", exc)
@@ -234,7 +240,9 @@ class LRETBackendAdapter(BaseBackendAdapter):
 
         return None
 
-    def execute(self, circuit: Any, options: dict[str, Any] | None = None) -> ExecutionResult:
+    def execute(
+        self, circuit: Any, options: dict[str, Any] | None = None
+    ) -> ExecutionResult:
         """Execute a circuit using LRET.
 
         Args:
@@ -286,7 +294,9 @@ class LRETBackendAdapter(BaseBackendAdapter):
                     result_type = ResultType.STATEVECTOR
 
             elif hasattr(lret, "execute"):
-                raw_result = lret.execute(lret_circuit, shots=shots if shots > 0 else None)
+                raw_result = lret.execute(
+                    lret_circuit, shots=shots if shots > 0 else None
+                )
                 if shots > 0:
                     counts = self._extract_counts(raw_result)
                     result_data = {"counts": counts, "shots": shots}
@@ -317,7 +327,11 @@ class LRETBackendAdapter(BaseBackendAdapter):
                 raw_result=raw_result,
             )
 
-        except (BackendNotInstalledError, CircuitValidationError, UnsupportedOperationError):
+        except (
+            BackendNotInstalledError,
+            CircuitValidationError,
+            UnsupportedOperationError,
+        ):
             raise
         except Exception as exc:
             raise wrap_backend_exception(exc, "lret", "execution")

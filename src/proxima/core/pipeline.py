@@ -182,7 +182,9 @@ class PipelineContext:
         """Get the most recent checkpoint ID."""
         if not self.checkpoints:
             return None
-        return max(self.checkpoints.keys(), key=lambda k: self.checkpoints[k]["timestamp"])
+        return max(
+            self.checkpoints.keys(), key=lambda k: self.checkpoints[k]["timestamp"]
+        )
 
     def clear_checkpoints(self) -> None:
         """Clear all checkpoints (call on successful completion)."""
@@ -290,7 +292,9 @@ class PlanHandler(PipelineHandler):
             ctx.selected_backends = backends
 
             plan = {
-                "execution_type": ctx.plan.get("type", "simulation") if ctx.plan else "simulation",
+                "execution_type": (
+                    ctx.plan.get("type", "simulation") if ctx.plan else "simulation"
+                ),
                 "backends": backends,
                 "parallel": len(backends) > 1,
                 "estimated_time_s": len(backends) * 5,  # Rough estimate
@@ -349,13 +353,19 @@ class ResourceCheckHandler(PipelineHandler):
                     "memory_percent": memory.percent,
                     "warnings": warnings,
                 },
-                error="; ".join(warnings) if warnings and not ctx.resource_check_passed else None,
+                error=(
+                    "; ".join(warnings)
+                    if warnings and not ctx.resource_check_passed
+                    else None
+                ),
                 duration_ms=(time.time() - start) * 1000,
             )
         except ImportError:
             # psutil not available - pass with warning
             ctx.resource_check_passed = True
-            ctx.resource_warnings = ["Resource monitoring unavailable (psutil not installed)"]
+            ctx.resource_warnings = [
+                "Resource monitoring unavailable (psutil not installed)"
+            ]
             return StageResult(
                 stage=self.stage,
                 success=True,
@@ -553,12 +563,16 @@ class AnalysisHandler(PipelineHandler):
 
             # Generate comparison if multiple backends
             if len(ctx.backend_results) > 1:
-                times = {k: v.get("duration_ms", 0) for k, v in ctx.backend_results.items()}
+                times = {
+                    k: v.get("duration_ms", 0) for k, v in ctx.backend_results.items()
+                }
                 fastest = min(times.items(), key=lambda x: x[1])
                 comparison = {
                     "fastest_backend": fastest[0],
                     "execution_times": times,
-                    "speedup": max(times.values()) / fastest[1] if fastest[1] > 0 else 1.0,
+                    "speedup": (
+                        max(times.values()) / fastest[1] if fastest[1] > 0 else 1.0
+                    ),
                 }
                 insights.append(f"Fastest backend: {fastest[0]} ({fastest[1]:.1f}ms)")
 
@@ -726,7 +740,9 @@ class ExportHandler(PipelineHandler):
 
         # Header style
         header_font = Font(bold=True)
-        header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
+        header_fill = PatternFill(
+            start_color="4472C4", end_color="4472C4", fill_type="solid"
+        )
 
         # Summary data
         summary_data = [
@@ -762,8 +778,12 @@ class ExportHandler(PipelineHandler):
             # Data rows
             for row_num, (backend, result) in enumerate(results.items(), 2):
                 ws_results.cell(row=row_num, column=1, value=backend)
-                ws_results.cell(row=row_num, column=2, value=result.get("status", "unknown"))
-                ws_results.cell(row=row_num, column=3, value=result.get("duration_ms", 0))
+                ws_results.cell(
+                    row=row_num, column=2, value=result.get("status", "unknown")
+                )
+                ws_results.cell(
+                    row=row_num, column=3, value=result.get("duration_ms", 0)
+                )
 
                 counts = result.get("counts", {})
                 for col, key in enumerate(sorted(count_keys), 4):
@@ -824,7 +844,9 @@ class DataFlowPipeline:
             PipelineStage.PARSING: ParseHandler(),
             PipelineStage.PLANNING: PlanHandler(),
             PipelineStage.RESOURCE_CHECK: ResourceCheckHandler(memory_threshold_mb),
-            PipelineStage.CONSENT: ConsentHandler(require_consent, auto_approve_consent),
+            PipelineStage.CONSENT: ConsentHandler(
+                require_consent, auto_approve_consent
+            ),
             PipelineStage.EXECUTING: ExecutionHandler(),
             PipelineStage.COLLECTING: CollectionHandler(),
             PipelineStage.ANALYZING: AnalysisHandler(),
@@ -844,10 +866,16 @@ class DataFlowPipeline:
         ]
 
         # Callbacks
-        self._on_stage_start: Callable[[PipelineStage, PipelineContext], None] | None = None
-        self._on_stage_complete: Callable[[StageResult, PipelineContext], None] | None = None
+        self._on_stage_start: (
+            Callable[[PipelineStage, PipelineContext], None] | None
+        ) = None
+        self._on_stage_complete: (
+            Callable[[StageResult, PipelineContext], None] | None
+        ) = None
         self._on_pipeline_complete: Callable[[PipelineContext], None] | None = None
-        self._on_rollback: Callable[[PipelineStage, str, PipelineContext], None] | None = None
+        self._on_rollback: (
+            Callable[[PipelineStage, str, PipelineContext], None] | None
+        ) = None
 
         # Rollback configuration
         self._enable_rollback = True
@@ -856,11 +884,15 @@ class DataFlowPipeline:
             False  # If True, automatically rollback to last checkpoint on failure
         )
 
-    def on_stage_start(self, callback: Callable[[PipelineStage, PipelineContext], None]) -> None:
+    def on_stage_start(
+        self, callback: Callable[[PipelineStage, PipelineContext], None]
+    ) -> None:
         """Register callback for stage start events."""
         self._on_stage_start = callback
 
-    def on_stage_complete(self, callback: Callable[[StageResult, PipelineContext], None]) -> None:
+    def on_stage_complete(
+        self, callback: Callable[[StageResult, PipelineContext], None]
+    ) -> None:
         """Register callback for stage completion events."""
         self._on_stage_complete = callback
 
@@ -872,7 +904,9 @@ class DataFlowPipeline:
         """Replace a stage handler."""
         self.handlers[stage] = handler
 
-    def on_rollback(self, callback: Callable[[PipelineStage, str, PipelineContext], None]) -> None:
+    def on_rollback(
+        self, callback: Callable[[PipelineStage, str, PipelineContext], None]
+    ) -> None:
         """Register callback for rollback events.
 
         Args:
@@ -897,7 +931,9 @@ class DataFlowPipeline:
         self._auto_checkpoint = auto_checkpoint
         self._rollback_on_failure = rollback_on_failure
 
-    async def rollback_to_stage(self, ctx: PipelineContext, target_stage: PipelineStage) -> bool:
+    async def rollback_to_stage(
+        self, ctx: PipelineContext, target_stage: PipelineStage
+    ) -> bool:
         """Rollback to a specific stage checkpoint.
 
         Args:
@@ -917,7 +953,8 @@ class DataFlowPipeline:
             if cp_data["stage"] == target_stage.name:
                 if (
                     target_checkpoint is None
-                    or cp_data["timestamp"] > ctx.checkpoints[target_checkpoint]["timestamp"]
+                    or cp_data["timestamp"]
+                    > ctx.checkpoints[target_checkpoint]["timestamp"]
                 ):
                     target_checkpoint = cp_id
 
@@ -1037,7 +1074,9 @@ class DataFlowPipeline:
 
                     # Attempt automatic rollback if configured
                     if self._rollback_on_failure:
-                        rollback_success = await self._perform_rollback_on_failure(ctx, stage)
+                        rollback_success = await self._perform_rollback_on_failure(
+                            ctx, stage
+                        )
                         if rollback_success:
                             logger.info(
                                 "rollback_completed",

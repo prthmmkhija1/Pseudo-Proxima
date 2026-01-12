@@ -171,7 +171,9 @@ class TestExecutionUtilities:
             time.sleep(2)
 
         with pytest.raises(BackendTimeoutError):
-            execute_with_timeout(slow_function, timeout_seconds=0.1, backend_name="test")
+            execute_with_timeout(
+                slow_function, timeout_seconds=0.1, backend_name="test"
+            )
 
     def test_retry_config_defaults(self) -> None:
         """Test RetryConfig default values."""

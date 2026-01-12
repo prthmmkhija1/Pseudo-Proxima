@@ -203,7 +203,8 @@ class AgentFile:
     @property
     def is_valid(self) -> bool:
         return not any(
-            issue.severity == ValidationSeverity.ERROR for issue in self.validation_issues
+            issue.severity == ValidationSeverity.ERROR
+            for issue in self.validation_issues
         )
 
     @property
@@ -400,7 +401,9 @@ class AgentFileParser:
         """Extract configuration section."""
         # Look for ## Configuration section
         config_match = re.search(
-            r"##\s+Configuration\s*\n(.*?)(?=\n##\s|\Z)", content, re.DOTALL | re.IGNORECASE
+            r"##\s+Configuration\s*\n(.*?)(?=\n##\s|\Z)",
+            content,
+            re.DOTALL | re.IGNORECASE,
         )
 
         if not config_match:
@@ -475,7 +478,9 @@ class AgentFileParser:
             # Get content until next task or end
             start_pos = match.end()
             end_pos = (
-                task_matches[i + 1].start() if i + 1 < len(task_matches) else len(tasks_content)
+                task_matches[i + 1].start()
+                if i + 1 < len(task_matches)
+                else len(tasks_content)
             )
             task_content = tasks_content[start_pos:end_pos]
 
@@ -589,7 +594,10 @@ class AgentFileParser:
 
             # Validate based on task type
             if task.type == TaskType.CIRCUIT_EXECUTION:
-                if "circuit" not in task.parameters and "circuit_file" not in task.parameters:
+                if (
+                    "circuit" not in task.parameters
+                    and "circuit_file" not in task.parameters
+                ):
                     self.validation_issues.append(
                         ValidationIssue(
                             severity=ValidationSeverity.WARNING,
@@ -659,7 +667,9 @@ class DefaultTaskExecutor:
         self._default_shots = default_shots or self.DEFAULT_SHOTS
         self._default_backend = default_backend or self.DEFAULT_BACKEND
         self._default_timeout = default_timeout or self.DEFAULT_TIMEOUT_SECONDS
-        self._retry_count = retry_count if retry_count is not None else self.DEFAULT_RETRY_COUNT
+        self._retry_count = (
+            retry_count if retry_count is not None else self.DEFAULT_RETRY_COUNT
+        )
         self._retry_delay = (
             retry_delay if retry_delay is not None else self.DEFAULT_RETRY_DELAY_SECONDS
         )
@@ -748,7 +758,10 @@ class DefaultTaskExecutor:
     def _execute_circuit(self, task: TaskDefinition, context: dict[str, Any]) -> Any:
         """Execute a circuit execution task using the backend system."""
         from proxima.backends.registry import backend_registry
-        from proxima.intelligence.selector import BackendSelector, CircuitCharacteristics
+        from proxima.intelligence.selector import (
+            BackendSelector,
+            CircuitCharacteristics,
+        )
 
         params = task.parameters
         circuit = params.get("circuit")
@@ -842,7 +855,9 @@ class DefaultTaskExecutor:
             asyncio.set_event_loop(loop)
 
         try:
-            report = loop.run_until_complete(comparator.compare(adapters, circuit, options))
+            report = loop.run_until_complete(
+                comparator.compare(adapters, circuit, options)
+            )
             return {
                 "task_type": "backend_comparison",
                 "success": True,
@@ -998,7 +1013,9 @@ class DefaultTaskExecutor:
                 from proxima.plugins.manager import get_plugin_manager
 
                 plugin_mgr = get_plugin_manager()
-                plugin_result = plugin_mgr.invoke(plugin_name, plugin_action, **plugin_args)
+                plugin_result = plugin_mgr.invoke(
+                    plugin_name, plugin_action, **plugin_args
+                )
                 result["success"] = True
                 result["result"] = plugin_result
             except ImportError:
@@ -1428,10 +1445,14 @@ class AgentInterpreter:
                 }
 
                 # Get timeout for this task
-                task_timeout = task.timeout_seconds or agent_file.configuration.timeout_seconds
+                task_timeout = (
+                    task.timeout_seconds or agent_file.configuration.timeout_seconds
+                )
 
                 # Execute with timeout enforcement
-                task_result_data = self._execute_with_timeout(task, task_context, task_timeout)
+                task_result_data = self._execute_with_timeout(
+                    task, task_context, task_timeout
+                )
 
                 result = TaskResult(
                     task_id=task.id,

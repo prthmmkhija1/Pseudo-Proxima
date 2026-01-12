@@ -215,9 +215,7 @@ class DashboardScreen(BaseScreen):
         items.append(StatusItem("Version", version, StatusLevel.INFO))
 
         # Python version
-        python_version = (
-            f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
-        )
+        python_version = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
         items.append(StatusItem("Python", python_version, StatusLevel.INFO))
 
         # Backend count from registry
@@ -235,7 +233,9 @@ class DashboardScreen(BaseScreen):
         if store:
             try:
                 results = store.list_results(limit=1000)
-                items.append(StatusItem("Total Executions", str(len(results)), StatusLevel.INFO))
+                items.append(
+                    StatusItem("Total Executions", str(len(results)), StatusLevel.INFO)
+                )
 
                 # Last run
                 if results:
@@ -251,7 +251,9 @@ class DashboardScreen(BaseScreen):
                         last_run = f"{int(age_seconds // 3600)} hours ago"
                     else:
                         last_run = f"{int(age_seconds // 86400)} days ago"
-                    items.append(StatusItem("Last Run", last_run, StatusLevel.OK, last_ts))
+                    items.append(
+                        StatusItem("Last Run", last_run, StatusLevel.OK, last_ts)
+                    )
                 else:
                     items.append(StatusItem("Last Run", "Never", StatusLevel.INFO))
             except Exception:
@@ -585,7 +587,9 @@ class ExecutionScreen(BaseScreen):
             if result.success:
                 log_viewer.log_success("Execution completed successfully")
                 if result.data:
-                    log_viewer.log_info(f"Results: {len(result.data.get('counts', {}))} outcomes")
+                    log_viewer.log_info(
+                        f"Results: {len(result.data.get('counts', {}))} outcomes"
+                    )
             else:
                 log_viewer.log_error(f"Execution failed: {result.error}")
 
@@ -659,7 +663,9 @@ class ConfigurationScreen(BaseScreen):
         with ScrollableContainer():
             with Container(classes="config-section"):
                 yield Label("⚙️ General Settings", classes="config-title")
-                yield ConfigInput("log_level", "Log Level", "INFO", "DEBUG, INFO, WARNING, ERROR")
+                yield ConfigInput(
+                    "log_level", "Log Level", "INFO", "DEBUG, INFO, WARNING, ERROR"
+                )
                 yield ConfigInput("output_dir", "Output Directory", "./results")
                 yield ConfigToggle("auto_export", "Auto Export Results", True)
                 yield ConfigToggle("show_progress", "Show Progress", True)
@@ -682,7 +688,9 @@ class ConfigurationScreen(BaseScreen):
                 yield Label("🔒 Security Settings", classes="config-title")
                 yield ConfigToggle("require_consent", "Require Consent", True)
                 yield ConfigToggle("dry_run_default", "Dry Run by Default", False)
-                yield ConfigInput("sensitive_ops", "Sensitive Operations", "file_write,network")
+                yield ConfigInput(
+                    "sensitive_ops", "Sensitive Operations", "file_write,network"
+                )
 
         with Horizontal(id="config-actions"):
             yield Button("Save", id="btn-save", variant="primary")
@@ -762,7 +770,9 @@ class ConfigurationScreen(BaseScreen):
 
                         config = yaml.safe_load(f)
                     except ImportError:
-                        self.notify("YAML support requires pyyaml package", severity="error")
+                        self.notify(
+                            "YAML support requires pyyaml package", severity="error"
+                        )
                         return
                 else:
                     config = json.load(f)
@@ -786,7 +796,9 @@ class ConfigurationScreen(BaseScreen):
                 except Exception:
                     pass
 
-            self.notify(f"Configuration imported from {filepath}", severity="information")
+            self.notify(
+                f"Configuration imported from {filepath}", severity="information"
+            )
         except Exception as e:
             self.notify(f"Failed to import config: {e}", severity="error")
 
@@ -960,7 +972,9 @@ class ResultsScreen(BaseScreen):
             results_table = self.query_one("#results-table", ResultsTable)
             selected = results_table.get_selected_result()
             if selected:
-                self.notify(f"Details for {selected['id']}: {selected}", severity="information")
+                self.notify(
+                    f"Details for {selected['id']}: {selected}", severity="information"
+                )
         elif event.button.id == "btn-export":
             self.notify("Results exported to results.json", severity="information")
         elif event.button.id == "btn-delete":
@@ -1115,7 +1129,9 @@ class BackendsScreen(BaseScreen):
             details.mount(Label(f"Avg Latency: {backend.avg_latency_ms:.1f}ms"))
 
         if backend.last_used:
-            last_used = datetime.fromtimestamp(backend.last_used).strftime("%Y-%m-%d %H:%M:%S")
+            last_used = datetime.fromtimestamp(backend.last_used).strftime(
+                "%Y-%m-%d %H:%M:%S"
+            )
             details.mount(Label(f"Last Used: {last_used}"))
 
         if backend.error_message:
@@ -1137,7 +1153,8 @@ class BackendsScreen(BaseScreen):
             return
 
         self.notify(
-            f"Testing connection to {self._selected_backend.name}...", severity="information"
+            f"Testing connection to {self._selected_backend.name}...",
+            severity="information",
         )
 
         try:
@@ -1156,7 +1173,8 @@ class BackendsScreen(BaseScreen):
                     self._selected_backend.status = BackendStatus.CONNECTED
                 else:
                     self.notify(
-                        f"{self._selected_backend.name}: Connection failed", severity="error"
+                        f"{self._selected_backend.name}: Connection failed",
+                        severity="error",
                     )
                     self._selected_backend.status = BackendStatus.ERROR
                 # Refresh the display
@@ -1169,7 +1187,8 @@ class BackendsScreen(BaseScreen):
         except ImportError:
             # Fallback if registry not available
             self.notify(
-                f"Simulated test for {self._selected_backend.name}: OK", severity="information"
+                f"Simulated test for {self._selected_backend.name}: OK",
+                severity="information",
             )
         except Exception as e:
             self.notify(f"Connection test failed: {e}", severity="error")
@@ -1232,18 +1251,23 @@ class BackendsScreen(BaseScreen):
                 api_key=data.get("api_key"),
             )
 
-            self.notify(f"Backend '{backend_name}' added successfully!", severity="information")
+            self.notify(
+                f"Backend '{backend_name}' added successfully!", severity="information"
+            )
             self._refresh_backends()
 
         except ImportError:
             # Fallback if registry not available - just show success
             self.notify(
-                f"Backend '{backend_name}' registered (simulation mode)", severity="information"
+                f"Backend '{backend_name}' registered (simulation mode)",
+                severity="information",
             )
             self._refresh_backends()
         except AttributeError:
             # register_custom might not exist
-            self.notify("Custom backend registration not supported yet", severity="warning")
+            self.notify(
+                "Custom backend registration not supported yet", severity="warning"
+            )
         except Exception as e:
             self.notify(f"Failed to add backend: {e}", severity="error")
 
@@ -1279,7 +1303,9 @@ class BackendsScreen(BaseScreen):
             ),
         ]
 
-        modal = FormModal(title=f"Configure {self._selected_backend.name}", fields=fields)
+        modal = FormModal(
+            title=f"Configure {self._selected_backend.name}", fields=fields
+        )
         response = await self.app.push_screen_wait(modal)
 
         if not response or not response.confirmed:
@@ -1299,7 +1325,8 @@ class BackendsScreen(BaseScreen):
                     retry_count=int(data.get("retry_count", 3)),
                 )
             self.notify(
-                f"Configuration applied to {self._selected_backend.name}", severity="information"
+                f"Configuration applied to {self._selected_backend.name}",
+                severity="information",
             )
         except Exception as e:
             self.notify(f"Configuration applied (local only): {e}", severity="warning")

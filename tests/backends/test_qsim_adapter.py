@@ -19,8 +19,8 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import Any
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock, patch
+
 import numpy as np
 import pytest
 
@@ -33,9 +33,7 @@ from proxima.backends.base import (
     ResourceEstimate,
     ResultType,
     SimulatorType,
-    ValidationResult,
 )
-
 
 # =============================================================================
 # FIXTURES
@@ -47,7 +45,7 @@ def mock_qsimcirq():
     """Mock qsimcirq module for testing."""
     mock_module = MagicMock()
     mock_module.__version__ = "0.22.0"
-    
+
     # Mock QSimSimulator
     mock_simulator = MagicMock()
     mock_result = MagicMock()
@@ -55,12 +53,12 @@ def mock_qsimcirq():
     mock_result.measurements = {"m": np.array([[0, 0], [1, 1]])}
     mock_simulator.simulate.return_value = mock_result
     mock_simulator.run.return_value = mock_result
-    
+
     mock_module.QSimSimulator.return_value = mock_simulator
-    
+
     # Mock options
     mock_module.QSimOptions = MagicMock()
-    
+
     return mock_module
 
 
@@ -69,7 +67,7 @@ def mock_cirq():
     """Mock Cirq module for testing."""
     mock_module = MagicMock()
     mock_module.__version__ = "1.0.0"
-    
+
     # Mock common gates
     mock_module.H = MagicMock()
     mock_module.CNOT = MagicMock()
@@ -79,26 +77,30 @@ def mock_cirq():
     mock_module.rx = MagicMock()
     mock_module.ry = MagicMock()
     mock_module.rz = MagicMock()
-    
+
     # Mock Circuit
     mock_circuit = MagicMock()
     mock_circuit.all_qubits.return_value = [MagicMock(), MagicMock()]
     mock_module.Circuit.return_value = mock_circuit
-    
+
     # Mock LineQubit
     mock_module.LineQubit.range.return_value = [MagicMock() for _ in range(10)]
-    
+
     return mock_module
 
 
 @pytest.fixture
 def mock_qsim_adapter(mock_qsimcirq, mock_cirq):
     """Create a qsim adapter with mocked dependencies."""
-    with patch.dict("sys.modules", {
-        "qsimcirq": mock_qsimcirq,
-        "cirq": mock_cirq,
-    }):
+    with patch.dict(
+        "sys.modules",
+        {
+            "qsimcirq": mock_qsimcirq,
+            "cirq": mock_cirq,
+        },
+    ):
         from proxima.backends.qsim_adapter import QsimAdapter
+
         adapter = QsimAdapter()
         return adapter
 
@@ -155,12 +157,15 @@ class TestQsimAdapterInitialization:
 
     def test_adapter_instantiation(self, mock_qsimcirq, mock_cirq):
         """Test that adapter instantiates successfully."""
-        with patch.dict("sys.modules", {
-            "qsimcirq": mock_qsimcirq,
-            "cirq": mock_cirq,
-        }):
+        with patch.dict(
+            "sys.modules",
+            {
+                "qsimcirq": mock_qsimcirq,
+                "cirq": mock_cirq,
+            },
+        ):
             from proxima.backends.qsim_adapter import QsimAdapter
-            
+
             adapter = QsimAdapter()
             assert adapter is not None
             assert adapter.get_name() == "qsim"
@@ -174,7 +179,7 @@ class TestQsimAdapterInitialization:
     def test_capabilities_reporting(self, mock_qsim_adapter):
         """Test capability reporting."""
         caps = mock_qsim_adapter.get_capabilities()
-        
+
         assert isinstance(caps, Capabilities)
         assert SimulatorType.STATE_VECTOR in caps.simulator_types
         # qsim is state-vector only
@@ -184,29 +189,35 @@ class TestQsimAdapterInitialization:
     def test_cpu_optimization_detection(self, mock_qsim_adapter):
         """Test CPU optimization detection (AVX2/AVX512)."""
         caps = mock_qsim_adapter.get_capabilities()
-        
+
         # Should indicate CPU optimization
         assert caps.custom_features.get("cpu_optimized", True) is True
 
     def test_unavailable_without_qsimcirq(self, mock_cirq):
         """Test that adapter handles missing qsimcirq gracefully."""
-        with patch.dict("sys.modules", {
-            "qsimcirq": None,
-            "cirq": mock_cirq,
-        }):
+        with patch.dict(
+            "sys.modules",
+            {
+                "qsimcirq": None,
+                "cirq": mock_cirq,
+            },
+        ):
             from proxima.backends.qsim_adapter import QsimAdapter
-            
+
             adapter = QsimAdapter()
             assert adapter.is_available() is False
 
     def test_unavailable_without_cirq(self, mock_qsimcirq):
         """Test that adapter handles missing cirq gracefully."""
-        with patch.dict("sys.modules", {
-            "qsimcirq": mock_qsimcirq,
-            "cirq": None,
-        }):
+        with patch.dict(
+            "sys.modules",
+            {
+                "qsimcirq": mock_qsimcirq,
+                "cirq": None,
+            },
+        ):
             from proxima.backends.qsim_adapter import QsimAdapter
-            
+
             adapter = QsimAdapter()
             assert adapter.is_available() is False
 
@@ -226,7 +237,9 @@ class TestQsimGateSupport:
         validation = mock_qsim_adapter.validate_circuit(simple_circuit)
         assert validation.valid is True
 
-    def test_parameterized_gates_supported(self, mock_qsim_adapter, parameterized_circuit):
+    def test_parameterized_gates_supported(
+        self, mock_qsim_adapter, parameterized_circuit
+    ):
         """Test that parameterized rotation gates are supported."""
         validation = mock_qsim_adapter.validate_circuit(parameterized_circuit)
         assert validation.valid is True
@@ -241,7 +254,7 @@ class TestQsimGateSupport:
             ],
             "measurements": [0, 1, 2],
         }
-        
+
         validation = mock_qsim_adapter.validate_circuit(circuit)
         assert validation.valid is True
 
@@ -256,7 +269,7 @@ class TestQsimGateSupport:
                 {"name": "X", "qubits": [1], "conditional": True},
             ],
         }
-        
+
         validation = mock_qsim_adapter.validate_circuit(circuit)
         # Should warn or reject mid-circuit measurement
         if not validation.valid:
@@ -269,7 +282,7 @@ class TestQsimGateSupport:
             "gates": [],
             "measurements": [],
         }
-        
+
         validation = mock_qsim_adapter.validate_circuit(circuit)
         assert validation.valid is True
 
@@ -281,7 +294,7 @@ class TestQsimGateSupport:
                 {"name": "H", "qubits": [10]},  # Invalid
             ],
         }
-        
+
         validation = mock_qsim_adapter.validate_circuit(circuit)
         assert validation.valid is False
 
@@ -302,7 +315,7 @@ class TestQsimExecution:
             simple_circuit,
             options={"shots": 1024},
         )
-        
+
         assert isinstance(result, ExecutionResult)
         assert result.backend == "qsim"
         assert result.qubit_count == 2
@@ -313,7 +326,7 @@ class TestQsimExecution:
             simple_circuit,
             options={"return_statevector": True},
         )
-        
+
         assert result.simulator_type == SimulatorType.STATE_VECTOR
         assert result.data is not None
 
@@ -323,13 +336,13 @@ class TestQsimExecution:
             simple_circuit,
             options={"shots": 1000},
         )
-        
+
         assert result.result_type == ResultType.COUNTS
 
     def test_execution_timing(self, mock_qsim_adapter, simple_circuit):
         """Test that execution time is measured."""
         result = mock_qsim_adapter.execute(simple_circuit)
-        
+
         assert result.execution_time_ms >= 0
 
     def test_large_circuit_execution(self, mock_qsim_adapter, large_circuit):
@@ -338,14 +351,14 @@ class TestQsimExecution:
             large_circuit,
             options={"shots": 100},
         )
-        
+
         assert isinstance(result, ExecutionResult)
         assert result.qubit_count == 25
 
     def test_metadata_included(self, mock_qsim_adapter, simple_circuit):
         """Test that metadata is included in results."""
         result = mock_qsim_adapter.execute(simple_circuit)
-        
+
         assert result.metadata is not None
         assert isinstance(result.metadata, dict)
 
@@ -366,7 +379,7 @@ class TestQsimPerformanceConfiguration:
             simple_circuit,
             options={"num_threads": 8},
         )
-        
+
         assert isinstance(result, ExecutionResult)
 
     def test_gate_fusion_enabled(self, mock_qsim_adapter, parameterized_circuit):
@@ -375,7 +388,7 @@ class TestQsimPerformanceConfiguration:
             parameterized_circuit,
             options={"gate_fusion": True},
         )
-        
+
         assert isinstance(result, ExecutionResult)
 
     def test_gate_fusion_disabled(self, mock_qsim_adapter, parameterized_circuit):
@@ -384,7 +397,7 @@ class TestQsimPerformanceConfiguration:
             parameterized_circuit,
             options={"gate_fusion": False},
         )
-        
+
         assert isinstance(result, ExecutionResult)
 
     def test_verbosity_configuration(self, mock_qsim_adapter, simple_circuit):
@@ -393,7 +406,7 @@ class TestQsimPerformanceConfiguration:
             simple_circuit,
             options={"verbosity": 0},  # Quiet mode
         )
-        
+
         assert isinstance(result, ExecutionResult)
 
 
@@ -411,14 +424,14 @@ class TestQsimErrorHandling:
         """Test handling of missing dependencies."""
         with patch.dict("sys.modules", {"qsimcirq": None, "cirq": None}):
             from proxima.backends.qsim_adapter import QsimAdapter
-            
+
             adapter = QsimAdapter()
             assert adapter.is_available() is False
 
     def test_invalid_circuit_structure(self, mock_qsim_adapter):
         """Test handling of invalid circuit structure."""
         invalid_circuit = {"invalid": "data"}
-        
+
         validation = mock_qsim_adapter.validate_circuit(invalid_circuit)
         assert validation.valid is False
 
@@ -428,7 +441,7 @@ class TestQsimErrorHandling:
             "num_qubits": 50,  # Very large
             "gates": [],
         }
-        
+
         validation = mock_qsim_adapter.validate_circuit(huge_circuit)
         # May reject or warn about resource limits
         if not validation.valid:
@@ -437,7 +450,7 @@ class TestQsimErrorHandling:
     def test_resource_estimation(self, mock_qsim_adapter, large_circuit):
         """Test resource estimation for large circuits."""
         estimate = mock_qsim_adapter.estimate_resources(large_circuit)
-        
+
         assert isinstance(estimate, ResourceEstimate)
         assert estimate.memory_mb is not None
         assert estimate.memory_mb > 0
@@ -461,14 +474,14 @@ class TestQsimResourceEstimation:
     def test_memory_estimation_small(self, mock_qsim_adapter, simple_circuit):
         """Test memory estimation for small circuits."""
         estimate = mock_qsim_adapter.estimate_resources(simple_circuit)
-        
+
         assert estimate.memory_mb is not None
         assert estimate.memory_mb < 10  # Small circuit
 
     def test_memory_estimation_large(self, mock_qsim_adapter, large_circuit):
         """Test memory estimation for large circuits."""
         estimate = mock_qsim_adapter.estimate_resources(large_circuit)
-        
+
         assert estimate.memory_mb is not None
         # 25 qubits = 2^25 * 16 bytes = 512 MB
         assert estimate.memory_mb > 100
@@ -476,6 +489,6 @@ class TestQsimResourceEstimation:
     def test_time_estimation(self, mock_qsim_adapter, simple_circuit):
         """Test time estimation."""
         estimate = mock_qsim_adapter.estimate_resources(simple_circuit)
-        
+
         # Time estimation may or may not be available
         assert isinstance(estimate, ResourceEstimate)

@@ -14,12 +14,12 @@ Step 4.1: Updated for Phase 4 - Unified Backend Selection Enhancement
 from __future__ import annotations
 
 import logging
-import os
-import psutil
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import TYPE_CHECKING, Any
+
+import psutil
 
 if TYPE_CHECKING:
     from proxima.core.circuit import Circuit
@@ -121,9 +121,31 @@ class CircuitCharacteristics:
 
             # Check for custom gates
             if gate.name.lower() not in (
-                "h", "x", "y", "z", "s", "t", "cx", "cnot", "cz", "swap",
-                "rx", "ry", "rz", "u1", "u2", "u3", "i", "id", "identity",
-                "measure", "m", "barrier", "ccx", "ccz", "toffoli",
+                "h",
+                "x",
+                "y",
+                "z",
+                "s",
+                "t",
+                "cx",
+                "cnot",
+                "cz",
+                "swap",
+                "rx",
+                "ry",
+                "rz",
+                "u1",
+                "u2",
+                "u3",
+                "i",
+                "id",
+                "identity",
+                "measure",
+                "m",
+                "barrier",
+                "ccx",
+                "ccz",
+                "toffoli",
             ):
                 custom = True
 
@@ -235,15 +257,18 @@ class GPUDetector:
                 # Get GPU info
                 device = cupy.cuda.Device(0)
                 self._gpu_memory_mb = device.mem_info[1] / (1024 * 1024)
-                self._gpu_name = cupy.cuda.runtime.getDeviceProperties(0)["name"].decode()
-                logger.info(f"GPU detected: {self._gpu_name} ({self._gpu_memory_mb:.0f} MB)")
+                self._gpu_name = cupy.cuda.runtime.getDeviceProperties(0)[
+                    "name"
+                ].decode()
+                logger.info(
+                    f"GPU detected: {self._gpu_name} ({self._gpu_memory_mb:.0f} MB)"
+                )
         except Exception:
             pass
 
         # Try pycuda as fallback
         if not self._gpu_available:
             try:
-                import pycuda.autoinit
                 import pycuda.driver as cuda
 
                 self._gpu_available = True
@@ -259,7 +284,9 @@ class GPUDetector:
 
                 if torch.cuda.is_available():
                     self._gpu_available = True
-                    self._gpu_memory_mb = torch.cuda.get_device_properties(0).total_memory / (1024 * 1024)
+                    self._gpu_memory_mb = torch.cuda.get_device_properties(
+                        0
+                    ).total_memory / (1024 * 1024)
                     self._gpu_name = torch.cuda.get_device_name(0)
             except Exception:
                 pass
@@ -277,7 +304,9 @@ class GPUDetector:
             return False
 
         bytes_per_amplitude = 16 if precision == "double" else 8
-        required_mb = ((2**qubit_count) * bytes_per_amplitude + 1024 * 1024 * 1024) / (1024 * 1024)
+        required_mb = (
+            (2**qubit_count) * bytes_per_amplitude + 1024 * 1024 * 1024
+        ) / (1024 * 1024)
         return required_mb < self._gpu_memory_mb * 0.8  # 80% threshold
 
 
@@ -505,10 +534,12 @@ class BackendRegistry:
         try:
             if backend_name == "numpy":
                 import numpy  # noqa: F401
+
                 return True
             elif backend_name == "cupy":
                 try:
                     import cupy  # noqa: F401
+
                     cupy.cuda.runtime.getDeviceCount()
                     return True
                 except Exception:
@@ -516,18 +547,21 @@ class BackendRegistry:
             elif backend_name == "qiskit":
                 try:
                     from qiskit import QuantumCircuit  # noqa: F401
+
                     return True
                 except ImportError:
                     return False
             elif backend_name == "cirq":
                 try:
                     import cirq  # noqa: F401
+
                     return True
                 except ImportError:
                     return False
             elif backend_name == "pennylane":
                 try:
                     import pennylane  # noqa: F401
+
                     return True
                 except ImportError:
                     return False
@@ -535,26 +569,30 @@ class BackendRegistry:
             elif backend_name == "quest":
                 try:
                     import pyquest  # noqa: F401
+
                     return True
                 except ImportError:
                     return False
             elif backend_name == "cuquantum":
                 try:
                     from qiskit_aer import AerSimulator  # noqa: F401
+
                     # Check if GPU method is available
-                    sim = AerSimulator(method="statevector", device="GPU")
+                    AerSimulator(method="statevector", device="GPU")
                     return True
                 except Exception:
                     return False
             elif backend_name == "qsim":
                 try:
                     import qsimcirq  # noqa: F401
+
                     return True
                 except ImportError:
                     return False
             elif backend_name == "lret":
                 try:
                     from lret import LRET  # noqa: F401
+
                     return True
                 except ImportError:
                     return False
@@ -566,7 +604,9 @@ class BackendRegistry:
 
     def get_available_backends(self) -> list[BackendCapabilities]:
         """Get list of backends that are actually available at runtime."""
-        return [b for b in self._backends.values() if self._is_backend_available(b.name)]
+        return [
+            b for b in self._backends.values() if self._is_backend_available(b.name)
+        ]
 
     # ==========================================================================
     # Step 4.1: GPU-aware backend selection helpers
@@ -1116,9 +1156,7 @@ class BackendSelector:
             gpu_available=gpu_available,
         )
 
-        result.explanation = self._explainer.generate(
-            result, characteristics, strategy
-        )
+        result.explanation = self._explainer.generate(result, characteristics, strategy)
         result.reasoning_steps = self._explainer.generate_reasoning_steps(
             characteristics, scores, scores[0].backend_name, strategy
         )
@@ -1146,7 +1184,7 @@ class BackendSelector:
             confidence=0.9,
             scores=[],
             explanation=f"Selected '{selected}' based on priority for "
-                       f"{characteristics.simulation_type.value} simulation",
+            f"{characteristics.simulation_type.value} simulation",
             reasoning_steps=[
                 f"Used priority-based selection for {characteristics.qubit_count}-qubit circuit",
                 f"GPU available: {gpu_available}, prefer_gpu: {prefer_gpu}",
@@ -1181,8 +1219,13 @@ class BackendSelector:
             warnings.append("Custom gates may have limited backend support")
 
         # Step 4.1: GPU-specific warnings
-        if characteristics.qubit_count > 25 and not self._gpu_detector.is_gpu_available():
-            warnings.append("Large circuit without GPU - consider using GPU for better performance")
+        if (
+            characteristics.qubit_count > 25
+            and not self._gpu_detector.is_gpu_available()
+        ):
+            warnings.append(
+                "Large circuit without GPU - consider using GPU for better performance"
+            )
 
         return warnings
 
@@ -1264,7 +1307,9 @@ def select_backend(
     if strategy == "priority":
         result = selector.select_by_priority(circuit, prefer_gpu)
     else:
-        result = selector.select(circuit, strategy_map.get(strategy, SelectionStrategy.BALANCED))
+        result = selector.select(
+            circuit, strategy_map.get(strategy, SelectionStrategy.BALANCED)
+        )
 
     return result.selected_backend, result.explanation
 
@@ -1294,7 +1339,11 @@ def get_recommended_backend(
         qubit_count=qubit_count,
         gate_count=qubit_count * 10,  # Estimate
         depth=qubit_count * 2,
-        simulation_type=SimulationType(simulation_type) if isinstance(simulation_type, str) else simulation_type,
+        simulation_type=(
+            SimulationType(simulation_type)
+            if isinstance(simulation_type, str)
+            else simulation_type
+        ),
     )
 
     result = priority_selector.select_best_available(characteristics, prefer_gpu)

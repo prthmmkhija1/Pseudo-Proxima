@@ -112,7 +112,9 @@ class MockDataFactory:
         return {
             "backend": backend,
             "status": "success" if success else "failed",
-            "counts": MockDataFactory.quantum_counts(num_qubits, shots) if success else {},
+            "counts": (
+                MockDataFactory.quantum_counts(num_qubits, shots) if success else {}
+            ),
             "duration_ms": np.random.uniform(10, 100),
             "num_qubits": num_qubits,
             "shots": shots,
@@ -421,7 +423,9 @@ class MockPsutil:
 
 
 @contextmanager
-def mock_psutil(resources: MockSystemResources | None = None) -> Generator[MockPsutil, None, None]:
+def mock_psutil(
+    resources: MockSystemResources | None = None,
+) -> Generator[MockPsutil, None, None]:
     """
     Context manager to mock psutil with specific resource values.
 

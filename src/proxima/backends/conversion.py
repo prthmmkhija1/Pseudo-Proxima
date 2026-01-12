@@ -381,7 +381,11 @@ def _cirq_to_qiskit(circuit: Any, preserve_measurements: bool) -> ConversionResu
     has_measurements = any(
         isinstance(op.gate, cirq.MeasurementGate) for moment in circuit for op in moment
     )
-    cr = ClassicalRegister(n_qubits, "c") if has_measurements and preserve_measurements else None
+    cr = (
+        ClassicalRegister(n_qubits, "c")
+        if has_measurements and preserve_measurements
+        else None
+    )
 
     qc = QuantumCircuit(qr, cr) if cr else QuantumCircuit(qr)
 
@@ -593,7 +597,9 @@ def _qasm3_to_qiskit(qasm_str: str, preserve_measurements: bool) -> ConversionRe
         from qiskit import QuantumCircuit
 
         circuit = QuantumCircuit.from_qasm_str(qasm2_str)
-        warnings.append("Converted via QASM3->QASM2 normalization (some features may be lost)")
+        warnings.append(
+            "Converted via QASM3->QASM2 normalization (some features may be lost)"
+        )
 
         return ConversionResult(
             success=True,

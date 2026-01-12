@@ -182,7 +182,11 @@ class TestConsentManager:
 
     def test_consent_record(self) -> None:
         """Test ConsentRecord dataclass."""
-        from proxima.resources.consent import ConsentCategory, ConsentLevel, ConsentRecord
+        from proxima.resources.consent import (
+            ConsentCategory,
+            ConsentLevel,
+            ConsentRecord,
+        )
 
         record = ConsentRecord(
             topic="llm_usage",

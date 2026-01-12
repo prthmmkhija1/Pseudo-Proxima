@@ -225,7 +225,9 @@ class PollingWatcher(FileWatcher):
                 or old_info.get("size") != new_info.get("size")
                 or old_info.get("hash") != new_info.get("hash")
             ):
-                return FileChange(path, WatchEvent.MODIFIED, file_hash=new_info.get("hash"))
+                return FileChange(
+                    path, WatchEvent.MODIFIED, file_hash=new_info.get("hash")
+                )
 
         return None
 

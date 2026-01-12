@@ -18,7 +18,9 @@ PlanFunction = Callable[[str], dict[str, Any]]
 class Planner:
     """LLM-assisted planner that produces an execution plan from an objective."""
 
-    def __init__(self, state_machine: ExecutionStateMachine, plan_fn: PlanFunction | None = None):
+    def __init__(
+        self, state_machine: ExecutionStateMachine, plan_fn: PlanFunction | None = None
+    ):
         self.state_machine = state_machine
         self.plan_fn = plan_fn
         self.logger = get_logger("planner")

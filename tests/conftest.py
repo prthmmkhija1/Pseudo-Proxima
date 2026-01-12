@@ -58,12 +58,16 @@ from tests.mocks import (
 def pytest_configure(config):
     """Configure pytest with custom markers."""
     config.addinivalue_line("markers", "unit: Unit tests (fast, isolated)")
-    config.addinivalue_line("markers", "integration: Integration tests (component interaction)")
+    config.addinivalue_line(
+        "markers", "integration: Integration tests (component interaction)"
+    )
     config.addinivalue_line("markers", "e2e: End-to-end tests (full workflows)")
     config.addinivalue_line("markers", "backend: Backend adapter tests")
     config.addinivalue_line("markers", "performance: Performance/benchmark tests")
     config.addinivalue_line("markers", "slow: Slow tests (may take > 1s)")
-    config.addinivalue_line("markers", "requires_network: Tests requiring network access")
+    config.addinivalue_line(
+        "markers", "requires_network: Tests requiring network access"
+    )
 
 
 def pytest_collection_modifyitems(config, items):
@@ -75,7 +79,9 @@ def pytest_collection_modifyitems(config, items):
 
     for item in items:
         if not run_all:
-            if "slow" in item.keywords and not config.getoption("--run-slow", default=False):
+            if "slow" in item.keywords and not config.getoption(
+                "--run-slow", default=False
+            ):
                 item.add_marker(skip_slow)
             if "requires_network" in item.keywords and not config.getoption(
                 "--run-network", default=False
@@ -85,10 +91,17 @@ def pytest_collection_modifyitems(config, items):
 
 def pytest_addoption(parser):
     """Add custom command line options."""
-    parser.addoption("--run-slow", action="store_true", default=False, help="Run slow tests")
-    parser.addoption("--run-network", action="store_true", default=False, help="Run network tests")
     parser.addoption(
-        "--run-all", action="store_true", default=False, help="Run all tests including slow/network"
+        "--run-slow", action="store_true", default=False, help="Run slow tests"
+    )
+    parser.addoption(
+        "--run-network", action="store_true", default=False, help="Run network tests"
+    )
+    parser.addoption(
+        "--run-all",
+        action="store_true",
+        default=False,
+        help="Run all tests including slow/network",
     )
 
 
@@ -340,7 +353,9 @@ class TestHelper:
         return agent_path
 
     @staticmethod
-    def wait_for_condition(condition_fn, timeout: float = 5.0, interval: float = 0.1) -> bool:
+    def wait_for_condition(
+        condition_fn, timeout: float = 5.0, interval: float = 0.1
+    ) -> bool:
         """Wait for a condition to become true."""
         start = time.time()
         while time.time() - start < timeout:
@@ -354,7 +369,9 @@ class TestHelper:
         """Assert that subset is contained in full dict."""
         for key, value in subset.items():
             assert key in full, f"Key '{key}' not found in dict"
-            assert full[key] == value, f"Value mismatch for key '{key}': {full[key]} != {value}"
+            assert (
+                full[key] == value
+            ), f"Value mismatch for key '{key}': {full[key]} != {value}"
 
 
 @pytest.fixture

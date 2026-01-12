@@ -117,7 +117,11 @@ def quantum_runner(plan: dict[str, Any]) -> dict[str, Any]:
         available = registry.list_available()
         if available:
             backend_name = available[0]  # Use first available backend
-            logger.info("runner.auto_backend_selected", backend=backend_name, available=available)
+            logger.info(
+                "runner.auto_backend_selected",
+                backend=backend_name,
+                available=available,
+            )
         else:
             return {
                 "status": "error",
@@ -165,7 +169,9 @@ def quantum_runner(plan: dict[str, Any]) -> dict[str, Any]:
 
     try:
         result = adapter.execute(circuit, options)
-        logger.info("runner.executed", backend=backend_name, time_ms=result.execution_time_ms)
+        logger.info(
+            "runner.executed", backend=backend_name, time_ms=result.execution_time_ms
+        )
 
         # Format results
         counts = result.data.get("counts", {})
