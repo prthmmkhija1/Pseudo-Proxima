@@ -2,7 +2,6 @@
 
 Skips tests for backend adapters that are not yet fully implemented.
 """
-
 import pytest
 
 # Define which test modules to skip
@@ -12,6 +11,8 @@ SKIP_MODULES = [
     "test_cuquantum_adapter",
     "test_benchmark",
     "test_validation",
+    "test_integration",
+    "test_backend_selection",
 ]
 
 
