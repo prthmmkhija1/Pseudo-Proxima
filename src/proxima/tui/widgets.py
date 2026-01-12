@@ -273,7 +273,7 @@ class LogViewer(Static):
 
     def scroll_to_end(self) -> None:
         """Scroll the log view to the end (latest entry).
-        
+
         This is a public API for external callers to ensure
         the most recent log entries are visible.
         """

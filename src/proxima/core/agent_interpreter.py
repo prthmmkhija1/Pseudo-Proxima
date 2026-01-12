@@ -1053,7 +1053,6 @@ class DefaultTaskExecutor:
                     return result
 
             try:
-                import signal
                 import threading
 
                 # Create a restricted namespace for execution
