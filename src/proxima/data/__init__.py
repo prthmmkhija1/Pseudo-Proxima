@@ -1,4 +1,4 @@
-"""Data handling module - Step 5.1 & 5.3: Multi-Backend Comparison & Export Engine."""
+"""Data handling module - Step 5.1, 5.3 & 5.6: Multi-Backend Comparison, Export Engine & Data Pipeline."""
 
 from .compare import (
     # Data classes
@@ -41,6 +41,39 @@ from .export import (
     export_to_xlsx,
     export_to_yaml,
 )
+from .pipeline import (
+    # Enums
+    StageStatus,
+    PipelineStatus,
+    RetryStrategy,
+    CancellationReason,
+    # Configuration classes
+    RetryConfig,
+    TimeoutConfig,
+    PipelineConfig,
+    # Result classes
+    StageResult,
+    PipelineResult,
+    # Context
+    PipelineContext,
+    # Exceptions
+    PipelineException,
+    StageTimeoutException,
+    PipelineTimeoutException,
+    PipelineCancelledException,
+    StageExecutionException,
+    DependencyFailedException,
+    # Core classes
+    Stage,
+    Pipeline,
+    PipelineBuilder,
+    # Decorators
+    stage,
+    with_retry,
+    # Convenience functions
+    run_pipeline,
+    create_stage,
+)
 
 __all__ = [
     # ===== Step 5.1: Multi-Backend Comparison =====
@@ -82,4 +115,36 @@ __all__ = [
     "export_to_markdown",
     "export_to_yaml",
     "export_to_string",
+    # ===== Step 5.6: Data Pipeline =====
+    # Enums
+    "StageStatus",
+    "PipelineStatus",
+    "RetryStrategy",
+    "CancellationReason",
+    # Configuration classes
+    "RetryConfig",
+    "TimeoutConfig",
+    "PipelineConfig",
+    # Result classes
+    "StageResult",
+    "PipelineResult",
+    # Context
+    "PipelineContext",
+    # Exceptions
+    "PipelineException",
+    "StageTimeoutException",
+    "PipelineTimeoutException",
+    "PipelineCancelledException",
+    "StageExecutionException",
+    "DependencyFailedException",
+    # Core classes
+    "Stage",
+    "Pipeline",
+    "PipelineBuilder",
+    # Decorators
+    "stage",
+    "with_retry",
+    # Convenience functions
+    "run_pipeline",
+    "create_stage",
 ]

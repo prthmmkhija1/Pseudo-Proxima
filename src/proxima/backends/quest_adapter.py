@@ -1679,3 +1679,128 @@ class QuestBackendAdapter(BaseBackendAdapter):
     def set_config(self, config: QuestConfig) -> None:
         """Update configuration."""
         self._config = config
+
+
+# =============================================================================
+# PYQUEST INSTALLATION ERROR HANDLING AND FALLBACK
+# =============================================================================
+
+
+class QuestNotInstalledError(QuestInstallationError):
+    """Error raised when pyQuEST is not installed with installation instructions.
+    
+    This error provides detailed installation instructions and alternatives
+    when pyQuEST is not available on the system.
+    """
+    
+    def __init__(self) -> None:
+        install_instructions = '''
+pyQuEST is not installed. To use the QuEST backend, install pyQuEST:
+
+Option 1: Install via pip (if available)
+    pip install pyquest
+
+Option 2: Install from source (recommended for latest features)
+    git clone https://github.com/rrmeister/pyQuEST.git
+    cd pyQuEST
+    pip install .
+
+Option 3: Build QuEST with GPU support
+    git clone https://github.com/QuEST-Kit/QuEST.git
+    cd QuEST
+    mkdir build && cd build
+    cmake .. -DCMAKE_BUILD_TYPE=Release -DUSER_SOURCE="path/to/your/python/bindings"
+    make -j
+
+Requirements:
+- Python 3.8 or later
+- C++ compiler with C++11 support
+- CMake 3.14 or later
+- For GPU: CUDA Toolkit 10.0+ and NVIDIA GPU with compute capability 3.0+
+
+Alternative backends if pyQuEST cannot be installed:
+- qsim: High-performance CPU simulator (pip install qsimcirq)
+- cuQuantum: GPU-accelerated via Qiskit Aer (pip install qiskit-aer-gpu)
+- Cirq: Pure Python simulator (pip install cirq)
+'''
+        super().__init__(
+            reason="pyQuEST package is not installed",
+            missing_component="pyQuEST",
+        )
+        self.suggestions = [s.strip() for s in install_instructions.strip().split('\n') if s.strip()]
+
+
+def check_quest_availability() -> tuple[bool, str]:
+    """Check if pyQuEST is available and return status with message.
+    
+    Returns:
+        Tuple of (is_available, status_message)
+    """
+    try:
+        import pyQuEST
+        version = getattr(pyQuEST, '__version__', 'unknown')
+        return True, f"pyQuEST {version} is available"
+    except ImportError:
+        return False, (
+            "pyQuEST is not installed. Install with: pip install pyquest "
+            "or see https://github.com/rrmeister/pyQuEST for build instructions."
+        )
+    except Exception as e:
+        return False, f"pyQuEST import failed: {e}"
+
+
+def get_quest_installation_help() -> str:
+    """Get detailed installation help for pyQuEST.
+    
+    Returns:
+        Multi-line string with installation instructions
+    """
+    return '''
+QuEST Backend Installation Guide
+================================
+
+pyQuEST is the Python interface to QuEST (Quantum Exact Simulation Toolkit),
+a high-performance quantum circuit simulator.
+
+Quick Install:
+--------------
+pip install pyquest
+
+Build from Source (for GPU/MPI support):
+----------------------------------------
+1. Clone the repository:
+   git clone https://github.com/rrmeister/pyQuEST.git
+   cd pyQuEST
+
+2. For CPU-only build:
+   pip install .
+
+3. For GPU build (requires CUDA):
+   export QUEST_GPU=1
+   pip install .
+
+4. For MPI build (requires MPI library):
+   export QUEST_MPI=1
+   pip install .
+
+Troubleshooting:
+----------------
+- "ImportError: No module named pyQuEST"
+   Run: pip install pyquest
+
+- "RuntimeError: CUDA not found"
+   Install CUDA Toolkit from: https://developer.nvidia.com/cuda-downloads
+   Or build without GPU: unset QUEST_GPU && pip install pyquest
+
+- "Error: OpenMP not found"
+   On Ubuntu: sudo apt-get install libomp-dev
+   On macOS: brew install libomp
+   On Windows: Install Visual Studio with C++ support
+
+Alternative Backends:
+--------------------
+If pyQuEST cannot be installed, consider these alternatives:
+- qsim (Google): pip install qsimcirq
+- cuQuantum (NVIDIA): pip install cuquantum
+- Qiskit Aer: pip install qiskit-aer
+'''

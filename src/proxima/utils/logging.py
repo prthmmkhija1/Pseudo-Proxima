@@ -1,4 +1,4 @@
-"""Logging setup and configuration using structlog."""
+﻿"""Logging setup and configuration using structlog."""
 
 from __future__ import annotations
 
@@ -334,3 +334,173 @@ class timed_operation:
     def elapsed_ms(self) -> float:
         """Get elapsed time in milliseconds (useful during operation)."""
         return (time.perf_counter() - self._start_time) * 1000
+# =============================================================================
+# JSON FILE OUTPUT HANDLER
+# =============================================================================
+
+
+class JSONFileHandler(logging.FileHandler):
+    """A logging file handler that writes structured JSON logs.
+    
+    This handler creates a dedicated JSON log file where each log entry
+    is written as a complete JSON object on a single line (JSON Lines format).
+    This format is ideal for log aggregation tools, analysis, and machine parsing.
+    
+    Features:
+    - Structured JSON output (one JSON object per line)
+    - Automatic file rotation support (when used with RotatingFileHandler)
+    - Thread-safe writing
+    - Custom serialization for complex types (datetime, Path, numpy, etc.)
+    
+    Example:
+        handler = JSONFileHandler('app.log.json')
+        logger.addHandler(handler)
+    """
+    
+    def __init__(
+        self,
+        filename: str | Path,
+        mode: str = 'a',
+        encoding: str = 'utf-8',
+        delay: bool = False,
+    ) -> None:
+        """Initialize the JSON file handler.
+        
+        Args:
+            filename: Path to the JSON log file
+            mode: File mode ('a' for append, 'w' for overwrite)
+            encoding: File encoding (default: utf-8)
+            delay: If True, defer opening until first write
+        """
+        super().__init__(str(filename), mode=mode, encoding=encoding, delay=delay)
+        self._json_formatter = _JSONLogFormatter()
+    
+    def emit(self, record: logging.LogRecord) -> None:
+        """Emit a log record as a JSON line.
+        
+        Args:
+            record: The log record to emit
+        """
+        try:
+            msg = self._json_formatter.format(record)
+            stream = self.stream
+            stream.write(msg + '\n')
+            self.flush()
+        except Exception:
+            self.handleError(record)
+
+
+class _JSONLogFormatter(logging.Formatter):
+    """Formatter that outputs log records as JSON objects."""
+    
+    def format(self, record: logging.LogRecord) -> str:
+        """Format a log record as a JSON string.
+        
+        Args:
+            record: The log record to format
+            
+        Returns:
+            JSON string representation of the log record
+        """
+        log_data = {
+            'timestamp': datetime.now().isoformat(),
+            'level': record.levelname,
+            'logger': record.name,
+            'message': record.getMessage(),
+            'module': record.module,
+            'function': record.funcName,
+            'line': record.lineno,
+        }
+        
+        # Add execution context if available
+        ctx = _execution_context.get()
+        if ctx:
+            log_data['context'] = ctx
+        
+        # Add exception info if present
+        if record.exc_info:
+            import traceback
+            log_data['exception'] = {
+                'type': record.exc_info[0].__name__ if record.exc_info[0] else None,
+                'message': str(record.exc_info[1]) if record.exc_info[1] else None,
+                'traceback': traceback.format_exception(*record.exc_info) if record.exc_info[0] else None,
+            }
+        
+        # Add extra fields from the record
+        for key, value in record.__dict__.items():
+            if key not in (
+                'name', 'msg', 'args', 'created', 'filename', 'funcName',
+                'levelname', 'levelno', 'lineno', 'module', 'msecs',
+                'pathname', 'process', 'processName', 'relativeCreated',
+                'stack_info', 'exc_info', 'exc_text', 'message', 'thread',
+                'threadName', 'taskName',
+            ):
+                log_data[key] = value
+        
+        return _json_serializer(log_data)
+
+
+def configure_logging_with_json_file(
+    *,
+    level: str = "info",
+    output_format: str = "text",
+    color: bool = True,
+    log_file: Path | None = None,
+    json_log_file: Path | None = None,
+) -> None:
+    """Configure logging with an optional dedicated JSON file output.
+    
+    This function extends the standard configure_logging() by adding support
+    for a separate JSON log file that can be used for structured log analysis.
+    
+    Parameters
+    ----------
+    level : str
+        Minimum log level (debug, info, warning, error, critical).
+    output_format : str
+        Console output format: "text" for human-readable, "json" for machine parsing.
+    color : bool
+        Enable colored console output when using text mode.
+    log_file : Optional[Path]
+        If provided, write logs to this file (format matches output_format).
+    json_log_file : Optional[Path]
+        If provided, write structured JSON logs to this dedicated file.
+        This file will always use JSON Lines format regardless of output_format.
+    
+    Example
+    -------
+    >>> configure_logging_with_json_file(
+    ...     level="debug",
+    ...     output_format="text",
+    ...     color=True,
+    ...     log_file=Path("app.log"),
+    ...     json_log_file=Path("app.log.json")
+    ... )
+    
+    This will output human-readable logs to console and app.log,
+    while also writing structured JSON to app.log.json for analysis.
+    """
+    # First, configure standard logging
+    configure_logging(
+        level=level,
+        output_format=output_format,
+        color=color,
+        log_file=log_file,
+    )
+    
+    # Add JSON file handler if specified
+    if json_log_file:
+        log_level = _resolve_level(level)
+        
+        # Create parent directories if needed
+        json_log_file.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Add JSON file handler to root logger
+        json_handler = JSONFileHandler(json_log_file)
+        json_handler.setLevel(log_level)
+        
+        root = logging.getLogger()
+        root.addHandler(json_handler)
+
+
+

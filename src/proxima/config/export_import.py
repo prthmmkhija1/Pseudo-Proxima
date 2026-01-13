@@ -655,3 +655,135 @@ def _get_production_template() -> dict[str, Any]:
             "remember_decisions": False,
         },
     }
+
+
+def create_from_template(
+    template_type: str = "full",
+    overrides: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Create a configuration dictionary from a template with optional overrides.
+    
+    This function provides a programmatic way to generate configuration
+    dictionaries based on predefined templates, with the ability to customize
+    specific settings through overrides.
+    
+    Args:
+        template_type: Type of template to use. Options:
+            - "full": Complete configuration with all options
+            - "minimal": Essential settings only
+            - "development": Development-focused with debug settings
+            - "production": Production-ready with security and performance settings
+        overrides: Optional dictionary of values to override in the template.
+            Supports nested keys using dot notation (e.g., "general.verbosity").
+    
+    Returns:
+        Configuration dictionary based on the template with overrides applied.
+    
+    Example:
+        >>> config = create_from_template(
+        ...     template_type="development",
+        ...     overrides={
+        ...         "general.verbosity": "info",
+        ...         "backends.default_backend": "qsim",
+        ...         "llm": {"provider": "anthropic", "model": "claude-3"},
+        ...     }
+        ... )
+    
+    Raises:
+        ValueError: If template_type is not recognized.
+    """
+    templates = {
+        "full": _get_full_template,
+        "minimal": _get_minimal_template,
+        "development": _get_development_template,
+        "production": _get_production_template,
+    }
+    
+    template_func = templates.get(template_type)
+    if template_func is None:
+        valid_types = ", ".join(templates.keys())
+        raise ValueError(
+            f"Unknown template type: '{template_type}'. "
+            f"Valid options are: {valid_types}"
+        )
+    
+    config = template_func()
+    
+    if overrides:
+        config = _apply_overrides(config, overrides)
+    
+    return config
+
+
+def _apply_overrides(
+    config: dict[str, Any], 
+    overrides: dict[str, Any]
+) -> dict[str, Any]:
+    """Apply overrides to a configuration dictionary.
+    
+    Supports both nested dictionaries and dot-notation keys.
+    
+    Args:
+        config: Base configuration dictionary
+        overrides: Dictionary of overrides to apply
+        
+    Returns:
+        Configuration with overrides applied
+    """
+    result = _deep_copy_dict(config)
+    
+    for key, value in overrides.items():
+        if "." in key:
+            # Handle dot notation (e.g., "general.verbosity")
+            _set_nested_value(result, key.split("."), value)
+        elif isinstance(value, dict) and key in result and isinstance(result[key], dict):
+            # Merge nested dictionaries
+            result[key] = _apply_overrides(result[key], value)
+        else:
+            # Direct assignment
+            result[key] = value
+    
+    return result
+
+
+def _deep_copy_dict(d: dict[str, Any]) -> dict[str, Any]:
+    """Create a deep copy of a dictionary."""
+    result: dict[str, Any] = {}
+    for key, value in d.items():
+        if isinstance(value, dict):
+            result[key] = _deep_copy_dict(value)
+        elif isinstance(value, list):
+            result[key] = value.copy()
+        else:
+            result[key] = value
+    return result
+
+
+def _set_nested_value(d: dict[str, Any], keys: list[str], value: Any) -> None:
+    """Set a value in a nested dictionary using a list of keys.
+    
+    Args:
+        d: Dictionary to modify
+        keys: List of keys forming the path
+        value: Value to set at the path
+    """
+    current = d
+    for key in keys[:-1]:
+        if key not in current:
+            current[key] = {}
+        current = current[key]
+    current[keys[-1]] = value
+
+
+def get_available_templates() -> list[str]:
+    """Get list of available configuration template types.
+    
+    Returns:
+        List of template type names that can be used with generate_template()
+        or create_from_template().
+    
+    Example:
+        >>> get_available_templates()
+        ['full', 'minimal', 'development', 'production']
+    """
+    return ["full", "minimal", "development", "production"]
