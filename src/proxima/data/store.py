@@ -13,6 +13,7 @@ import uuid
 from abc import ABC, abstractmethod
 from collections.abc import Generator
 from contextlib import contextmanager
+from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from pathlib import Path

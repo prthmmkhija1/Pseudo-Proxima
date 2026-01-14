@@ -84,6 +84,29 @@ class PluginMetadata:
         )
 
 
+@dataclass
+class PluginContext:
+    """Runtime context for plugin execution."""
+    
+    backend_name: str
+    """Name of the current backend (e.g., 'cirq', 'qiskit_aer')."""
+    
+    num_qubits: int
+    """Number of qubits in the current circuit."""
+    
+    shots: int = 1000
+    """Number of measurement shots."""
+    
+    config: dict[str, Any] | None = None
+    """Additional configuration options."""
+    
+    session_id: str | None = None
+    """Current session identifier, if any."""
+    
+    metadata: dict[str, Any] | None = None
+    """Additional metadata."""
+
+
 class Plugin(ABC):
     """Base class for all Proxima plugins.
 
@@ -138,8 +161,12 @@ class Plugin(ABC):
         return self._config.get(key, default)
 
     @abstractmethod
-    def initialize(self) -> None:
-        """Initialize the plugin. Called after loading."""
+    def initialize(self, context: PluginContext | None = None) -> None:
+        """Initialize the plugin. Called after loading.
+        
+        Args:
+            context: Optional plugin context with runtime information
+        """
         ...
 
     @abstractmethod
@@ -170,7 +197,7 @@ class BackendPlugin(Plugin):
         """Return the backend identifier name."""
         ...
 
-    def initialize(self) -> None:
+    def initialize(self, context: PluginContext | None = None) -> None:
         """Initialize backend plugin."""
         pass
 
@@ -199,7 +226,7 @@ class LLMProviderPlugin(Plugin):
         """Return the environment variable name for API key, or None."""
         ...
 
-    def initialize(self) -> None:
+    def initialize(self, context: PluginContext | None = None) -> None:
         """Initialize LLM provider plugin."""
         pass
 
@@ -223,7 +250,7 @@ class ExporterPlugin(Plugin):
         """Export data to the specified destination."""
         ...
 
-    def initialize(self) -> None:
+    def initialize(self, context: PluginContext | None = None) -> None:
         """Initialize exporter plugin."""
         pass
 
@@ -247,7 +274,7 @@ class AnalyzerPlugin(Plugin):
         """Analyze results and return insights."""
         ...
 
-    def initialize(self) -> None:
+    def initialize(self, context: PluginContext | None = None) -> None:
         """Initialize analyzer plugin."""
         pass
 

@@ -4,13 +4,14 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import Enum, Flag, auto
 from typing import Any
 
 
 class SimulatorType(str, Enum):
     STATE_VECTOR = "state_vector"
     DENSITY_MATRIX = "density_matrix"
+    TENSOR_NETWORK = "tensor_network"
     CUSTOM = "custom"
 
 
@@ -18,6 +19,20 @@ class ResultType(str, Enum):
     COUNTS = "counts"
     STATEVECTOR = "statevector"
     DENSITY_MATRIX = "density_matrix"
+
+
+class BackendCapability(Flag):
+    """Capabilities that a backend may support."""
+    
+    NONE = 0
+    STATE_VECTOR = auto()
+    DENSITY_MATRIX = auto()
+    TENSOR_NETWORK = auto()
+    NOISE_MODEL = auto()
+    GPU_ACCELERATION = auto()
+    BATCH_EXECUTION = auto()
+    PARAMETER_BINDING = auto()
+    CUSTOM_GATES = auto()
 
 
 @dataclass

@@ -63,7 +63,7 @@ class LoggingHookPlugin(Plugin):
         self._start_times: dict[str, float] = {}
         self._logger = logging.getLogger("proxima.hooks.logging")
     
-    def initialize(self) -> None:
+    def initialize(self, context=None) -> None:
         """Register hooks with the hook manager."""
         manager = get_hook_manager()
         
@@ -213,7 +213,7 @@ class MetricsHookPlugin(Plugin):
         self._start_times: dict[str, float] = {}
         self._started_at = datetime.now(timezone.utc)
     
-    def initialize(self) -> None:
+    def initialize(self, context=None) -> None:
         """Register hooks with the hook manager."""
         manager = get_hook_manager()
         

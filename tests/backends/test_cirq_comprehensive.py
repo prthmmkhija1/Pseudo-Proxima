@@ -353,7 +353,7 @@ class TestDensityMatrixTester:
         dm = np.array([[0.5, 0], [0, 0.5]], dtype=complex)
         result = tester.test_trace_preservation(dm, expected_trace=1.0)
         
-        assert result.passed is True
+        assert result.passed == True
         assert abs(result.actual - 1.0) < 1e-10
 
     def test_hermiticity(self) -> None:
@@ -363,12 +363,12 @@ class TestDensityMatrixTester:
         # Hermitian matrix
         dm = np.array([[0.5, 0.5j], [-0.5j, 0.5]], dtype=complex)
         result = tester.test_hermiticity(dm)
-        assert result.passed is True
+        assert result.passed == True
         
         # Non-Hermitian matrix
         dm_bad = np.array([[0.5, 0.5], [0.3, 0.5]], dtype=complex)
         result_bad = tester.test_hermiticity(dm_bad)
-        assert result_bad.passed is False
+        assert result_bad.passed == False
 
     def test_positivity(self) -> None:
         """Test positivity test."""
@@ -377,7 +377,7 @@ class TestDensityMatrixTester:
         # Valid density matrix
         dm = np.array([[0.7, 0.3], [0.3, 0.3]], dtype=complex)
         result = tester.test_positivity(dm)
-        assert result.passed is True
+        assert result.passed == True
 
     def test_purity(self) -> None:
         """Test purity calculation."""
@@ -505,12 +505,13 @@ class TestBatchExecutor:
         
         import cirq
         
-        # Create multiple circuits
+        # Create multiple circuits with measurements
         circuits = []
         for i in range(5):
             q = cirq.LineQubit(0)
             circuit = cirq.Circuit([
                 cirq.rx(np.pi / (i + 1)).on(q),
+                cirq.measure(q, key='m'),
             ])
             circuits.append(circuit)
         
