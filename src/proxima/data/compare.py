@@ -1506,3 +1506,1018 @@ class BackendPerformanceTracker:
                 "more_efficient": backend_a if mem_a < mem_b else backend_b,
             },
         }
+
+
+# =============================================================================
+# Advanced Statistical Analysis (Feature - Comparison Aggregator)
+# =============================================================================
+
+
+@dataclass
+class StatisticalSummary:
+    """Statistical summary of a dataset."""
+    
+    count: int
+    mean: float
+    std: float
+    min: float
+    max: float
+    median: float
+    q1: float  # 25th percentile
+    q3: float  # 75th percentile
+    iqr: float  # Interquartile range
+    skewness: float
+    kurtosis: float
+    confidence_interval_95: tuple[float, float]
+
+
+@dataclass
+class HypothesisTestResult:
+    """Result of a statistical hypothesis test."""
+    
+    test_name: str
+    statistic: float
+    p_value: float
+    significant: bool  # At alpha=0.05
+    effect_size: float
+    interpretation: str
+
+
+@dataclass
+class CorrelationResult:
+    """Result of correlation analysis."""
+    
+    variable_a: str
+    variable_b: str
+    correlation: float  # Pearson correlation coefficient
+    p_value: float
+    strength: str  # 'weak', 'moderate', 'strong'
+
+
+class AdvancedStatisticalAnalyzer:
+    """Advanced statistical analysis for comparison results.
+    
+    Provides:
+    - Descriptive statistics
+    - Hypothesis testing (t-test, Mann-Whitney U)
+    - Effect size calculations (Cohen's d)
+    - Correlation analysis
+    - Confidence intervals
+    - Outlier detection
+    """
+    
+    def __init__(self, alpha: float = 0.05) -> None:
+        """Initialize analyzer with significance level."""
+        self.alpha = alpha
+    
+    def compute_descriptive_stats(self, values: list[float]) -> StatisticalSummary:
+        """Compute comprehensive descriptive statistics.
+        
+        Args:
+            values: List of numeric values
+            
+        Returns:
+            StatisticalSummary with all statistics
+        """
+        if not values:
+            return StatisticalSummary(
+                count=0, mean=0, std=0, min=0, max=0, median=0,
+                q1=0, q3=0, iqr=0, skewness=0, kurtosis=0,
+                confidence_interval_95=(0, 0),
+            )
+        
+        arr = np.array(values)
+        n = len(arr)
+        mean = float(np.mean(arr))
+        std = float(np.std(arr, ddof=1)) if n > 1 else 0.0
+        
+        # Percentiles
+        q1 = float(np.percentile(arr, 25))
+        median = float(np.median(arr))
+        q3 = float(np.percentile(arr, 75))
+        iqr = q3 - q1
+        
+        # Skewness and kurtosis
+        skewness = self._compute_skewness(arr, mean, std)
+        kurtosis = self._compute_kurtosis(arr, mean, std)
+        
+        # 95% confidence interval for mean
+        if n > 1 and std > 0:
+            se = std / np.sqrt(n)
+            # Using t-distribution critical value approximation
+            t_crit = 1.96 if n > 30 else 2.0  # Simplified
+            ci_lower = mean - t_crit * se
+            ci_upper = mean + t_crit * se
+        else:
+            ci_lower = ci_upper = mean
+        
+        return StatisticalSummary(
+            count=n,
+            mean=mean,
+            std=std,
+            min=float(np.min(arr)),
+            max=float(np.max(arr)),
+            median=median,
+            q1=q1,
+            q3=q3,
+            iqr=iqr,
+            skewness=skewness,
+            kurtosis=kurtosis,
+            confidence_interval_95=(ci_lower, ci_upper),
+        )
+    
+    def _compute_skewness(self, arr: np.ndarray, mean: float, std: float) -> float:
+        """Compute skewness coefficient."""
+        if std == 0 or len(arr) < 3:
+            return 0.0
+        n = len(arr)
+        m3 = np.mean((arr - mean) ** 3)
+        return float(m3 / (std ** 3) * np.sqrt(n * (n - 1)) / (n - 2)) if n > 2 else 0.0
+    
+    def _compute_kurtosis(self, arr: np.ndarray, mean: float, std: float) -> float:
+        """Compute excess kurtosis."""
+        if std == 0 or len(arr) < 4:
+            return 0.0
+        m4 = np.mean((arr - mean) ** 4)
+        return float(m4 / (std ** 4) - 3)
+    
+    def welch_t_test(
+        self,
+        sample_a: list[float],
+        sample_b: list[float],
+        alternative: str = "two-sided",
+    ) -> HypothesisTestResult:
+        """Perform Welch's t-test for comparing two samples.
+        
+        This is more robust than Student's t-test when variances are unequal.
+        
+        Args:
+            sample_a: First sample
+            sample_b: Second sample
+            alternative: 'two-sided', 'greater', or 'less'
+            
+        Returns:
+            HypothesisTestResult with test outcome
+        """
+        if len(sample_a) < 2 or len(sample_b) < 2:
+            return HypothesisTestResult(
+                test_name="Welch's t-test",
+                statistic=0.0,
+                p_value=1.0,
+                significant=False,
+                effect_size=0.0,
+                interpretation="Insufficient data for test",
+            )
+        
+        arr_a = np.array(sample_a)
+        arr_b = np.array(sample_b)
+        
+        n_a, n_b = len(arr_a), len(arr_b)
+        mean_a, mean_b = np.mean(arr_a), np.mean(arr_b)
+        var_a, var_b = np.var(arr_a, ddof=1), np.var(arr_b, ddof=1)
+        
+        # Welch's t-statistic
+        se = np.sqrt(var_a / n_a + var_b / n_b)
+        if se == 0:
+            return HypothesisTestResult(
+                test_name="Welch's t-test",
+                statistic=0.0,
+                p_value=1.0,
+                significant=False,
+                effect_size=0.0,
+                interpretation="Zero variance in samples",
+            )
+        
+        t_stat = float((mean_a - mean_b) / se)
+        
+        # Welch-Satterthwaite degrees of freedom
+        num = (var_a / n_a + var_b / n_b) ** 2
+        denom = (var_a / n_a) ** 2 / (n_a - 1) + (var_b / n_b) ** 2 / (n_b - 1)
+        df = num / denom if denom > 0 else 1
+        
+        # Approximate p-value using normal distribution for large df
+        p_value = self._t_distribution_pvalue(t_stat, df, alternative)
+        
+        # Effect size (Cohen's d)
+        pooled_std = np.sqrt(((n_a - 1) * var_a + (n_b - 1) * var_b) / (n_a + n_b - 2))
+        cohens_d = float((mean_a - mean_b) / pooled_std) if pooled_std > 0 else 0.0
+        
+        # Interpretation
+        effect_interpretation = self._interpret_effect_size(abs(cohens_d))
+        significant = p_value < self.alpha
+        
+        if significant:
+            direction = "greater than" if mean_a > mean_b else "less than"
+            interpretation = f"Significant difference (p={p_value:.4f}). Sample A is {direction} Sample B with {effect_interpretation} effect."
+        else:
+            interpretation = f"No significant difference (p={p_value:.4f}). Effect size is {effect_interpretation}."
+        
+        return HypothesisTestResult(
+            test_name="Welch's t-test",
+            statistic=t_stat,
+            p_value=p_value,
+            significant=significant,
+            effect_size=abs(cohens_d),
+            interpretation=interpretation,
+        )
+    
+    def _t_distribution_pvalue(self, t_stat: float, df: float, alternative: str) -> float:
+        """Approximate p-value from t-distribution."""
+        # Using normal approximation for simplicity
+        # In production, use scipy.stats.t.sf
+        from math import erf, sqrt
+        
+        # Standard normal CDF approximation
+        def norm_cdf(x: float) -> float:
+            return 0.5 * (1 + erf(x / sqrt(2)))
+        
+        if df > 30:
+            # Use normal approximation
+            if alternative == "two-sided":
+                return 2 * (1 - norm_cdf(abs(t_stat)))
+            elif alternative == "greater":
+                return 1 - norm_cdf(t_stat)
+            else:  # less
+                return norm_cdf(t_stat)
+        else:
+            # Rough t-distribution approximation
+            # Inflate p-value slightly for small df
+            adjustment = 1 + 2 / df
+            if alternative == "two-sided":
+                return min(1.0, 2 * (1 - norm_cdf(abs(t_stat))) * adjustment)
+            elif alternative == "greater":
+                return min(1.0, (1 - norm_cdf(t_stat)) * adjustment)
+            else:
+                return min(1.0, norm_cdf(t_stat) * adjustment)
+    
+    def _interpret_effect_size(self, d: float) -> str:
+        """Interpret Cohen's d effect size."""
+        if d < 0.2:
+            return "negligible"
+        elif d < 0.5:
+            return "small"
+        elif d < 0.8:
+            return "medium"
+        else:
+            return "large"
+    
+    def mann_whitney_u_test(
+        self,
+        sample_a: list[float],
+        sample_b: list[float],
+    ) -> HypothesisTestResult:
+        """Perform Mann-Whitney U test (non-parametric alternative to t-test).
+        
+        Useful when data is not normally distributed.
+        
+        Args:
+            sample_a: First sample
+            sample_b: Second sample
+            
+        Returns:
+            HypothesisTestResult with test outcome
+        """
+        if len(sample_a) < 3 or len(sample_b) < 3:
+            return HypothesisTestResult(
+                test_name="Mann-Whitney U",
+                statistic=0.0,
+                p_value=1.0,
+                significant=False,
+                effect_size=0.0,
+                interpretation="Insufficient data for test",
+            )
+        
+        arr_a = np.array(sample_a)
+        arr_b = np.array(sample_b)
+        n_a, n_b = len(arr_a), len(arr_b)
+        
+        # Combine and rank
+        combined = np.concatenate([arr_a, arr_b])
+        ranks = self._rank_data(combined)
+        
+        # Calculate U statistics
+        r_a = sum(ranks[:n_a])
+        u_a = r_a - n_a * (n_a + 1) / 2
+        u_b = n_a * n_b - u_a
+        u = min(u_a, u_b)
+        
+        # Normal approximation for large samples
+        mean_u = n_a * n_b / 2
+        std_u = np.sqrt(n_a * n_b * (n_a + n_b + 1) / 12)
+        
+        if std_u > 0:
+            z = (u - mean_u) / std_u
+            from math import erf, sqrt
+            p_value = 2 * (1 - 0.5 * (1 + erf(abs(z) / sqrt(2))))
+        else:
+            p_value = 1.0
+            z = 0.0
+        
+        # Effect size (rank-biserial correlation)
+        r = 1 - 2 * u / (n_a * n_b)
+        
+        significant = p_value < self.alpha
+        
+        if significant:
+            interpretation = f"Significant difference (p={p_value:.4f}). Rank-biserial r={r:.3f}."
+        else:
+            interpretation = f"No significant difference (p={p_value:.4f})."
+        
+        return HypothesisTestResult(
+            test_name="Mann-Whitney U",
+            statistic=float(u),
+            p_value=p_value,
+            significant=significant,
+            effect_size=abs(r),
+            interpretation=interpretation,
+        )
+    
+    def _rank_data(self, data: np.ndarray) -> np.ndarray:
+        """Rank data with average rank for ties."""
+        sorted_indices = np.argsort(data)
+        ranks = np.empty_like(sorted_indices, dtype=float)
+        ranks[sorted_indices] = np.arange(1, len(data) + 1, dtype=float)
+        
+        # Handle ties by averaging ranks
+        for val in np.unique(data):
+            mask = data == val
+            if np.sum(mask) > 1:
+                ranks[mask] = np.mean(ranks[mask])
+        
+        return ranks
+    
+    def correlation_analysis(
+        self,
+        data_x: list[float],
+        data_y: list[float],
+        var_name_x: str = "X",
+        var_name_y: str = "Y",
+    ) -> CorrelationResult:
+        """Compute Pearson correlation coefficient.
+        
+        Args:
+            data_x: First variable values
+            data_y: Second variable values
+            var_name_x: Name of first variable
+            var_name_y: Name of second variable
+            
+        Returns:
+            CorrelationResult with correlation statistics
+        """
+        if len(data_x) != len(data_y) or len(data_x) < 3:
+            return CorrelationResult(
+                variable_a=var_name_x,
+                variable_b=var_name_y,
+                correlation=0.0,
+                p_value=1.0,
+                strength="none",
+            )
+        
+        arr_x = np.array(data_x)
+        arr_y = np.array(data_y)
+        
+        # Pearson correlation
+        mean_x, mean_y = np.mean(arr_x), np.mean(arr_y)
+        std_x, std_y = np.std(arr_x, ddof=1), np.std(arr_y, ddof=1)
+        
+        if std_x == 0 or std_y == 0:
+            return CorrelationResult(
+                variable_a=var_name_x,
+                variable_b=var_name_y,
+                correlation=0.0,
+                p_value=1.0,
+                strength="none",
+            )
+        
+        cov = np.mean((arr_x - mean_x) * (arr_y - mean_y))
+        r = float(cov / (std_x * std_y))
+        
+        # P-value approximation using t-distribution
+        n = len(arr_x)
+        if abs(r) < 1:
+            t_stat = r * np.sqrt((n - 2) / (1 - r ** 2))
+            p_value = self._t_distribution_pvalue(t_stat, n - 2, "two-sided")
+        else:
+            p_value = 0.0
+        
+        # Interpret strength
+        abs_r = abs(r)
+        if abs_r < 0.3:
+            strength = "weak"
+        elif abs_r < 0.7:
+            strength = "moderate"
+        else:
+            strength = "strong"
+        
+        return CorrelationResult(
+            variable_a=var_name_x,
+            variable_b=var_name_y,
+            correlation=r,
+            p_value=p_value,
+            strength=strength,
+        )
+    
+    def detect_outliers(
+        self,
+        values: list[float],
+        method: str = "iqr",
+    ) -> tuple[list[int], list[float]]:
+        """Detect outliers in data.
+        
+        Args:
+            values: Data values
+            method: Detection method ('iqr' or 'zscore')
+            
+        Returns:
+            Tuple of (outlier_indices, outlier_values)
+        """
+        if len(values) < 4:
+            return [], []
+        
+        arr = np.array(values)
+        outlier_mask = np.zeros(len(arr), dtype=bool)
+        
+        if method == "iqr":
+            q1 = np.percentile(arr, 25)
+            q3 = np.percentile(arr, 75)
+            iqr = q3 - q1
+            lower = q1 - 1.5 * iqr
+            upper = q3 + 1.5 * iqr
+            outlier_mask = (arr < lower) | (arr > upper)
+        elif method == "zscore":
+            mean = np.mean(arr)
+            std = np.std(arr, ddof=1)
+            if std > 0:
+                z_scores = np.abs((arr - mean) / std)
+                outlier_mask = z_scores > 3
+        
+        indices = list(np.where(outlier_mask)[0])
+        outlier_values = [float(arr[i]) for i in indices]
+        
+        return indices, outlier_values
+
+
+# =============================================================================
+# Visualization Generation (Feature - Comparison Aggregator)
+# =============================================================================
+
+
+@dataclass
+class ComparisonVisualization:
+    """Container for comparison visualizations."""
+    
+    execution_time_chart: str  # SVG or ASCII
+    memory_chart: str
+    agreement_heatmap: str
+    performance_radar: str | None = None
+    format: str = "svg"  # 'svg' or 'ascii'
+
+
+class ComparisonVisualizer:
+    """Generate visualizations for backend comparisons.
+    
+    Supports:
+    - Bar charts for execution times
+    - Memory usage comparisons
+    - Agreement heatmaps
+    - Performance radar charts
+    - ASCII fallback for terminal output
+    """
+    
+    COLORS = [
+        "#3498db", "#2ecc71", "#e74c3c", "#f39c12",
+        "#9b59b6", "#1abc9c", "#34495e", "#e67e22",
+    ]
+    
+    def __init__(self, use_ascii: bool = False) -> None:
+        """Initialize visualizer.
+        
+        Args:
+            use_ascii: Use ASCII charts instead of SVG
+        """
+        self.use_ascii = use_ascii
+    
+    def generate_all(
+        self,
+        metrics: ComparisonMetrics,
+    ) -> ComparisonVisualization:
+        """Generate all visualizations for a comparison.
+        
+        Args:
+            metrics: Comparison metrics to visualize
+            
+        Returns:
+            ComparisonVisualization with all charts
+        """
+        if self.use_ascii:
+            return ComparisonVisualization(
+                execution_time_chart=self._ascii_bar_chart(
+                    metrics.execution_times, "Execution Times (ms)"
+                ),
+                memory_chart=self._ascii_bar_chart(
+                    metrics.memory_peaks, "Memory Usage (MB)"
+                ),
+                agreement_heatmap=self._ascii_agreement_matrix(
+                    metrics.pairwise_agreements
+                ),
+                format="ascii",
+            )
+        else:
+            return ComparisonVisualization(
+                execution_time_chart=self._svg_bar_chart(
+                    metrics.execution_times, "Execution Times (ms)"
+                ),
+                memory_chart=self._svg_bar_chart(
+                    metrics.memory_peaks, "Memory Usage (MB)"
+                ),
+                agreement_heatmap=self._svg_heatmap(
+                    metrics.pairwise_agreements, "Result Agreement"
+                ),
+                performance_radar=self._svg_radar_chart(metrics),
+                format="svg",
+            )
+    
+    def _ascii_bar_chart(
+        self,
+        data: dict[str, float],
+        title: str,
+        width: int = 40,
+    ) -> str:
+        """Generate ASCII bar chart."""
+        if not data:
+            return f"{title}\n  No data available"
+        
+        lines = [f"  {title}", "  " + "=" * len(title)]
+        max_val = max(data.values()) if data.values() else 1
+        max_label = max(len(str(k)) for k in data.keys())
+        
+        for label, value in sorted(data.items(), key=lambda x: -x[1]):
+            bar_len = int((value / max_val) * width) if max_val > 0 else 0
+            bar = "█" * bar_len
+            label_str = str(label).ljust(max_label)
+            lines.append(f"  {label_str} │{bar} {value:.2f}")
+        
+        return "\n".join(lines)
+    
+    def _ascii_agreement_matrix(
+        self,
+        agreements: dict[str, dict[str, float]],
+    ) -> str:
+        """Generate ASCII agreement matrix."""
+        if not agreements:
+            return "  Agreement Matrix\n  No data available"
+        
+        backends = list(agreements.keys())
+        n = len(backends)
+        
+        # Header
+        max_label = max(len(b) for b in backends)
+        header = " " * (max_label + 3) + "  ".join(b[:6].ljust(6) for b in backends)
+        
+        lines = ["  Agreement Matrix (%)", "  " + "=" * 20, header]
+        
+        for b1 in backends:
+            row_values = []
+            for b2 in backends:
+                val = agreements.get(b1, {}).get(b2, 0)
+                row_values.append(f"{val*100:5.1f}%")
+            lines.append(f"  {b1.ljust(max_label)} │ {' '.join(row_values)}")
+        
+        return "\n".join(lines)
+    
+    def _svg_bar_chart(
+        self,
+        data: dict[str, float],
+        title: str,
+        width: int = 500,
+        height: int = 300,
+    ) -> str:
+        """Generate SVG bar chart."""
+        if not data:
+            return f'<svg width="{width}" height="{height}"><text x="10" y="20">No data</text></svg>'
+        
+        margin = 50
+        bar_width = (width - 2 * margin) / len(data)
+        max_val = max(data.values()) if data.values() else 1
+        
+        svg = [
+            f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}">',
+            '<rect width="100%" height="100%" fill="white"/>',
+            f'<text x="{width/2}" y="20" text-anchor="middle" font-weight="bold">{title}</text>',
+        ]
+        
+        for i, (label, value) in enumerate(data.items()):
+            x = margin + i * bar_width + bar_width * 0.1
+            bar_h = (value / max_val) * (height - 2 * margin - 30) if max_val > 0 else 0
+            y = height - margin - bar_h
+            color = self.COLORS[i % len(self.COLORS)]
+            
+            svg.append(
+                f'<rect x="{x}" y="{y}" width="{bar_width * 0.8}" height="{bar_h}" '
+                f'fill="{color}" rx="3"/>'
+            )
+            svg.append(
+                f'<text x="{x + bar_width * 0.4}" y="{height - margin + 15}" '
+                f'text-anchor="middle" font-size="10">{label[:8]}</text>'
+            )
+            svg.append(
+                f'<text x="{x + bar_width * 0.4}" y="{y - 5}" '
+                f'text-anchor="middle" font-size="9">{value:.1f}</text>'
+            )
+        
+        svg.append('</svg>')
+        return '\n'.join(svg)
+    
+    def _svg_heatmap(
+        self,
+        matrix: dict[str, dict[str, float]],
+        title: str,
+        width: int = 400,
+        height: int = 400,
+    ) -> str:
+        """Generate SVG heatmap for agreement matrix."""
+        if not matrix:
+            return f'<svg width="{width}" height="{height}"><text x="10" y="20">No data</text></svg>'
+        
+        backends = list(matrix.keys())
+        n = len(backends)
+        margin = 80
+        cell_size = (min(width, height) - 2 * margin) / n
+        
+        svg = [
+            f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}">',
+            '<rect width="100%" height="100%" fill="white"/>',
+            f'<text x="{width/2}" y="20" text-anchor="middle" font-weight="bold">{title}</text>',
+        ]
+        
+        # Draw cells
+        for i, b1 in enumerate(backends):
+            for j, b2 in enumerate(backends):
+                value = matrix.get(b1, {}).get(b2, 0)
+                x = margin + j * cell_size
+                y = margin + i * cell_size
+                
+                # Color based on value (green gradient)
+                intensity = int(value * 200)
+                color = f"rgb({255 - intensity}, {155 + intensity // 2}, {155 - intensity // 2})"
+                
+                svg.append(
+                    f'<rect x="{x}" y="{y}" width="{cell_size-1}" height="{cell_size-1}" '
+                    f'fill="{color}" stroke="#ccc"/>'
+                )
+                
+                # Value text
+                svg.append(
+                    f'<text x="{x + cell_size/2}" y="{y + cell_size/2 + 4}" '
+                    f'text-anchor="middle" font-size="10">{value*100:.0f}%</text>'
+                )
+        
+        # Row labels
+        for i, b in enumerate(backends):
+            y = margin + i * cell_size + cell_size / 2 + 4
+            svg.append(
+                f'<text x="{margin - 5}" y="{y}" text-anchor="end" font-size="10">{b[:10]}</text>'
+            )
+        
+        # Column labels
+        for j, b in enumerate(backends):
+            x = margin + j * cell_size + cell_size / 2
+            svg.append(
+                f'<text x="{x}" y="{margin - 5}" text-anchor="middle" font-size="10" '
+                f'transform="rotate(-45 {x} {margin - 5})">{b[:10]}</text>'
+            )
+        
+        svg.append('</svg>')
+        return '\n'.join(svg)
+    
+    def _svg_radar_chart(
+        self,
+        metrics: ComparisonMetrics,
+        width: int = 400,
+        height: int = 400,
+    ) -> str:
+        """Generate SVG radar chart for multi-dimensional comparison."""
+        if not metrics.execution_times:
+            return ""
+        
+        backends = list(metrics.execution_times.keys())
+        if len(backends) < 2:
+            return ""
+        
+        # Normalize metrics to 0-1 scale
+        dimensions = ["Speed", "Memory", "Agreement"]
+        
+        # Calculate scores for each backend
+        scores: dict[str, list[float]] = {}
+        
+        max_time = max(metrics.execution_times.values()) or 1
+        max_mem = max(metrics.memory_peaks.values()) if metrics.memory_peaks else 1
+        
+        for backend in backends:
+            time_score = 1 - (metrics.execution_times.get(backend, max_time) / max_time)
+            mem_score = 1 - (metrics.memory_peaks.get(backend, max_mem) / max_mem) if max_mem > 0 else 0.5
+            
+            # Average agreement with other backends
+            agreements = metrics.pairwise_agreements.get(backend, {})
+            other_agreements = [v for k, v in agreements.items() if k != backend]
+            agree_score = sum(other_agreements) / len(other_agreements) if other_agreements else 0.5
+            
+            scores[backend] = [time_score, mem_score, agree_score]
+        
+        # Draw radar chart
+        center_x, center_y = width / 2, height / 2
+        radius = min(width, height) / 2 - 60
+        
+        import math
+        angle_step = 2 * math.pi / len(dimensions)
+        
+        svg = [
+            f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}">',
+            '<rect width="100%" height="100%" fill="white"/>',
+            f'<text x="{width/2}" y="20" text-anchor="middle" font-weight="bold">Performance Radar</text>',
+        ]
+        
+        # Draw grid
+        for level in [0.25, 0.5, 0.75, 1.0]:
+            points = []
+            for i in range(len(dimensions)):
+                angle = i * angle_step - math.pi / 2
+                x = center_x + radius * level * math.cos(angle)
+                y = center_y + radius * level * math.sin(angle)
+                points.append(f"{x},{y}")
+            svg.append(
+                f'<polygon points="{" ".join(points)}" fill="none" stroke="#ddd"/>'
+            )
+        
+        # Draw axes and labels
+        for i, dim in enumerate(dimensions):
+            angle = i * angle_step - math.pi / 2
+            x = center_x + radius * 1.1 * math.cos(angle)
+            y = center_y + radius * 1.1 * math.sin(angle)
+            svg.append(
+                f'<line x1="{center_x}" y1="{center_y}" x2="{center_x + radius * math.cos(angle)}" '
+                f'y2="{center_y + radius * math.sin(angle)}" stroke="#ccc"/>'
+            )
+            svg.append(
+                f'<text x="{x}" y="{y}" text-anchor="middle" font-size="10">{dim}</text>'
+            )
+        
+        # Draw data for each backend
+        for idx, (backend, score_list) in enumerate(scores.items()):
+            color = self.COLORS[idx % len(self.COLORS)]
+            points = []
+            for i, score in enumerate(score_list):
+                angle = i * angle_step - math.pi / 2
+                x = center_x + radius * score * math.cos(angle)
+                y = center_y + radius * score * math.sin(angle)
+                points.append(f"{x},{y}")
+            svg.append(
+                f'<polygon points="{" ".join(points)}" fill="{color}" fill-opacity="0.3" '
+                f'stroke="{color}" stroke-width="2"/>'
+            )
+        
+        # Legend
+        for idx, backend in enumerate(backends):
+            color = self.COLORS[idx % len(self.COLORS)]
+            y = height - 40 + idx * 15
+            svg.append(f'<rect x="10" y="{y}" width="10" height="10" fill="{color}"/>')
+            svg.append(f'<text x="25" y="{y + 9}" font-size="10">{backend}</text>')
+        
+        svg.append('</svg>')
+        return '\n'.join(svg)
+
+
+# =============================================================================
+# Result Significance Testing (Feature - Comparison Aggregator)
+# =============================================================================
+
+
+@dataclass
+class SignificanceTestSuite:
+    """Results from a suite of significance tests."""
+    
+    t_test: HypothesisTestResult | None = None
+    mann_whitney: HypothesisTestResult | None = None
+    effect_size: float = 0.0
+    power_estimate: float = 0.0
+    sample_size_recommendation: int = 0
+    overall_conclusion: str = ""
+
+
+class ResultSignificanceTester:
+    """Test statistical significance of comparison results.
+    
+    Provides:
+    - Multiple test battery
+    - Effect size calculations
+    - Power analysis
+    - Sample size recommendations
+    - Confidence assessments
+    """
+    
+    def __init__(self, alpha: float = 0.05, power_target: float = 0.8) -> None:
+        """Initialize tester.
+        
+        Args:
+            alpha: Significance level
+            power_target: Desired statistical power
+        """
+        self.alpha = alpha
+        self.power_target = power_target
+        self._analyzer = AdvancedStatisticalAnalyzer(alpha)
+    
+    def test_execution_time_difference(
+        self,
+        times_a: list[float],
+        times_b: list[float],
+        backend_a: str = "Backend A",
+        backend_b: str = "Backend B",
+    ) -> SignificanceTestSuite:
+        """Test if execution time difference is statistically significant.
+        
+        Runs multiple tests to ensure robust conclusions.
+        
+        Args:
+            times_a: Execution times for first backend
+            times_b: Execution times for second backend
+            backend_a: Name of first backend
+            backend_b: Name of second backend
+            
+        Returns:
+            SignificanceTestSuite with all test results
+        """
+        suite = SignificanceTestSuite()
+        
+        if len(times_a) < 2 or len(times_b) < 2:
+            suite.overall_conclusion = "Insufficient data for significance testing"
+            return suite
+        
+        # Parametric test (Welch's t-test)
+        suite.t_test = self._analyzer.welch_t_test(times_a, times_b)
+        
+        # Non-parametric test (Mann-Whitney U)
+        suite.mann_whitney = self._analyzer.mann_whitney_u_test(times_a, times_b)
+        
+        # Effect size (Cohen's d)
+        suite.effect_size = suite.t_test.effect_size if suite.t_test else 0.0
+        
+        # Power estimate
+        suite.power_estimate = self._estimate_power(
+            len(times_a), len(times_b), suite.effect_size
+        )
+        
+        # Sample size recommendation
+        suite.sample_size_recommendation = self._recommend_sample_size(suite.effect_size)
+        
+        # Overall conclusion
+        suite.overall_conclusion = self._generate_conclusion(
+            suite, backend_a, backend_b, times_a, times_b
+        )
+        
+        return suite
+    
+    def test_result_agreement_significance(
+        self,
+        agreements: list[float],
+        threshold: float = 0.95,
+    ) -> HypothesisTestResult:
+        """Test if result agreement is significantly above a threshold.
+        
+        Uses one-sample t-test against threshold.
+        
+        Args:
+            agreements: List of agreement scores
+            threshold: Threshold to test against
+            
+        Returns:
+            HypothesisTestResult
+        """
+        if len(agreements) < 3:
+            return HypothesisTestResult(
+                test_name="One-sample t-test",
+                statistic=0.0,
+                p_value=1.0,
+                significant=False,
+                effect_size=0.0,
+                interpretation="Insufficient data",
+            )
+        
+        arr = np.array(agreements)
+        n = len(arr)
+        mean = np.mean(arr)
+        std = np.std(arr, ddof=1)
+        
+        if std == 0:
+            significant = mean > threshold
+            return HypothesisTestResult(
+                test_name="One-sample t-test",
+                statistic=float('inf') if mean > threshold else float('-inf'),
+                p_value=0.0 if mean > threshold else 1.0,
+                significant=significant,
+                effect_size=0.0,
+                interpretation=f"All values equal to {mean:.3f}",
+            )
+        
+        t_stat = (mean - threshold) / (std / np.sqrt(n))
+        p_value = self._analyzer._t_distribution_pvalue(float(t_stat), n - 1, "greater")
+        
+        effect_size = (mean - threshold) / std
+        significant = p_value < self.alpha
+        
+        if significant:
+            interpretation = f"Agreement ({mean:.1%}) is significantly above {threshold:.0%} (p={p_value:.4f})"
+        else:
+            interpretation = f"Agreement ({mean:.1%}) is not significantly above {threshold:.0%} (p={p_value:.4f})"
+        
+        return HypothesisTestResult(
+            test_name="One-sample t-test (vs threshold)",
+            statistic=float(t_stat),
+            p_value=p_value,
+            significant=significant,
+            effect_size=abs(effect_size),
+            interpretation=interpretation,
+        )
+    
+    def _estimate_power(self, n1: int, n2: int, effect_size: float) -> float:
+        """Estimate statistical power given sample sizes and effect size."""
+        if effect_size == 0:
+            return self.alpha  # Power equals alpha when no effect
+        
+        # Simplified power calculation
+        # In production, use scipy.stats.power
+        n = 2 / (1/n1 + 1/n2)  # Harmonic mean
+        ncp = effect_size * np.sqrt(n / 2)  # Non-centrality parameter
+        
+        # Rough approximation using normal distribution
+        from math import erf, sqrt
+        z_alpha = 1.96 if self.alpha == 0.05 else 1.645
+        power = 0.5 * (1 + erf((ncp - z_alpha) / sqrt(2)))
+        
+        return min(0.99, max(0.01, power))
+    
+    def _recommend_sample_size(self, effect_size: float) -> int:
+        """Recommend sample size for desired power."""
+        if effect_size == 0:
+            return 100  # Default for unknown effect
+        
+        # Sample size formula for two-sample t-test
+        # n = 2 * ((z_alpha + z_beta) / d)^2
+        z_alpha = 1.96  # For alpha = 0.05
+        z_beta = 0.84   # For power = 0.8
+        
+        n_per_group = 2 * ((z_alpha + z_beta) / effect_size) ** 2
+        
+        return max(10, int(np.ceil(n_per_group)))
+    
+    def _generate_conclusion(
+        self,
+        suite: SignificanceTestSuite,
+        backend_a: str,
+        backend_b: str,
+        times_a: list[float],
+        times_b: list[float],
+    ) -> str:
+        """Generate overall conclusion from test suite."""
+        mean_a = np.mean(times_a)
+        mean_b = np.mean(times_b)
+        
+        # Check agreement between tests
+        t_sig = suite.t_test.significant if suite.t_test else False
+        mw_sig = suite.mann_whitney.significant if suite.mann_whitney else False
+        
+        conclusions = []
+        
+        if t_sig and mw_sig:
+            faster = backend_a if mean_a < mean_b else backend_b
+            conclusions.append(
+                f"Both parametric and non-parametric tests agree: "
+                f"{faster} is significantly faster."
+            )
+        elif t_sig or mw_sig:
+            conclusions.append(
+                "Tests show mixed results. Consider collecting more data."
+            )
+        else:
+            conclusions.append(
+                f"No significant difference detected between {backend_a} and {backend_b}."
+            )
+        
+        # Effect size interpretation
+        effect_interp = self._analyzer._interpret_effect_size(suite.effect_size)
+        conclusions.append(f"Effect size: {effect_interp} (d={suite.effect_size:.2f})")
+        
+        # Power assessment
+        if suite.power_estimate < 0.5:
+            conclusions.append(
+                f"⚠️ Low statistical power ({suite.power_estimate:.0%}). "
+                f"Recommend {suite.sample_size_recommendation} samples per backend."
+            )
+        elif suite.power_estimate < self.power_target:
+            conclusions.append(
+                f"Moderate power ({suite.power_estimate:.0%}). "
+                f"Consider {suite.sample_size_recommendation} samples for more reliable results."
+            )
+        else:
+            conclusions.append(f"Good statistical power ({suite.power_estimate:.0%}).")
+        
+        return " ".join(conclusions)

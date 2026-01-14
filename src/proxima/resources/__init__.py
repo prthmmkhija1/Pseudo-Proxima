@@ -30,6 +30,20 @@ from .consent import (
     ConsentResponse,
     DefaultConsentPrompt,
     requires_consent,
+    # New: Consent Audit Logging
+    AuditEventType as ConsentAuditEventType,
+    AuditLogEntry,
+    ConsentAuditLogger,
+    # New: Consent Expiration & Re-prompting
+    ExpirationPolicy,
+    DEFAULT_EXPIRATION_POLICIES,
+    ConsentExpirationManager,
+    # New: Force Execute with Warnings
+    ForceExecuteWarning,
+    ForceExecuteResult,
+    ForceExecuteManager,
+    # New: Enhanced Consent Manager
+    EnhancedConsentManager,
 )
 from .control import (
     AbortException,
@@ -74,6 +88,29 @@ from .monitor import (
     MemorySnapshot,
     MemoryThresholds,
     ResourceMonitor,
+    # New: Trend Analysis & Prediction
+    TrendDirection,
+    TrendPrediction,
+    ResourceTrend,
+    TrendAnalyzer,
+    # New: Automatic Resource Optimization
+    OptimizationType,
+    OptimizationRecommendation,
+    OptimizationPlan,
+    ResourceOptimizer,
+    # New: Backend Integration
+    BackendResourceScore,
+    ResourceAwareSelection,
+    BackendResourceIntegration,
+    # Extended monitors
+    GPUSnapshot,
+    GPUMonitor,
+    DiskSnapshot,
+    DiskMonitor,
+    NetworkSnapshot,
+    NetworkMonitor,
+    ResourceSnapshot,
+    ExtendedResourceMonitor,
 )
 from .session import Session, SessionManager, SessionStatus
 from .timer import (
@@ -106,6 +143,37 @@ __all__ = [
     "MemoryEstimator",
     "MemoryEstimate",
     "MemoryCheckResult",
+    # Monitor - Trend Analysis & Prediction (100% Complete)
+    "TrendDirection",
+    "TrendPrediction",
+    "ResourceTrend",
+    "TrendAnalyzer",
+    # Monitor - Automatic Resource Optimization (100% Complete)
+    "OptimizationType",
+    "OptimizationRecommendation",
+    "OptimizationPlan",
+    "ResourceOptimizer",
+    # Monitor - Backend Integration (100% Complete)
+    "BackendResourceScore",
+    "ResourceAwareSelection",
+    "BackendResourceIntegration",
+    # Monitor - Extended Resource Monitors
+    "GPUSnapshot",
+    "GPUMonitor",
+    "DiskSnapshot",
+    "DiskMonitor",
+    "NetworkSnapshot",
+    "NetworkMonitor",
+    "ResourceSnapshot",
+    "ExtendedResourceMonitor",
+    "CPUMonitor",
+    "MemoryLevel",
+    "MemoryThresholds",
+    "MemorySnapshot",
+    "MemoryAlert",
+    "MemoryEstimator",
+    "MemoryEstimate",
+    "MemoryCheckResult",
     # Control (Step 4.3)
     "ExecutionController",
     "ControlState",
@@ -129,6 +197,22 @@ __all__ = [
     "ConsentDeniedException",
     "requires_consent",
     "CATEGORY_CONFIGS",
+    # Consent - Granular Types (100% Complete)
+    # (Included in ConsentCategory enum expansion)
+    # Consent - Audit Logging (100% Complete)
+    "ConsentAuditEventType",
+    "AuditLogEntry",
+    "ConsentAuditLogger",
+    # Consent - Expiration & Re-prompting (100% Complete)
+    "ExpirationPolicy",
+    "DEFAULT_EXPIRATION_POLICIES",
+    "ConsentExpirationManager",
+    # Consent - Force Execute with Warnings (100% Complete)
+    "ForceExecuteWarning",
+    "ForceExecuteResult",
+    "ForceExecuteManager",
+    # Consent - Enhanced Manager (100% Complete)
+    "EnhancedConsentManager",
     # Audit Logging
     "AuditEvent",
     "AuditEventType",

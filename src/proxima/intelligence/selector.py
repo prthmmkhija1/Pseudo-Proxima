@@ -13,10 +13,12 @@ Step 4.1: Updated for Phase 4 - Unified Backend Selection Enhancement
 
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum, auto
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import psutil
@@ -1352,3 +1354,1302 @@ def get_recommended_backend(
 
 # Backwards compatibility alias
 SelectionInput = CircuitCharacteristics
+
+
+# =============================================================================
+# Performance History Database (Feature - Backend Selector)
+# =============================================================================
+
+
+@dataclass
+class PerformanceRecord:
+    """Record of a single backend execution."""
+    
+    timestamp: float
+    backend: str
+    qubit_count: int
+    gate_count: int
+    depth: int
+    execution_time_ms: float
+    memory_peak_mb: float
+    success: bool
+    error: str | None = None
+    simulation_type: str = "state_vector"
+    gpu_used: bool = False
+
+
+@dataclass
+class BackendStatistics:
+    """Aggregated statistics for a backend."""
+    
+    backend: str
+    total_executions: int
+    successful_executions: int
+    success_rate: float
+    avg_execution_time_ms: float
+    median_execution_time_ms: float
+    p95_execution_time_ms: float
+    avg_memory_mb: float
+    max_memory_mb: float
+    avg_qubits: float
+    max_qubits: int
+    last_used: float
+    reliability_score: float  # 0-1 based on success rate and consistency
+
+
+class PerformanceHistoryDatabase:
+    """Database for tracking backend performance history.
+    
+    Features:
+    - SQLite-backed persistent storage
+    - Performance trend analysis
+    - Backend reliability scoring
+    - Query by circuit characteristics
+    - Automatic cleanup of old records
+    """
+    
+    def __init__(self, db_path: str | None = None) -> None:
+        """Initialize database.
+        
+        Args:
+            db_path: Path to SQLite database file
+        """
+        import sqlite3
+        
+        self._db_path = db_path or str(Path.home() / ".proxima" / "performance_history.db")
+        Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)
+        
+        self._conn: sqlite3.Connection | None = None
+        self._init_db()
+    
+    def _get_conn(self) -> "sqlite3.Connection":
+        """Get database connection."""
+        import sqlite3
+        if self._conn is None:
+            self._conn = sqlite3.connect(self._db_path)
+            self._conn.row_factory = sqlite3.Row
+        return self._conn
+    
+    def _init_db(self) -> None:
+        """Initialize database schema."""
+        conn = self._get_conn()
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS performance_records (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp REAL NOT NULL,
+                backend TEXT NOT NULL,
+                qubit_count INTEGER NOT NULL,
+                gate_count INTEGER NOT NULL,
+                depth INTEGER NOT NULL,
+                execution_time_ms REAL NOT NULL,
+                memory_peak_mb REAL NOT NULL,
+                success INTEGER NOT NULL,
+                error TEXT,
+                simulation_type TEXT DEFAULT 'state_vector',
+                gpu_used INTEGER DEFAULT 0
+            );
+            
+            CREATE INDEX IF NOT EXISTS idx_backend ON performance_records(backend);
+            CREATE INDEX IF NOT EXISTS idx_timestamp ON performance_records(timestamp);
+            CREATE INDEX IF NOT EXISTS idx_qubits ON performance_records(qubit_count);
+            
+            CREATE TABLE IF NOT EXISTS backend_stats_cache (
+                backend TEXT PRIMARY KEY,
+                stats_json TEXT NOT NULL,
+                updated_at REAL NOT NULL
+            );
+        """)
+        conn.commit()
+    
+    def record_execution(
+        self,
+        backend: str,
+        qubit_count: int,
+        gate_count: int,
+        depth: int,
+        execution_time_ms: float,
+        memory_peak_mb: float,
+        success: bool,
+        error: str | None = None,
+        simulation_type: str = "state_vector",
+        gpu_used: bool = False,
+    ) -> PerformanceRecord:
+        """Record a backend execution.
+        
+        Args:
+            backend: Backend name
+            qubit_count: Number of qubits
+            gate_count: Number of gates
+            depth: Circuit depth
+            execution_time_ms: Execution time in milliseconds
+            memory_peak_mb: Peak memory usage in MB
+            success: Whether execution succeeded
+            error: Error message if failed
+            simulation_type: Type of simulation
+            gpu_used: Whether GPU was used
+            
+        Returns:
+            Created PerformanceRecord
+        """
+        import time as time_module
+        
+        timestamp = time_module.time()
+        
+        conn = self._get_conn()
+        conn.execute(
+            """
+            INSERT INTO performance_records 
+            (timestamp, backend, qubit_count, gate_count, depth, execution_time_ms,
+             memory_peak_mb, success, error, simulation_type, gpu_used)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (timestamp, backend, qubit_count, gate_count, depth, execution_time_ms,
+             memory_peak_mb, int(success), error, simulation_type, int(gpu_used))
+        )
+        conn.commit()
+        
+        # Invalidate stats cache
+        conn.execute("DELETE FROM backend_stats_cache WHERE backend = ?", (backend,))
+        conn.commit()
+        
+        return PerformanceRecord(
+            timestamp=timestamp,
+            backend=backend,
+            qubit_count=qubit_count,
+            gate_count=gate_count,
+            depth=depth,
+            execution_time_ms=execution_time_ms,
+            memory_peak_mb=memory_peak_mb,
+            success=success,
+            error=error,
+            simulation_type=simulation_type,
+            gpu_used=gpu_used,
+        )
+    
+    def get_backend_statistics(
+        self,
+        backend: str,
+        days: int = 30,
+    ) -> BackendStatistics | None:
+        """Get aggregated statistics for a backend.
+        
+        Args:
+            backend: Backend name
+            days: Number of days to include
+            
+        Returns:
+            BackendStatistics or None if no data
+        """
+        import time as time_module
+        
+        conn = self._get_conn()
+        cutoff = time_module.time() - (days * 24 * 3600)
+        
+        # Get all records
+        cursor = conn.execute(
+            """
+            SELECT * FROM performance_records
+            WHERE backend = ? AND timestamp > ?
+            ORDER BY timestamp DESC
+            """,
+            (backend, cutoff)
+        )
+        rows = cursor.fetchall()
+        
+        if not rows:
+            return None
+        
+        # Calculate statistics
+        times = [r["execution_time_ms"] for r in rows]
+        memories = [r["memory_peak_mb"] for r in rows]
+        qubits = [r["qubit_count"] for r in rows]
+        successes = [r["success"] for r in rows]
+        
+        import statistics
+        
+        success_rate = sum(successes) / len(successes)
+        
+        # Calculate reliability score
+        # Based on success rate and consistency (lower variance is better)
+        try:
+            variance = statistics.variance(times) if len(times) > 1 else 0
+            consistency = 1 / (1 + variance / 1000)  # Normalize
+        except Exception:
+            consistency = 0.5
+        
+        reliability = 0.7 * success_rate + 0.3 * consistency
+        
+        return BackendStatistics(
+            backend=backend,
+            total_executions=len(rows),
+            successful_executions=sum(successes),
+            success_rate=success_rate,
+            avg_execution_time_ms=statistics.mean(times),
+            median_execution_time_ms=statistics.median(times),
+            p95_execution_time_ms=sorted(times)[int(len(times) * 0.95)] if len(times) > 1 else times[0],
+            avg_memory_mb=statistics.mean(memories),
+            max_memory_mb=max(memories),
+            avg_qubits=statistics.mean(qubits),
+            max_qubits=max(qubits),
+            last_used=max(r["timestamp"] for r in rows),
+            reliability_score=reliability,
+        )
+    
+    def get_history_score(self, backend: str, days: int = 30) -> float:
+        """Get historical success score for backend selection.
+        
+        Args:
+            backend: Backend name
+            days: Number of days to consider
+            
+        Returns:
+            Score between 0 and 1
+        """
+        stats = self.get_backend_statistics(backend, days)
+        if not stats:
+            return 0.8  # Default neutral score
+        
+        return stats.reliability_score
+    
+    def get_best_backend_for_circuit(
+        self,
+        qubit_count: int,
+        gate_count: int,
+        simulation_type: str = "state_vector",
+    ) -> str | None:
+        """Get historically best backend for similar circuits.
+        
+        Args:
+            qubit_count: Number of qubits
+            gate_count: Number of gates
+            simulation_type: Simulation type
+            
+        Returns:
+            Best backend name or None
+        """
+        import time as time_module
+        
+        conn = self._get_conn()
+        cutoff = time_module.time() - (30 * 24 * 3600)
+        
+        # Find similar circuits (within 20% qubit/gate range)
+        qubit_min = int(qubit_count * 0.8)
+        qubit_max = int(qubit_count * 1.2)
+        gate_min = int(gate_count * 0.8)
+        gate_max = int(gate_count * 1.2)
+        
+        cursor = conn.execute(
+            """
+            SELECT backend, 
+                   AVG(execution_time_ms) as avg_time,
+                   COUNT(*) as count,
+                   SUM(success) * 1.0 / COUNT(*) as success_rate
+            FROM performance_records
+            WHERE timestamp > ?
+              AND qubit_count BETWEEN ? AND ?
+              AND gate_count BETWEEN ? AND ?
+              AND simulation_type = ?
+              AND success = 1
+            GROUP BY backend
+            HAVING count >= 3
+            ORDER BY success_rate DESC, avg_time ASC
+            LIMIT 1
+            """,
+            (cutoff, qubit_min, qubit_max, gate_min, gate_max, simulation_type)
+        )
+        row = cursor.fetchone()
+        
+        return row["backend"] if row else None
+    
+    def estimate_execution_time(
+        self,
+        backend: str,
+        qubit_count: int,
+        gate_count: int,
+    ) -> float | None:
+        """Estimate execution time based on history.
+        
+        Uses linear regression on historical data.
+        
+        Args:
+            backend: Backend name
+            qubit_count: Number of qubits
+            gate_count: Number of gates
+            
+        Returns:
+            Estimated time in ms or None if insufficient data
+        """
+        import time as time_module
+        
+        conn = self._get_conn()
+        cutoff = time_module.time() - (30 * 24 * 3600)
+        
+        cursor = conn.execute(
+            """
+            SELECT qubit_count, gate_count, execution_time_ms
+            FROM performance_records
+            WHERE backend = ? AND timestamp > ? AND success = 1
+            ORDER BY timestamp DESC
+            LIMIT 100
+            """,
+            (backend, cutoff)
+        )
+        rows = cursor.fetchall()
+        
+        if len(rows) < 10:
+            return None
+        
+        # Simple estimation using average scaling
+        # Time ≈ base + k1 * 2^qubits + k2 * gates
+        import statistics
+        
+        # Calculate average time per complexity unit
+        times = [r["execution_time_ms"] for r in rows]
+        complexities = [2 ** r["qubit_count"] + r["gate_count"] for r in rows]
+        
+        time_per_complexity = statistics.mean(
+            t / c for t, c in zip(times, complexities) if c > 0
+        )
+        
+        target_complexity = 2 ** qubit_count + gate_count
+        return time_per_complexity * target_complexity
+    
+    def cleanup_old_records(self, days: int = 90) -> int:
+        """Remove records older than specified days.
+        
+        Args:
+            days: Age threshold
+            
+        Returns:
+            Number of records deleted
+        """
+        import time as time_module
+        
+        conn = self._get_conn()
+        cutoff = time_module.time() - (days * 24 * 3600)
+        
+        cursor = conn.execute(
+            "DELETE FROM performance_records WHERE timestamp < ?",
+            (cutoff,)
+        )
+        deleted = cursor.rowcount
+        conn.commit()
+        
+        # Clear cache
+        conn.execute("DELETE FROM backend_stats_cache")
+        conn.commit()
+        
+        return deleted
+    
+    def export_history(self, output_path: str, format: str = "json") -> None:
+        """Export performance history.
+        
+        Args:
+            output_path: Output file path
+            format: 'json' or 'csv'
+        """
+        conn = self._get_conn()
+        cursor = conn.execute("SELECT * FROM performance_records ORDER BY timestamp DESC")
+        rows = cursor.fetchall()
+        
+        if format == "json":
+            data = [dict(row) for row in rows]
+            Path(output_path).write_text(json.dumps(data, indent=2))
+        elif format == "csv":
+            headers = ["timestamp", "backend", "qubit_count", "gate_count", "depth",
+                      "execution_time_ms", "memory_peak_mb", "success", "error",
+                      "simulation_type", "gpu_used"]
+            lines = [",".join(headers)]
+            for row in rows:
+                lines.append(",".join(str(row[h]) for h in headers))
+            Path(output_path).write_text("\n".join(lines))
+
+
+# =============================================================================
+# Enhanced Memory Estimation (Feature - Backend Selector)
+# =============================================================================
+
+
+@dataclass
+class MemoryEstimate:
+    """Detailed memory estimate for a simulation."""
+    
+    state_vector_mb: float
+    intermediate_mb: float
+    overhead_mb: float
+    total_mb: float
+    peak_mb: float
+    fits_in_ram: bool
+    fits_in_gpu: bool
+    recommended_precision: str  # 'single' or 'double'
+    warnings: list[str]
+
+
+class MemoryEstimator:
+    """Estimates memory requirements for quantum circuit simulation.
+    
+    Features:
+    - Per-backend memory models
+    - Precision-aware estimation
+    - GPU memory consideration
+    - Safety margins
+    - Recommendations
+    """
+    
+    # Memory overhead factors per backend
+    BACKEND_OVERHEAD: dict[str, float] = {
+        "numpy": 1.2,      # Some overhead for Python
+        "cupy": 1.1,       # Efficient GPU
+        "qiskit": 1.5,     # Qiskit has more overhead
+        "cirq": 1.4,
+        "quest": 1.1,      # Efficient C++
+        "cuquantum": 1.05, # Very efficient
+        "qsim": 1.15,
+        "pennylane": 1.3,
+        "lret": 0.8,       # Rank-reduced is more efficient
+    }
+    
+    # Intermediate memory factors (for gate application)
+    INTERMEDIATE_FACTORS: dict[str, float] = {
+        "numpy": 2.0,      # Needs copy for operations
+        "cupy": 1.5,
+        "qiskit": 2.5,
+        "cirq": 2.0,
+        "quest": 1.2,
+        "cuquantum": 1.1,
+        "qsim": 1.3,
+        "pennylane": 2.0,
+        "lret": 0.5,       # Much less due to rank reduction
+    }
+    
+    def __init__(self, gpu_detector: GPUDetector | None = None) -> None:
+        """Initialize estimator."""
+        self._gpu_detector = gpu_detector or GPUDetector()
+    
+    def estimate(
+        self,
+        backend: str,
+        qubit_count: int,
+        gate_count: int,
+        simulation_type: str = "state_vector",
+        precision: str = "double",
+    ) -> MemoryEstimate:
+        """Estimate memory requirements.
+        
+        Args:
+            backend: Backend name
+            qubit_count: Number of qubits
+            gate_count: Number of gates
+            simulation_type: 'state_vector' or 'density_matrix'
+            precision: 'single' or 'double'
+            
+        Returns:
+            MemoryEstimate with all details
+        """
+        warnings: list[str] = []
+        
+        # Base state vector size
+        bytes_per_amplitude = 16 if precision == "double" else 8
+        
+        if simulation_type == "density_matrix":
+            # Density matrix: 2^n x 2^n complex matrix
+            num_elements = (2 ** qubit_count) ** 2
+        else:
+            # State vector: 2^n complex amplitudes
+            num_elements = 2 ** qubit_count
+        
+        state_vector_bytes = num_elements * bytes_per_amplitude
+        state_vector_mb = state_vector_bytes / (1024 * 1024)
+        
+        # Backend-specific overhead
+        overhead_factor = self.BACKEND_OVERHEAD.get(backend, 1.5)
+        overhead_mb = state_vector_mb * (overhead_factor - 1)
+        
+        # Intermediate memory for gate operations
+        intermediate_factor = self.INTERMEDIATE_FACTORS.get(backend, 2.0)
+        intermediate_mb = state_vector_mb * (intermediate_factor - 1)
+        
+        # Total and peak
+        total_mb = state_vector_mb + overhead_mb
+        peak_mb = state_vector_mb + overhead_mb + intermediate_mb
+        
+        # Check system RAM
+        try:
+            available_ram = psutil.virtual_memory().available / (1024 * 1024)
+        except Exception:
+            available_ram = 8192
+        
+        fits_in_ram = peak_mb < available_ram * 0.8
+        
+        # Check GPU memory
+        fits_in_gpu = False
+        if self._gpu_detector.is_gpu_available():
+            gpu_mem = self._gpu_detector.get_gpu_memory_mb()
+            fits_in_gpu = peak_mb < gpu_mem * 0.8
+        
+        # Generate warnings
+        if peak_mb > available_ram * 0.5:
+            warnings.append(f"High memory usage: {peak_mb:.0f} MB (50%+ of available RAM)")
+        
+        if qubit_count > 25 and precision == "double":
+            warnings.append("Consider using single precision for large circuits")
+        
+        if simulation_type == "density_matrix" and qubit_count > 15:
+            warnings.append("Density matrix simulation is memory-intensive for >15 qubits")
+        
+        # Recommend precision
+        if qubit_count > 25:
+            recommended_precision = "single"
+        elif simulation_type == "density_matrix" and qubit_count > 12:
+            recommended_precision = "single"
+        else:
+            recommended_precision = "double"
+        
+        return MemoryEstimate(
+            state_vector_mb=state_vector_mb,
+            intermediate_mb=intermediate_mb,
+            overhead_mb=overhead_mb,
+            total_mb=total_mb,
+            peak_mb=peak_mb,
+            fits_in_ram=fits_in_ram,
+            fits_in_gpu=fits_in_gpu,
+            recommended_precision=recommended_precision,
+            warnings=warnings,
+        )
+    
+    def estimate_all_backends(
+        self,
+        qubit_count: int,
+        gate_count: int,
+        simulation_type: str = "state_vector",
+    ) -> dict[str, MemoryEstimate]:
+        """Estimate memory for all backends.
+        
+        Args:
+            qubit_count: Number of qubits
+            gate_count: Number of gates
+            simulation_type: Simulation type
+            
+        Returns:
+            Dict mapping backend name to estimate
+        """
+        backends = list(self.BACKEND_OVERHEAD.keys())
+        return {
+            backend: self.estimate(backend, qubit_count, gate_count, simulation_type)
+            for backend in backends
+        }
+    
+    def get_best_backend_by_memory(
+        self,
+        qubit_count: int,
+        simulation_type: str = "state_vector",
+        require_gpu: bool = False,
+    ) -> str | None:
+        """Get backend with best memory efficiency.
+        
+        Args:
+            qubit_count: Number of qubits
+            simulation_type: Simulation type
+            require_gpu: Whether GPU is required
+            
+        Returns:
+            Best backend name or None
+        """
+        estimates = self.estimate_all_backends(qubit_count, 100, simulation_type)
+        
+        # Filter by requirements
+        candidates = []
+        for backend, estimate in estimates.items():
+            if not estimate.fits_in_ram:
+                continue
+            if require_gpu and not estimate.fits_in_gpu:
+                continue
+            candidates.append((backend, estimate))
+        
+        if not candidates:
+            return None
+        
+        # Sort by peak memory
+        candidates.sort(key=lambda x: x[1].peak_mb)
+        return candidates[0][0]
+
+
+# =============================================================================
+# Comprehensive Explanation Generation (Feature - Backend Selector)
+# =============================================================================
+
+
+@dataclass
+class DetailedExplanation:
+    """Comprehensive explanation of backend selection."""
+    
+    summary: str
+    circuit_analysis: str
+    strategy_rationale: str
+    backend_comparison: str
+    scoring_breakdown: str
+    memory_analysis: str
+    gpu_analysis: str
+    history_analysis: str
+    recommendations: list[str]
+    warnings: list[str]
+    alternatives_analysis: str
+    confidence_explanation: str
+
+
+class ComprehensiveExplainer:
+    """Generates detailed explanations for backend selection.
+    
+    Features:
+    - Multi-section explanations
+    - Visual score breakdowns
+    - Memory and GPU analysis
+    - Historical context
+    - Actionable recommendations
+    """
+    
+    def __init__(
+        self,
+        history_db: PerformanceHistoryDatabase | None = None,
+        memory_estimator: MemoryEstimator | None = None,
+    ) -> None:
+        """Initialize explainer."""
+        self._history_db = history_db
+        self._memory_estimator = memory_estimator or MemoryEstimator()
+    
+    def generate_detailed_explanation(
+        self,
+        result: SelectionResult,
+        characteristics: CircuitCharacteristics,
+        strategy: SelectionStrategy,
+    ) -> DetailedExplanation:
+        """Generate comprehensive explanation.
+        
+        Args:
+            result: Selection result
+            characteristics: Circuit characteristics
+            strategy: Selection strategy used
+            
+        Returns:
+            DetailedExplanation with all sections
+        """
+        # Summary
+        summary = self._generate_summary(result, characteristics)
+        
+        # Circuit analysis
+        circuit_analysis = self._generate_circuit_analysis(characteristics)
+        
+        # Strategy rationale
+        strategy_rationale = self._generate_strategy_rationale(strategy, characteristics)
+        
+        # Backend comparison
+        backend_comparison = self._generate_backend_comparison(result.scores)
+        
+        # Scoring breakdown
+        scoring_breakdown = self._generate_scoring_breakdown(result.scores, result.selected_backend)
+        
+        # Memory analysis
+        memory_analysis = self._generate_memory_analysis(result.selected_backend, characteristics)
+        
+        # GPU analysis
+        gpu_analysis = self._generate_gpu_analysis(result, characteristics)
+        
+        # History analysis
+        history_analysis = self._generate_history_analysis(result.selected_backend)
+        
+        # Recommendations
+        recommendations = self._generate_recommendations(result, characteristics)
+        
+        # Alternatives analysis
+        alternatives_analysis = self._generate_alternatives_analysis(result)
+        
+        # Confidence explanation
+        confidence_explanation = self._generate_confidence_explanation(result)
+        
+        return DetailedExplanation(
+            summary=summary,
+            circuit_analysis=circuit_analysis,
+            strategy_rationale=strategy_rationale,
+            backend_comparison=backend_comparison,
+            scoring_breakdown=scoring_breakdown,
+            memory_analysis=memory_analysis,
+            gpu_analysis=gpu_analysis,
+            history_analysis=history_analysis,
+            recommendations=recommendations,
+            warnings=result.warnings,
+            alternatives_analysis=alternatives_analysis,
+            confidence_explanation=confidence_explanation,
+        )
+    
+    def _generate_summary(
+        self,
+        result: SelectionResult,
+        characteristics: CircuitCharacteristics,
+    ) -> str:
+        """Generate summary section."""
+        return (
+            f"Selected **{result.selected_backend}** backend with "
+            f"{result.confidence:.0%} confidence for a {characteristics.qubit_count}-qubit, "
+            f"{characteristics.gate_count}-gate circuit. "
+            f"{'GPU acceleration is available.' if result.gpu_available else 'Running on CPU.'}"
+        )
+    
+    def _generate_circuit_analysis(
+        self,
+        characteristics: CircuitCharacteristics,
+    ) -> str:
+        """Generate circuit analysis section."""
+        lines = [
+            "**Circuit Characteristics:**",
+            f"• Qubits: {characteristics.qubit_count}",
+            f"• Gates: {characteristics.gate_count}",
+            f"• Depth: {characteristics.depth}",
+            f"• Entanglement density: {characteristics.entanglement_density:.1%}",
+            f"• Simulation type: {characteristics.simulation_type.value}",
+        ]
+        
+        if characteristics.has_custom_gates:
+            lines.append("• Contains custom gates (may limit backend options)")
+        
+        if characteristics.has_parameterized_gates:
+            lines.append("• Contains parameterized gates")
+        
+        if characteristics.has_mid_circuit_measurement:
+            lines.append("• Contains mid-circuit measurements (limits some backends)")
+        
+        if characteristics.has_noise_model:
+            lines.append("• Uses noise model")
+        
+        lines.append(f"• Estimated base memory: {characteristics.estimated_memory_mb:.1f} MB")
+        
+        return "\n".join(lines)
+    
+    def _generate_strategy_rationale(
+        self,
+        strategy: SelectionStrategy,
+        characteristics: CircuitCharacteristics,
+    ) -> str:
+        """Generate strategy rationale section."""
+        rationales = {
+            SelectionStrategy.PERFORMANCE: (
+                "**Performance Strategy**: Prioritizing execution speed. "
+                "Best for iterative development, quick experiments, or when time is critical."
+            ),
+            SelectionStrategy.ACCURACY: (
+                "**Accuracy Strategy**: Prioritizing simulation fidelity. "
+                "Best for final validation, publication results, or error-sensitive work."
+            ),
+            SelectionStrategy.MEMORY: (
+                "**Memory Strategy**: Prioritizing memory efficiency. "
+                "Best for large circuits or systems with limited RAM."
+            ),
+            SelectionStrategy.BALANCED: (
+                "**Balanced Strategy**: Weighing all factors equally. "
+                "Good general-purpose selection for most use cases."
+            ),
+            SelectionStrategy.GPU_PREFERRED: (
+                "**GPU-Preferred Strategy**: Prioritizing GPU acceleration. "
+                "Best for large circuits where GPU parallelism provides speedup."
+            ),
+            SelectionStrategy.CPU_OPTIMIZED: (
+                "**CPU-Optimized Strategy**: Prioritizing CPU-optimized backends. "
+                "Best when GPU is unavailable or for smaller circuits."
+            ),
+            SelectionStrategy.LLM_ASSISTED: (
+                "**LLM-Assisted Strategy**: Using AI to analyze circuit and recommend backend. "
+                "Best for complex decisions with many competing factors."
+            ),
+        }
+        
+        base = rationales.get(strategy, "**Custom Strategy**")
+        
+        # Add context
+        if characteristics.qubit_count > 25:
+            base += f" Note: Large circuit ({characteristics.qubit_count} qubits) benefits from GPU or optimized backends."
+        
+        return base
+    
+    def _generate_backend_comparison(
+        self,
+        scores: list[SelectionScore],
+    ) -> str:
+        """Generate backend comparison table."""
+        if not scores:
+            return "No backends were scored."
+        
+        lines = ["**Backend Comparison:**", ""]
+        lines.append("| Backend | Total | Feature | Perf | Memory | GPU | History |")
+        lines.append("|---------|-------|---------|------|--------|-----|---------|")
+        
+        for score in sorted(scores, key=lambda s: -s.total_score)[:6]:
+            lines.append(
+                f"| {score.backend_name} | "
+                f"{score.total_score:.2f} | "
+                f"{score.feature_score:.2f} | "
+                f"{score.performance_score:.2f} | "
+                f"{score.memory_score:.2f} | "
+                f"{score.gpu_score:.2f} | "
+                f"{score.history_score:.2f} |"
+            )
+        
+        return "\n".join(lines)
+    
+    def _generate_scoring_breakdown(
+        self,
+        scores: list[SelectionScore],
+        selected: str,
+    ) -> str:
+        """Generate detailed scoring breakdown for selected backend."""
+        score = next((s for s in scores if s.backend_name == selected), None)
+        if not score:
+            return "No scoring data available."
+        
+        lines = [
+            f"**Scoring Breakdown for {selected}:**",
+            "",
+            f"• **Total Score**: {score.total_score:.3f}",
+            f"• **Feature Score**: {score.feature_score:.3f} - Measures capability match",
+            f"• **Performance Score**: {score.performance_score:.3f} - Expected execution speed",
+            f"• **Memory Score**: {score.memory_score:.3f} - Memory efficiency",
+            f"• **GPU Score**: {score.gpu_score:.3f} - GPU utilization potential",
+            f"• **History Score**: {score.history_score:.3f} - Past reliability",
+            f"• **Compatibility Score**: {score.compatibility_score:.3f} - Gate/feature support",
+        ]
+        
+        if score.details:
+            lines.append("")
+            lines.append("**Additional Details:**")
+            for key, value in score.details.items():
+                lines.append(f"• {key.replace('_', ' ').title()}: {value}")
+        
+        return "\n".join(lines)
+    
+    def _generate_memory_analysis(
+        self,
+        backend: str,
+        characteristics: CircuitCharacteristics,
+    ) -> str:
+        """Generate memory analysis section."""
+        estimate = self._memory_estimator.estimate(
+            backend,
+            characteristics.qubit_count,
+            characteristics.gate_count,
+            characteristics.simulation_type.value,
+        )
+        
+        lines = [
+            "**Memory Analysis:**",
+            "",
+            f"• State vector: {estimate.state_vector_mb:.1f} MB",
+            f"• Intermediate buffers: {estimate.intermediate_mb:.1f} MB",
+            f"• Backend overhead: {estimate.overhead_mb:.1f} MB",
+            f"• **Total required**: {estimate.total_mb:.1f} MB",
+            f"• **Peak usage**: {estimate.peak_mb:.1f} MB",
+            "",
+            f"• Fits in RAM: {'✓' if estimate.fits_in_ram else '✗'}",
+            f"• Fits in GPU: {'✓' if estimate.fits_in_gpu else '✗ (or N/A)'}",
+            f"• Recommended precision: {estimate.recommended_precision}",
+        ]
+        
+        if estimate.warnings:
+            lines.append("")
+            lines.append("**Memory Warnings:**")
+            for warning in estimate.warnings:
+                lines.append(f"• ⚠️ {warning}")
+        
+        return "\n".join(lines)
+    
+    def _generate_gpu_analysis(
+        self,
+        result: SelectionResult,
+        characteristics: CircuitCharacteristics,
+    ) -> str:
+        """Generate GPU analysis section."""
+        lines = ["**GPU Analysis:**", ""]
+        
+        if result.gpu_available:
+            lines.append("• GPU: ✓ Available")
+            
+            selected_score = next(
+                (s for s in result.scores if s.backend_name == result.selected_backend),
+                None
+            )
+            
+            if selected_score:
+                if selected_score.details.get("gpu_available"):
+                    lines.append(f"• Selected backend ({result.selected_backend}) supports GPU")
+                else:
+                    lines.append(f"• Selected backend ({result.selected_backend}) is CPU-only")
+            
+            gpu_backends = [s.backend_name for s in result.scores if s.details.get("gpu_available")]
+            if gpu_backends:
+                lines.append(f"• Available GPU backends: {', '.join(gpu_backends)}")
+            
+            # GPU benefit analysis
+            if characteristics.qubit_count > 20:
+                lines.append("• GPU recommended for this circuit size (>20 qubits)")
+            else:
+                lines.append("• GPU may not provide significant speedup for small circuits")
+        else:
+            lines.append("• GPU: ✗ Not available")
+            lines.append("• Consider using CPU-optimized backends (qsim, quest)")
+            
+            if characteristics.qubit_count > 25:
+                lines.append("• ⚠️ Large circuit would benefit from GPU acceleration")
+        
+        return "\n".join(lines)
+    
+    def _generate_history_analysis(self, backend: str) -> str:
+        """Generate history analysis section."""
+        if not self._history_db:
+            return "**History Analysis:** No historical data available."
+        
+        stats = self._history_db.get_backend_statistics(backend)
+        
+        if not stats:
+            return f"**History Analysis:** No historical data for {backend}."
+        
+        lines = [
+            f"**Historical Performance of {backend}:**",
+            "",
+            f"• Total executions: {stats.total_executions}",
+            f"• Success rate: {stats.success_rate:.1%}",
+            f"• Reliability score: {stats.reliability_score:.2f}",
+            "",
+            f"• Avg execution time: {stats.avg_execution_time_ms:.1f} ms",
+            f"• Median execution time: {stats.median_execution_time_ms:.1f} ms",
+            f"• 95th percentile: {stats.p95_execution_time_ms:.1f} ms",
+            "",
+            f"• Avg memory usage: {stats.avg_memory_mb:.1f} MB",
+            f"• Max memory usage: {stats.max_memory_mb:.1f} MB",
+            f"• Avg circuit size: {stats.avg_qubits:.1f} qubits",
+        ]
+        
+        return "\n".join(lines)
+    
+    def _generate_recommendations(
+        self,
+        result: SelectionResult,
+        characteristics: CircuitCharacteristics,
+    ) -> list[str]:
+        """Generate actionable recommendations."""
+        recommendations = []
+        
+        # Performance recommendations
+        if characteristics.qubit_count > 20 and not result.gpu_available:
+            recommendations.append(
+                "Consider enabling GPU acceleration for faster simulation of large circuits"
+            )
+        
+        if characteristics.qubit_count > 25:
+            recommendations.append(
+                "For circuits >25 qubits, consider using cuQuantum or qsim for best performance"
+            )
+        
+        # Memory recommendations
+        if characteristics.estimated_memory_mb > 1000:
+            recommendations.append(
+                "High memory requirement - consider single precision or chunked simulation"
+            )
+        
+        # Accuracy recommendations
+        if characteristics.has_noise_model:
+            recommendations.append(
+                "For noisy simulations, verify backend noise model matches your requirements"
+            )
+        
+        # Backend-specific recommendations
+        if result.selected_backend == "numpy" and characteristics.qubit_count > 15:
+            recommendations.append(
+                "NumPy backend selected - consider installing qsim or qiskit for better performance"
+            )
+        
+        if result.confidence < 0.7:
+            recommendations.append(
+                "Low confidence selection - consider trying alternative backends listed below"
+            )
+        
+        return recommendations
+    
+    def _generate_alternatives_analysis(self, result: SelectionResult) -> str:
+        """Generate alternatives analysis section."""
+        if not result.alternatives:
+            return "**Alternatives:** No competitive alternatives identified."
+        
+        lines = ["**Alternative Backends:**", ""]
+        
+        for alt in result.alternatives[:3]:
+            alt_score = next((s for s in result.scores if s.backend_name == alt), None)
+            if alt_score:
+                lines.append(
+                    f"• **{alt}** (score: {alt_score.total_score:.2f}): "
+                    f"Perf={alt_score.performance_score:.2f}, "
+                    f"Memory={alt_score.memory_score:.2f}, "
+                    f"GPU={alt_score.gpu_score:.2f}"
+                )
+            else:
+                lines.append(f"• **{alt}**")
+        
+        return "\n".join(lines)
+    
+    def _generate_confidence_explanation(self, result: SelectionResult) -> str:
+        """Generate confidence explanation section."""
+        confidence = result.confidence
+        
+        if confidence >= 0.9:
+            assessment = "**Very High Confidence**: Clear best choice with strong scores across all metrics."
+        elif confidence >= 0.75:
+            assessment = "**High Confidence**: Good match with minor trade-offs."
+        elif confidence >= 0.6:
+            assessment = "**Moderate Confidence**: Reasonable choice but alternatives may be worth considering."
+        elif confidence >= 0.4:
+            assessment = "**Low Confidence**: No ideal match found. Consider alternatives or different strategy."
+        else:
+            assessment = "**Very Low Confidence**: Poor match. Review circuit requirements and available backends."
+        
+        lines = [
+            f"**Confidence Assessment ({confidence:.0%}):**",
+            "",
+            assessment,
+        ]
+        
+        if result.warnings:
+            lines.append("")
+            lines.append("Factors affecting confidence:")
+            for warning in result.warnings[:3]:
+                lines.append(f"• {warning}")
+        
+        return "\n".join(lines)
+    
+    def format_as_markdown(self, explanation: DetailedExplanation) -> str:
+        """Format detailed explanation as Markdown document.
+        
+        Args:
+            explanation: DetailedExplanation to format
+            
+        Returns:
+            Formatted Markdown string
+        """
+        sections = [
+            "# Backend Selection Report",
+            "",
+            "## Summary",
+            explanation.summary,
+            "",
+            "## Circuit Analysis",
+            explanation.circuit_analysis,
+            "",
+            "## Strategy",
+            explanation.strategy_rationale,
+            "",
+            "## Backend Comparison",
+            explanation.backend_comparison,
+            "",
+            "## Selected Backend Details",
+            explanation.scoring_breakdown,
+            "",
+            "## Memory Analysis",
+            explanation.memory_analysis,
+            "",
+            "## GPU Analysis",
+            explanation.gpu_analysis,
+            "",
+            "## Historical Performance",
+            explanation.history_analysis,
+            "",
+            "## Confidence",
+            explanation.confidence_explanation,
+            "",
+            "## Alternatives",
+            explanation.alternatives_analysis,
+        ]
+        
+        if explanation.recommendations:
+            sections.extend([
+                "",
+                "## Recommendations",
+                "",
+            ])
+            for rec in explanation.recommendations:
+                sections.append(f"- {rec}")
+        
+        if explanation.warnings:
+            sections.extend([
+                "",
+                "## Warnings",
+                "",
+            ])
+            for warning in explanation.warnings:
+                sections.append(f"- ⚠️ {warning}")
+        
+        return "\n".join(sections)
+    
+    def format_as_text(self, explanation: DetailedExplanation) -> str:
+        """Format detailed explanation as plain text.
+        
+        Args:
+            explanation: DetailedExplanation to format
+            
+        Returns:
+            Formatted text string
+        """
+        # Simple text format without Markdown
+        text = self.format_as_markdown(explanation)
+        
+        # Remove Markdown formatting
+        import re
+        text = re.sub(r'\*\*([^*]+)\*\*', r'\1', text)  # Remove bold
+        text = re.sub(r'^#+\s*', '', text, flags=re.MULTILINE)  # Remove headers
+        text = re.sub(r'\|[^\n]+\|', '', text)  # Remove tables
+        
+        return text
+
+
+# =============================================================================
+# Integration: Enhanced Backend Selector
+# =============================================================================
+
+
+class EnhancedBackendSelector(BackendSelector):
+    """Backend selector with all enhanced features.
+    
+    Integrates:
+    - Performance history database
+    - Advanced memory estimation
+    - Comprehensive explanations
+    - GPU-aware selection for all backends
+    """
+    
+    def __init__(
+        self,
+        history_db: PerformanceHistoryDatabase | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Initialize enhanced selector."""
+        super().__init__(**kwargs)
+        
+        self._history_db = history_db or PerformanceHistoryDatabase()
+        self._memory_estimator = MemoryEstimator(self._gpu_detector)
+        self._comprehensive_explainer = ComprehensiveExplainer(
+            self._history_db,
+            self._memory_estimator,
+        )
+        
+        # Update scorer to use history database
+        self._scorer = SelectionScorer(
+            history_provider=self._history_db.get_history_score,
+            gpu_detector=self._gpu_detector,
+        )
+    
+    def select_with_detailed_explanation(
+        self,
+        circuit: "Circuit",
+        strategy: SelectionStrategy = SelectionStrategy.BALANCED,
+    ) -> tuple[SelectionResult, DetailedExplanation]:
+        """Select backend with comprehensive explanation.
+        
+        Args:
+            circuit: Circuit to simulate
+            strategy: Selection strategy
+            
+        Returns:
+            Tuple of (SelectionResult, DetailedExplanation)
+        """
+        result = self.select(circuit, strategy)
+        characteristics = CircuitCharacteristics.from_circuit(circuit)
+        
+        explanation = self._comprehensive_explainer.generate_detailed_explanation(
+            result, characteristics, strategy
+        )
+        
+        return result, explanation
+    
+    def record_execution_result(
+        self,
+        backend: str,
+        circuit: "Circuit",
+        execution_time_ms: float,
+        memory_peak_mb: float,
+        success: bool,
+        error: str | None = None,
+        gpu_used: bool = False,
+    ) -> None:
+        """Record execution result for history.
+        
+        Args:
+            backend: Backend used
+            circuit: Circuit executed
+            execution_time_ms: Execution time
+            memory_peak_mb: Peak memory
+            success: Whether successful
+            error: Error message if failed
+            gpu_used: Whether GPU was used
+        """
+        characteristics = CircuitCharacteristics.from_circuit(circuit)
+        
+        self._history_db.record_execution(
+            backend=backend,
+            qubit_count=characteristics.qubit_count,
+            gate_count=characteristics.gate_count,
+            depth=characteristics.depth,
+            execution_time_ms=execution_time_ms,
+            memory_peak_mb=memory_peak_mb,
+            success=success,
+            error=error,
+            simulation_type=characteristics.simulation_type.value,
+            gpu_used=gpu_used,
+        )
+    
+    def get_memory_estimate(
+        self,
+        circuit: "Circuit",
+        backend: str | None = None,
+    ) -> MemoryEstimate | dict[str, MemoryEstimate]:
+        """Get memory estimate for circuit.
+        
+        Args:
+            circuit: Circuit to estimate
+            backend: Specific backend (or None for all)
+            
+        Returns:
+            MemoryEstimate or dict of estimates
+        """
+        characteristics = CircuitCharacteristics.from_circuit(circuit)
+        
+        if backend:
+            return self._memory_estimator.estimate(
+                backend,
+                characteristics.qubit_count,
+                characteristics.gate_count,
+                characteristics.simulation_type.value,
+            )
+        
+        return self._memory_estimator.estimate_all_backends(
+            characteristics.qubit_count,
+            characteristics.gate_count,
+            characteristics.simulation_type.value,
+        )
+    
+    def export_history_report(
+        self,
+        output_path: str,
+        format: str = "json",
+    ) -> None:
+        """Export performance history report.
+        
+        Args:
+            output_path: Output file path
+            format: 'json' or 'csv'
+        """
+        self._history_db.export_history(output_path, format)
+    
+    def get_backend_statistics(self, backend: str) -> BackendStatistics | None:
+        """Get statistics for a backend.
+        
+        Args:
+            backend: Backend name
+            
+        Returns:
+            BackendStatistics or None
+        """
+        return self._history_db.get_backend_statistics(backend)

@@ -433,7 +433,7 @@ class ExecutionScreen(BaseScreen):
         self._is_running = False
         self._cancellation_requested = False
         self._execution_start_time: float = 0
-        self._update_timer = None
+        self._duration_timer = None  # Renamed to avoid Textual property conflict
         self._current_backend = "auto"
         self._shots = 1024
 
@@ -476,13 +476,13 @@ class ExecutionScreen(BaseScreen):
     def _start_timer(self) -> None:
         """Start the duration update timer."""
         self._execution_start_time = time.time()
-        self._update_timer = self.set_interval(0.5, self._update_duration)
+        self._duration_timer = self.set_interval(0.5, self._update_duration)
 
     def _stop_timer(self) -> None:
         """Stop the duration update timer."""
-        if self._update_timer:
-            self._update_timer.stop()
-            self._update_timer = None
+        if self._duration_timer:
+            self._duration_timer.stop()
+            self._duration_timer = None
 
     def _update_duration(self) -> None:
         """Update the duration label in real-time."""

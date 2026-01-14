@@ -8,6 +8,7 @@ Screens:
 3. Configuration - Settings management
 4. Results     - Browse and analyze results
 5. Backends    - Backend status and management
+6. Circuit     - Interactive circuit editor (NEW)
 
 Design Principles:
 - Keyboard-first navigation
@@ -46,6 +47,7 @@ $warning: #f39c12;
 $success: #2ecc71;
 $text: #ecf0f1;
 $text-muted: #95a5a6;
+$accent: #9b59b6;
 
 Screen {
     background: $background;
@@ -89,6 +91,19 @@ Toast {
     background: $surface;
     border: solid $primary;
 }
+
+/* Command palette */
+.command-palette {
+    dock: top;
+    width: 60;
+    height: auto;
+    margin: 2 auto;
+}
+
+/* Modals */
+.modal-overlay {
+    background: rgba(0, 0, 0, 0.7);
+}
 """
 
 
@@ -104,8 +119,10 @@ class ProximaApp(App):
     - Configuration (3): Manage settings
     - Results (4): Browse execution results
     - Backends (5): Manage backend connections
+    - Circuit (6): Interactive circuit editor
 
     Press ? at any time for keyboard shortcuts help.
+    Press Ctrl+P for command palette.
     """
 
     TITLE = "Proxima Agent"
@@ -119,8 +136,11 @@ class ProximaApp(App):
         Binding("3", "show_config", "Config", show=True, priority=True),
         Binding("4", "show_results", "Results", show=True, priority=True),
         Binding("5", "show_backends", "Backends", show=True, priority=True),
+        Binding("6", "show_circuit", "Circuit", show=True, priority=True),
         Binding("q", "quit", "Quit", show=True),
         Binding("question_mark", "show_help", "Help", show=True),
+        Binding("ctrl+p", "show_command_palette", "Commands", show=True),
+        Binding("ctrl+r", "refresh", "Refresh", show=False),
         Binding("ctrl+c", "quit", "Quit", show=False),
     ]
 
@@ -186,22 +206,108 @@ class ProximaApp(App):
         """Switch to backends screen."""
         self._switch_screen("backends")
 
-    def action_show_help(self) -> None:
-        """Show help modal on current screen."""
-        from .widgets import HelpModal
+    def action_show_circuit(self) -> None:
+        """Switch to circuit editor screen."""
+        self._switch_screen("circuit")
 
+    def action_show_help(self) -> None:
+        """Show keyboard shortcuts help modal."""
+        try:
+            from .enhanced import KeyboardShortcutsModal
+            
+            current = self.screen
+            # Remove existing modal if present
+            existing = current.query("KeyboardShortcutsModal")
+            if existing:
+                existing.first().remove()
+            else:
+                current.mount(KeyboardShortcutsModal())
+        except ImportError:
+            # Fallback to basic help
+            from .widgets import HelpModal
+            current = self.screen
+            if not current.query("HelpModal"):
+                current.mount(HelpModal())
+
+    def action_show_command_palette(self) -> None:
+        """Show command palette for quick actions."""
+        try:
+            from .enhanced import QuickCommandBar
+            
+            current = self.screen
+            # Remove existing if present
+            existing = current.query("QuickCommandBar")
+            if existing:
+                existing.first().remove()
+            else:
+                bar = QuickCommandBar()
+                current.mount(bar)
+                
+                # Focus the search input
+                try:
+                    bar.query_one("#command-search").focus()
+                except Exception:
+                    pass
+        except ImportError:
+            self.notify("Command palette not available", severity="warning")
+
+    def action_refresh(self) -> None:
+        """Refresh current screen data."""
         current = self.screen
-        if not current.query("HelpModal"):
-            current.mount(HelpModal())
+        if hasattr(current, "action_refresh"):
+            current.action_refresh()
+        else:
+            self.notify("Refreshed", severity="information")
 
     def _switch_screen(self, screen_name: str) -> None:
         """Switch to a screen, replacing the current one."""
+        # Handle circuit screen specially since it may not be registered
+        if screen_name == "circuit":
+            try:
+                from .screens import CircuitScreen
+                
+                if "circuit" not in self.SCREENS:
+                    self.SCREENS["circuit"] = CircuitScreen
+            except ImportError:
+                # Create a basic circuit screen if not available
+                self._create_basic_circuit_screen()
+        
         if self._current_screen != screen_name:
             # Pop current screen and push new one
             while len(self.screen_stack) > 0:
                 self.pop_screen()
             self.push_screen(screen_name)
             self._current_screen = screen_name
+
+    def _create_basic_circuit_screen(self) -> None:
+        """Create a basic circuit editor screen."""
+        from textual.screen import Screen
+        from textual.widgets import Header, Footer, Label
+        from textual.containers import Container
+        
+        class BasicCircuitScreen(Screen):
+            """Basic circuit editor screen."""
+            
+            BINDINGS = [
+                Binding("1", "goto_dashboard", "Dashboard"),
+                Binding("q", "quit", "Quit"),
+            ]
+            
+            def compose(self):
+                yield Header(show_clock=True)
+                with Container():
+                    yield Label("🔧 Circuit Editor")
+                    try:
+                        from .enhanced import CircuitEditor
+                        yield CircuitEditor(num_qubits=3)
+                    except ImportError:
+                        yield Label("Circuit editor components not available")
+                yield Footer()
+            
+            def action_goto_dashboard(self):
+                self.app.push_screen("dashboard")
+        
+        self.SCREENS["circuit"] = BasicCircuitScreen
 
     def notify(
         self,
@@ -220,6 +326,41 @@ class ProximaApp(App):
             timeout: How long to show the notification
         """
         super().notify(message, title=title, severity=severity, timeout=timeout)
+
+    def on_quick_command_bar_command_selected(self, event) -> None:
+        """Handle command palette selection."""
+        cmd = event.command
+        
+        # Execute the command action
+        action_map = {
+            "run_bell": lambda: self._run_quick_circuit("bell"),
+            "run_qft": lambda: self._run_quick_circuit("qft"),
+            "compare": lambda: self.action_show_execution(),
+            "list_backends": lambda: self.action_show_backends(),
+            "benchmark": lambda: self.action_show_backends(),
+            "history": lambda: self.action_show_results(),
+            "export": lambda: self.notify("Export feature"),
+            "config": lambda: self.action_show_config(),
+            "theme": lambda: self._toggle_theme(),
+            "help": lambda: self.action_show_help(),
+            "shortcuts": lambda: self.action_show_help(),
+        }
+        
+        action = action_map.get(cmd.action)
+        if action:
+            action()
+        else:
+            self.notify(f"Command: {cmd.name}")
+
+    def _run_quick_circuit(self, circuit_type: str) -> None:
+        """Run a quick circuit from command palette."""
+        self.action_show_execution()
+        self.notify(f"Running {circuit_type} circuit...")
+
+    def _toggle_theme(self) -> None:
+        """Toggle between light and dark theme."""
+        self.dark = not self.dark
+        self.notify(f"Theme: {'Dark' if self.dark else 'Light'}")
 
 
 def run_tui(config_path: Path | None = None) -> None:

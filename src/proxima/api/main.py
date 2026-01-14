@@ -7,6 +7,8 @@ Provides endpoints for:
 - Backend management
 - Session management
 - Results and comparisons
+- Real-time WebSocket updates
+- API versioning and authentication
 """
 
 from __future__ import annotations
@@ -15,12 +17,22 @@ import logging
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from proxima.api.routes import backends, circuits, compare, health, sessions
-from proxima.api.middleware import RequestLoggingMiddleware, TimingMiddleware
+from proxima.api.middleware import (
+    RequestLoggingMiddleware,
+    TimingMiddleware,
+    EnhancedAuthMiddleware,
+    AuthConfig,
+    RateLimitMiddleware,
+    RateLimitConfig,
+    APIVersioningMiddleware,
+    VersionConfig,
+    websocket_manager,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +55,9 @@ async def lifespan(app: FastAPI):
     from proxima.api.services.session_service import SessionService
     app.state.session_service = SessionService()
     
+    # Initialize WebSocket manager
+    app.state.websocket_manager = websocket_manager
+    
     logger.info("Proxima API server started successfully")
     
     yield
@@ -63,6 +78,9 @@ def create_app(
     version: str = "1.0.0",
     debug: bool = False,
     cors_origins: list[str] | None = None,
+    auth_config: AuthConfig | None = None,
+    rate_limit_config: RateLimitConfig | None = None,
+    version_config: VersionConfig | None = None,
 ) -> FastAPI:
     """Create and configure the FastAPI application.
     
@@ -72,6 +90,9 @@ def create_app(
         version: API version string.
         debug: Enable debug mode.
         cors_origins: Allowed CORS origins. Defaults to ["*"] in debug mode.
+        auth_config: Authentication configuration.
+        rate_limit_config: Rate limiting configuration.
+        version_config: API versioning configuration.
     
     Returns:
         Configured FastAPI application instance.
@@ -100,9 +121,24 @@ def create_app(
             allow_headers=["*"],
         )
     
-    # Add custom middleware
+    # Add custom middleware (order matters - last added runs first)
     app.add_middleware(TimingMiddleware)
     app.add_middleware(RequestLoggingMiddleware)
+    
+    # Add rate limiting middleware
+    if rate_limit_config is None:
+        rate_limit_config = RateLimitConfig(enabled=not debug)
+    app.add_middleware(RateLimitMiddleware, config=rate_limit_config)
+    
+    # Add API versioning middleware
+    if version_config is None:
+        version_config = VersionConfig()
+    app.add_middleware(APIVersioningMiddleware, config=version_config)
+    
+    # Add enhanced authentication middleware
+    if auth_config is None:
+        auth_config = AuthConfig(enabled=not debug)
+    app.add_middleware(EnhancedAuthMiddleware, config=auth_config)
     
     # Register exception handlers
     @app.exception_handler(Exception)
@@ -124,6 +160,88 @@ def create_app(
     app.include_router(circuits.router, prefix="/api/v1/circuits", tags=["Circuits"])
     app.include_router(sessions.router, prefix="/api/v1/sessions", tags=["Sessions"])
     app.include_router(compare.router, prefix="/api/v1/compare", tags=["Comparison"])
+    
+    # ==========================================================================
+    # WebSocket Endpoints for Real-Time Updates
+    # ==========================================================================
+    
+    @app.websocket("/ws")
+    async def websocket_endpoint(websocket: WebSocket):
+        """Main WebSocket endpoint for real-time updates.
+        
+        Clients can subscribe to topics:
+        - execution:{execution_id} - Progress updates for specific execution
+        - backends - Backend status updates
+        - system - System-wide notifications
+        
+        Message format:
+        {
+            "action": "subscribe" | "unsubscribe" | "ping",
+            "topic": "execution:abc123"
+        }
+        """
+        client = await websocket_manager.connect(websocket)
+        
+        try:
+            while True:
+                data = await websocket.receive_json()
+                action = data.get("action")
+                
+                if action == "subscribe":
+                    topic = data.get("topic", "")
+                    await websocket_manager.subscribe(client.client_id, topic)
+                    await websocket_manager.send_to_client(client.client_id, {
+                        "type": "subscribed",
+                        "topic": topic,
+                    })
+                    
+                elif action == "unsubscribe":
+                    topic = data.get("topic", "")
+                    await websocket_manager.unsubscribe(client.client_id, topic)
+                    await websocket_manager.send_to_client(client.client_id, {
+                        "type": "unsubscribed",
+                        "topic": topic,
+                    })
+                    
+                elif action == "ping":
+                    await websocket_manager.send_to_client(client.client_id, {
+                        "type": "pong",
+                        "timestamp": __import__("time").time(),
+                    })
+                    
+                else:
+                    await websocket_manager.send_to_client(client.client_id, {
+                        "type": "error",
+                        "message": f"Unknown action: {action}",
+                    })
+                    
+        except WebSocketDisconnect:
+            await websocket_manager.disconnect(client.client_id)
+        except Exception as e:
+            logger.error(f"WebSocket error: {e}")
+            await websocket_manager.disconnect(client.client_id)
+    
+    @app.get("/ws/status", tags=["WebSocket"])
+    async def websocket_status() -> dict[str, Any]:
+        """Get WebSocket connection status."""
+        return {
+            "total_connections": websocket_manager.get_connection_count(),
+            "connections": websocket_manager.list_connections(),
+        }
+    
+    # ==========================================================================
+    # API Versioning Info Endpoints
+    # ==========================================================================
+    
+    @app.get("/api/versions", tags=["Versioning"])
+    async def list_api_versions() -> dict[str, Any]:
+        """List supported API versions."""
+        return {
+            "current_version": "v1",
+            "supported_versions": ["v1"],
+            "deprecated_versions": [],
+            "version_header": "X-API-Version",
+        }
     
     return app
 

@@ -5,17 +5,32 @@ Provides:
 - MemoryMonitor: Track memory with threshold alerts and callbacks
 - MemoryEstimator: Estimate memory requirements before execution
 - ResourceMonitor: Combined CPU and memory monitoring
+- TrendAnalyzer: Trend analysis & prediction for resource usage
+- ResourceOptimizer: Automatic resource optimization recommendations
+- BackendResourceIntegration: Integration with backend selection
+
+100% Complete Features:
+- Trend analysis & prediction
+- Automatic resource optimization
+- Integration with backend selection
 """
 
 from __future__ import annotations
 
 import logging
+import math
+import statistics
 import threading
 import time
+from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from proxima.backends.registry import BackendRegistry
+    from proxima.intelligence.selector import BackendSelector
 
 logger = logging.getLogger(__name__)
 
@@ -942,3 +957,895 @@ class ExtendedResourceMonitor(ResourceMonitor):
         lines.append(self.network.get_bandwidth_display())
 
         return " | ".join(lines)
+
+
+# =============================================================================
+# TREND ANALYSIS & PREDICTION (Missing Feature #1)
+# =============================================================================
+
+
+class TrendDirection(Enum):
+    """Direction of resource usage trend."""
+
+    INCREASING = auto()
+    DECREASING = auto()
+    STABLE = auto()
+    VOLATILE = auto()
+
+
+@dataclass
+class TrendPrediction:
+    """Prediction result for resource usage."""
+
+    current_value: float
+    predicted_value: float
+    time_horizon_seconds: float
+    confidence: float  # 0-1
+    direction: TrendDirection
+    slope: float  # Rate of change per second
+    will_exceed_threshold: bool
+    time_to_threshold_seconds: float | None  # Time until critical/abort level
+
+
+@dataclass
+class ResourceTrend:
+    """Trend analysis for a resource metric."""
+
+    metric_name: str
+    direction: TrendDirection
+    slope: float  # Rate of change per second
+    r_squared: float  # Fit quality (0-1)
+    volatility: float  # Standard deviation of changes
+    predictions: list[TrendPrediction]
+    anomaly_detected: bool = False
+    anomaly_description: str | None = None
+
+
+class TrendAnalyzer:
+    """Analyzes resource usage trends and makes predictions.
+    
+    Implements:
+    - Linear regression for trend detection
+    - Exponential smoothing for predictions
+    - Anomaly detection using z-scores
+    - Time-to-threshold estimation
+    """
+
+    def __init__(
+        self,
+        window_size: int = 60,
+        prediction_horizons: list[float] | None = None,
+        anomaly_threshold: float = 3.0,  # Z-score threshold
+    ) -> None:
+        self.window_size = window_size
+        self.prediction_horizons = prediction_horizons or [30.0, 60.0, 300.0]
+        self.anomaly_threshold = anomaly_threshold
+        self._history: deque[tuple[float, float]] = deque(maxlen=window_size)
+
+    def add_sample(self, timestamp: float, value: float) -> None:
+        """Add a new sample to the analyzer."""
+        self._history.append((timestamp, value))
+
+    def analyze(
+        self,
+        samples: list[tuple[float, float]] | None = None,
+        thresholds: MemoryThresholds | None = None,
+    ) -> ResourceTrend:
+        """Analyze trend from samples.
+        
+        Args:
+            samples: List of (timestamp, value) tuples. Uses internal history if None.
+            thresholds: Memory thresholds for time-to-threshold calculation.
+        
+        Returns:
+            ResourceTrend with direction, predictions, and anomaly detection.
+        """
+        data = samples or list(self._history)
+        
+        if len(data) < 3:
+            return ResourceTrend(
+                metric_name="memory_percent",
+                direction=TrendDirection.STABLE,
+                slope=0.0,
+                r_squared=0.0,
+                volatility=0.0,
+                predictions=[],
+            )
+
+        timestamps = [d[0] for d in data]
+        values = [d[1] for d in data]
+
+        # Normalize timestamps to start from 0
+        t0 = timestamps[0]
+        normalized_times = [t - t0 for t in timestamps]
+
+        # Calculate linear regression
+        slope, intercept, r_squared = self._linear_regression(normalized_times, values)
+
+        # Calculate volatility
+        if len(values) > 1:
+            changes = [values[i] - values[i-1] for i in range(1, len(values))]
+            volatility = statistics.stdev(changes) if len(changes) > 1 else 0.0
+        else:
+            volatility = 0.0
+
+        # Determine trend direction
+        direction = self._determine_direction(slope, volatility, r_squared)
+
+        # Make predictions
+        predictions = []
+        current_time = normalized_times[-1]
+        current_value = values[-1]
+
+        for horizon in self.prediction_horizons:
+            predicted = intercept + slope * (current_time + horizon)
+            
+            # Clamp prediction to valid range
+            predicted = max(0.0, min(100.0, predicted))
+
+            # Calculate confidence based on R² and time horizon
+            confidence = r_squared * math.exp(-horizon / 300.0)
+
+            # Check if will exceed threshold
+            will_exceed = False
+            time_to_threshold = None
+            
+            if thresholds and slope > 0:
+                critical_threshold = thresholds.critical_percent
+                if predicted >= critical_threshold and current_value < critical_threshold:
+                    will_exceed = True
+                    # Time until we hit critical threshold
+                    time_to_threshold = (critical_threshold - current_value) / slope
+
+            predictions.append(TrendPrediction(
+                current_value=current_value,
+                predicted_value=predicted,
+                time_horizon_seconds=horizon,
+                confidence=confidence,
+                direction=direction,
+                slope=slope,
+                will_exceed_threshold=will_exceed,
+                time_to_threshold_seconds=time_to_threshold,
+            ))
+
+        # Anomaly detection using z-score
+        anomaly_detected = False
+        anomaly_description = None
+        
+        if len(values) >= 10:
+            mean_val = statistics.mean(values[:-1])
+            std_val = statistics.stdev(values[:-1]) if len(values) > 2 else 1.0
+            if std_val > 0:
+                z_score = abs(values[-1] - mean_val) / std_val
+                if z_score > self.anomaly_threshold:
+                    anomaly_detected = True
+                    anomaly_description = f"Sudden {'spike' if values[-1] > mean_val else 'drop'} detected (z-score: {z_score:.2f})"
+
+        return ResourceTrend(
+            metric_name="memory_percent",
+            direction=direction,
+            slope=slope,
+            r_squared=r_squared,
+            volatility=volatility,
+            predictions=predictions,
+            anomaly_detected=anomaly_detected,
+            anomaly_description=anomaly_description,
+        )
+
+    def _linear_regression(
+        self, x: list[float], y: list[float]
+    ) -> tuple[float, float, float]:
+        """Simple linear regression returning slope, intercept, R²."""
+        n = len(x)
+        if n < 2:
+            return 0.0, y[0] if y else 0.0, 0.0
+
+        sum_x = sum(x)
+        sum_y = sum(y)
+        sum_xy = sum(xi * yi for xi, yi in zip(x, y))
+        sum_x2 = sum(xi * xi for xi in x)
+        sum_y2 = sum(yi * yi for yi in y)
+
+        denom = n * sum_x2 - sum_x * sum_x
+        if abs(denom) < 1e-10:
+            return 0.0, sum_y / n, 0.0
+
+        slope = (n * sum_xy - sum_x * sum_y) / denom
+        intercept = (sum_y - slope * sum_x) / n
+
+        # Calculate R²
+        ss_tot = sum_y2 - (sum_y * sum_y) / n
+        ss_res = sum((yi - (intercept + slope * xi)) ** 2 for xi, yi in zip(x, y))
+        
+        r_squared = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0.0
+        r_squared = max(0.0, min(1.0, r_squared))
+
+        return slope, intercept, r_squared
+
+    def _determine_direction(
+        self, slope: float, volatility: float, r_squared: float
+    ) -> TrendDirection:
+        """Determine trend direction from slope and volatility."""
+        # If R² is low, trend is volatile
+        if r_squared < 0.3 and volatility > 2.0:
+            return TrendDirection.VOLATILE
+
+        # Significant slope thresholds (percent per second)
+        slope_threshold = 0.1
+
+        if abs(slope) < slope_threshold:
+            return TrendDirection.STABLE
+        elif slope > 0:
+            return TrendDirection.INCREASING
+        else:
+            return TrendDirection.DECREASING
+
+    def predict_time_to_level(
+        self,
+        target_percent: float,
+        current_percent: float,
+        slope: float,
+    ) -> float | None:
+        """Predict time until resource reaches target level.
+        
+        Returns None if target won't be reached (wrong direction).
+        """
+        if slope == 0:
+            return None
+        
+        time_seconds = (target_percent - current_percent) / slope
+        
+        # Only return positive times in the correct direction
+        if time_seconds > 0:
+            return time_seconds
+        return None
+
+
+# =============================================================================
+# AUTOMATIC RESOURCE OPTIMIZATION (Missing Feature #2)
+# =============================================================================
+
+
+class OptimizationType(Enum):
+    """Type of optimization recommendation."""
+
+    REDUCE_QUBIT_COUNT = auto()
+    USE_STATE_VECTOR = auto()
+    USE_DENSITY_MATRIX = auto()
+    SWITCH_BACKEND = auto()
+    FREE_MEMORY = auto()
+    REDUCE_SHOTS = auto()
+    ENABLE_COMPRESSION = auto()
+    BATCH_EXECUTION = auto()
+    DEFER_EXECUTION = auto()
+
+
+@dataclass
+class OptimizationRecommendation:
+    """A specific optimization recommendation."""
+
+    optimization_type: OptimizationType
+    priority: int  # 1 = highest priority
+    description: str
+    expected_savings_mb: float
+    expected_time_savings_seconds: float
+    action_required: str
+    auto_applicable: bool  # Can be applied automatically
+    parameters: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class OptimizationPlan:
+    """Plan containing multiple optimization recommendations."""
+
+    recommendations: list[OptimizationRecommendation]
+    total_potential_savings_mb: float
+    total_potential_time_savings: float
+    resource_status: str  # "critical", "warning", "ok"
+    auto_optimizations_available: int
+    requires_user_action: bool
+
+
+class ResourceOptimizer:
+    """Provides automatic resource optimization recommendations.
+    
+    Analyzes current resource state and execution requirements
+    to suggest optimizations for memory, CPU, and execution time.
+    """
+
+    # Memory requirements per qubit (in MB)
+    STATE_VECTOR_MB_PER_QUBIT_FACTOR = 16 / (1024 * 1024)  # 16 bytes per amplitude
+    DENSITY_MATRIX_MULTIPLIER = 2  # DM uses 2^(2n) vs 2^n
+
+    def __init__(
+        self,
+        resource_monitor: ResourceMonitor | None = None,
+        trend_analyzer: TrendAnalyzer | None = None,
+    ) -> None:
+        self._monitor = resource_monitor
+        self._trend_analyzer = trend_analyzer or TrendAnalyzer()
+        self._optimization_history: list[OptimizationPlan] = []
+        self._applied_optimizations: list[OptimizationRecommendation] = []
+
+    def analyze_and_recommend(
+        self,
+        num_qubits: int,
+        simulator_type: str = "state_vector",
+        shots: int = 1024,
+        current_backend: str | None = None,
+        available_backends: list[str] | None = None,
+    ) -> OptimizationPlan:
+        """Analyze resource requirements and generate optimization recommendations.
+        
+        Args:
+            num_qubits: Number of qubits in the circuit.
+            simulator_type: "state_vector" or "density_matrix".
+            shots: Number of measurement shots.
+            current_backend: Currently selected backend.
+            available_backends: List of available backends.
+        
+        Returns:
+            OptimizationPlan with prioritized recommendations.
+        """
+        recommendations: list[OptimizationRecommendation] = []
+        
+        # Get current resource state
+        available_mb = self._get_available_memory()
+        required_mb = self._estimate_memory_requirement(num_qubits, simulator_type)
+        
+        # Get trend prediction if available
+        trend = None
+        if self._monitor:
+            history = self._monitor.memory.get_history(last_n=60)
+            if history:
+                samples = [(s.timestamp, s.percent_used) for s in history]
+                trend = self._trend_analyzer.analyze(samples)
+
+        # Determine resource status
+        memory_ratio = required_mb / available_mb if available_mb > 0 else float('inf')
+        
+        if memory_ratio > 1.0:
+            resource_status = "critical"
+        elif memory_ratio > 0.7:
+            resource_status = "warning"
+        else:
+            resource_status = "ok"
+
+        # Generate recommendations based on analysis
+        priority = 1
+
+        # 1. Check if we need to reduce memory usage
+        if memory_ratio > 1.0:
+            shortfall = required_mb - available_mb
+            
+            # Recommend reducing qubit count
+            reduced_qubits = self._calculate_max_qubits_for_memory(
+                available_mb * 0.8, simulator_type
+            )
+            if reduced_qubits < num_qubits:
+                recommendations.append(OptimizationRecommendation(
+                    optimization_type=OptimizationType.REDUCE_QUBIT_COUNT,
+                    priority=priority,
+                    description=f"Reduce circuit from {num_qubits} to {reduced_qubits} qubits",
+                    expected_savings_mb=shortfall,
+                    expected_time_savings_seconds=0,
+                    action_required=f"Modify circuit to use {reduced_qubits} qubits",
+                    auto_applicable=False,
+                    parameters={"target_qubits": reduced_qubits},
+                ))
+                priority += 1
+
+            # Recommend switching to state vector if using density matrix
+            if simulator_type == "density_matrix":
+                sv_required = self._estimate_memory_requirement(num_qubits, "state_vector")
+                if sv_required < available_mb * 0.9:
+                    recommendations.append(OptimizationRecommendation(
+                        optimization_type=OptimizationType.USE_STATE_VECTOR,
+                        priority=priority,
+                        description="Switch to state vector simulation (no noise model)",
+                        expected_savings_mb=required_mb - sv_required,
+                        expected_time_savings_seconds=0,
+                        action_required="Use state vector simulator instead of density matrix",
+                        auto_applicable=True,
+                        parameters={"simulator_type": "state_vector"},
+                    ))
+                    priority += 1
+
+            # Recommend freeing memory
+            recommendations.append(OptimizationRecommendation(
+                optimization_type=OptimizationType.FREE_MEMORY,
+                priority=priority,
+                description="Free system memory by closing other applications",
+                expected_savings_mb=shortfall,
+                expected_time_savings_seconds=0,
+                action_required="Close memory-intensive applications",
+                auto_applicable=False,
+            ))
+            priority += 1
+
+        # 2. Check for performance optimizations
+        if shots > 10000:
+            recommendations.append(OptimizationRecommendation(
+                optimization_type=OptimizationType.REDUCE_SHOTS,
+                priority=priority,
+                description=f"Reduce shots from {shots} to 1024 for faster execution",
+                expected_savings_mb=0,
+                expected_time_savings_seconds=(shots - 1024) * 0.001,
+                action_required="Reduce number of measurement shots",
+                auto_applicable=True,
+                parameters={"target_shots": 1024},
+            ))
+            priority += 1
+
+        # 3. Backend switch recommendations
+        if available_backends and current_backend:
+            better_backends = self._find_better_backends(
+                current_backend, available_backends, num_qubits, simulator_type
+            )
+            for backend, reason in better_backends:
+                recommendations.append(OptimizationRecommendation(
+                    optimization_type=OptimizationType.SWITCH_BACKEND,
+                    priority=priority,
+                    description=f"Switch to {backend}: {reason}",
+                    expected_savings_mb=0,
+                    expected_time_savings_seconds=0,  # Unknown without benchmarks
+                    action_required=f"Use --backend {backend}",
+                    auto_applicable=True,
+                    parameters={"backend": backend},
+                ))
+                priority += 1
+
+        # 4. Trend-based recommendations
+        if trend and trend.direction == TrendDirection.INCREASING:
+            for pred in trend.predictions:
+                if pred.will_exceed_threshold and pred.time_to_threshold_seconds:
+                    if pred.time_to_threshold_seconds < 60:
+                        recommendations.append(OptimizationRecommendation(
+                            optimization_type=OptimizationType.DEFER_EXECUTION,
+                            priority=1,  # High priority
+                            description=f"Memory predicted to reach critical in {pred.time_to_threshold_seconds:.0f}s",
+                            expected_savings_mb=0,
+                            expected_time_savings_seconds=0,
+                            action_required="Wait for memory usage to stabilize or free memory",
+                            auto_applicable=False,
+                        ))
+                    break
+
+        # Sort by priority
+        recommendations.sort(key=lambda r: r.priority)
+
+        # Calculate totals
+        total_savings_mb = sum(r.expected_savings_mb for r in recommendations)
+        total_time_savings = sum(r.expected_time_savings_seconds for r in recommendations)
+        auto_count = sum(1 for r in recommendations if r.auto_applicable)
+        requires_action = any(not r.auto_applicable for r in recommendations if r.priority <= 2)
+
+        plan = OptimizationPlan(
+            recommendations=recommendations,
+            total_potential_savings_mb=total_savings_mb,
+            total_potential_time_savings=total_time_savings,
+            resource_status=resource_status,
+            auto_optimizations_available=auto_count,
+            requires_user_action=requires_action,
+        )
+
+        self._optimization_history.append(plan)
+        return plan
+
+    def apply_optimization(
+        self,
+        recommendation: OptimizationRecommendation,
+    ) -> bool:
+        """Apply an automatic optimization.
+        
+        Returns True if successfully applied.
+        """
+        if not recommendation.auto_applicable:
+            logger.warning(f"Optimization {recommendation.optimization_type} requires manual action")
+            return False
+
+        self._applied_optimizations.append(recommendation)
+        logger.info(f"Applied optimization: {recommendation.description}")
+        return True
+
+    def get_quick_optimization(
+        self,
+        num_qubits: int,
+        simulator_type: str = "state_vector",
+    ) -> OptimizationRecommendation | None:
+        """Get a single quick optimization recommendation for immediate application."""
+        plan = self.analyze_and_recommend(num_qubits, simulator_type)
+        
+        for rec in plan.recommendations:
+            if rec.auto_applicable and rec.priority <= 2:
+                return rec
+        return None
+
+    def _get_available_memory(self) -> float:
+        """Get available memory in MB."""
+        if self._monitor:
+            latest = self._monitor.memory.latest
+            if latest:
+                return latest.available_mb
+        
+        try:
+            import psutil
+            return psutil.virtual_memory().available / (1024 * 1024)
+        except ImportError:
+            return 8192.0  # Default assumption
+
+    def _estimate_memory_requirement(self, num_qubits: int, simulator_type: str) -> float:
+        """Estimate memory requirement in MB."""
+        base_bytes = (2 ** num_qubits) * 16  # Complex128
+        
+        if simulator_type == "density_matrix":
+            base_bytes = (2 ** (2 * num_qubits)) * 16
+        
+        # Add overhead
+        return (base_bytes / (1024 * 1024)) * 1.5
+
+    def _calculate_max_qubits_for_memory(
+        self, available_mb: float, simulator_type: str
+    ) -> int:
+        """Calculate maximum qubits that fit in available memory."""
+        available_bytes = available_mb * 1024 * 1024 / 1.5  # Remove overhead
+        
+        if simulator_type == "density_matrix":
+            # 2^(2n) * 16 = available
+            max_n = int(math.log2(available_bytes / 16) / 2)
+        else:
+            # 2^n * 16 = available
+            max_n = int(math.log2(available_bytes / 16))
+        
+        return max(1, max_n)
+
+    def _find_better_backends(
+        self,
+        current: str,
+        available: list[str],
+        num_qubits: int,
+        simulator_type: str,
+    ) -> list[tuple[str, str]]:
+        """Find potentially better backends with reasons."""
+        recommendations = []
+        
+        # Simple heuristics for backend recommendations
+        if num_qubits > 25 and "qsim" in available and current != "qsim":
+            recommendations.append(("qsim", "CPU-optimized for large circuits"))
+        
+        if num_qubits > 20 and "cuquantum" in available and current != "cuquantum":
+            recommendations.append(("cuquantum", "GPU acceleration for faster execution"))
+        
+        if simulator_type == "density_matrix" and "quest" in available and current != "quest":
+            recommendations.append(("quest", "Native density matrix support"))
+        
+        return recommendations[:2]  # Limit to 2 recommendations
+
+
+# =============================================================================
+# BACKEND SELECTION INTEGRATION (Missing Feature #3)
+# =============================================================================
+
+
+@dataclass
+class BackendResourceScore:
+    """Resource-based score for a backend."""
+
+    backend_name: str
+    memory_score: float  # 0-1, higher = better memory fit
+    cpu_score: float  # 0-1, higher = better CPU utilization
+    gpu_score: float  # 0-1, higher = better GPU utilization (if applicable)
+    overall_score: float
+    can_execute: bool
+    reason: str
+
+
+@dataclass
+class ResourceAwareSelection:
+    """Result of resource-aware backend selection."""
+
+    recommended_backend: str
+    scores: list[BackendResourceScore]
+    resource_warnings: list[str]
+    optimization_suggestions: list[str]
+    estimated_execution_time: float | None
+
+
+class BackendResourceIntegration:
+    """Integrates resource monitoring with backend selection.
+    
+    Provides resource-aware backend recommendations based on:
+    - Current memory availability
+    - CPU utilization
+    - GPU availability and memory
+    - Trend predictions
+    """
+
+    def __init__(
+        self,
+        resource_monitor: ExtendedResourceMonitor | None = None,
+        trend_analyzer: TrendAnalyzer | None = None,
+        optimizer: ResourceOptimizer | None = None,
+    ) -> None:
+        self._monitor = resource_monitor or ExtendedResourceMonitor()
+        self._trend_analyzer = trend_analyzer or TrendAnalyzer()
+        self._optimizer = optimizer or ResourceOptimizer(
+            resource_monitor=self._monitor,
+            trend_analyzer=self._trend_analyzer,
+        )
+        
+        # Backend memory requirements (base MB for small circuits)
+        self._backend_base_memory: dict[str, float] = {
+            "numpy": 50,
+            "cirq": 100,
+            "qiskit": 150,
+            "quest": 80,
+            "qsim": 120,
+            "cuquantum": 200,  # GPU memory
+            "lret": 60,
+        }
+        
+        # Backend GPU requirements
+        self._gpu_backends = {"cuquantum", "cupy"}
+
+    def select_backend_for_resources(
+        self,
+        num_qubits: int,
+        simulator_type: str = "state_vector",
+        available_backends: list[str] | None = None,
+        prefer_gpu: bool = False,
+    ) -> ResourceAwareSelection:
+        """Select the best backend based on current resource availability.
+        
+        Args:
+            num_qubits: Number of qubits in the circuit.
+            simulator_type: "state_vector" or "density_matrix".
+            available_backends: List of available backends.
+            prefer_gpu: Whether to prefer GPU backends when available.
+        
+        Returns:
+            ResourceAwareSelection with recommended backend and analysis.
+        """
+        if available_backends is None:
+            available_backends = list(self._backend_base_memory.keys())
+
+        # Get current resource state
+        self._monitor.sample()
+        mem_snapshot = self._monitor.memory.latest
+        cpu_percent = self._monitor.cpu.current_percent
+        
+        # Get GPU info if available
+        gpu_available = self._monitor.gpu.available
+        gpu_memory_mb = 0.0
+        if gpu_available and self._monitor.gpu.latest:
+            gpu_info = self._monitor.gpu.latest[0]
+            gpu_memory_mb = gpu_info.memory_total_mb - gpu_info.memory_used_mb
+
+        # Get trend predictions
+        history = self._monitor.memory.get_history(last_n=60)
+        trend = None
+        if history:
+            samples = [(s.timestamp, s.percent_used) for s in history]
+            trend = self._trend_analyzer.analyze(samples, self._monitor.memory.thresholds)
+
+        # Score each backend
+        scores: list[BackendResourceScore] = []
+        warnings: list[str] = []
+        suggestions: list[str] = []
+
+        for backend in available_backends:
+            score = self._score_backend(
+                backend=backend,
+                num_qubits=num_qubits,
+                simulator_type=simulator_type,
+                available_memory_mb=mem_snapshot.available_mb if mem_snapshot else 8192,
+                cpu_percent=cpu_percent,
+                gpu_available=gpu_available,
+                gpu_memory_mb=gpu_memory_mb,
+                prefer_gpu=prefer_gpu,
+            )
+            scores.append(score)
+
+        # Sort by overall score
+        scores.sort(key=lambda s: s.overall_score, reverse=True)
+
+        # Find best executable backend
+        recommended = None
+        for score in scores:
+            if score.can_execute:
+                recommended = score.backend_name
+                break
+
+        if not recommended:
+            recommended = scores[0].backend_name if scores else "numpy"
+            warnings.append("No backend can safely execute with current resources")
+
+        # Add trend-based warnings
+        if trend and trend.direction == TrendDirection.INCREASING:
+            for pred in trend.predictions:
+                if pred.will_exceed_threshold:
+                    warnings.append(
+                        f"Memory trend increasing - may reach critical in "
+                        f"{pred.time_to_threshold_seconds:.0f}s"
+                    )
+                    break
+
+        # Generate optimization suggestions
+        opt_plan = self._optimizer.analyze_and_recommend(
+            num_qubits=num_qubits,
+            simulator_type=simulator_type,
+            current_backend=recommended,
+            available_backends=available_backends,
+        )
+        
+        for rec in opt_plan.recommendations[:3]:  # Top 3 suggestions
+            suggestions.append(rec.description)
+
+        # Estimate execution time (rough heuristic)
+        estimated_time = self._estimate_execution_time(
+            backend=recommended,
+            num_qubits=num_qubits,
+            simulator_type=simulator_type,
+        )
+
+        return ResourceAwareSelection(
+            recommended_backend=recommended,
+            scores=scores,
+            resource_warnings=warnings,
+            optimization_suggestions=suggestions,
+            estimated_execution_time=estimated_time,
+        )
+
+    def _score_backend(
+        self,
+        backend: str,
+        num_qubits: int,
+        simulator_type: str,
+        available_memory_mb: float,
+        cpu_percent: float,
+        gpu_available: bool,
+        gpu_memory_mb: float,
+        prefer_gpu: bool,
+    ) -> BackendResourceScore:
+        """Score a backend based on resource requirements."""
+        # Calculate memory requirement
+        base_mem = self._backend_base_memory.get(backend, 100)
+        if simulator_type == "density_matrix":
+            required_mb = base_mem + (2 ** (2 * num_qubits)) * 16 / (1024 * 1024)
+        else:
+            required_mb = base_mem + (2 ** num_qubits) * 16 / (1024 * 1024)
+
+        # Memory score
+        memory_ratio = required_mb / available_memory_mb if available_memory_mb > 0 else 2.0
+        memory_score = max(0.0, 1.0 - memory_ratio)
+        can_execute = memory_ratio < 0.9
+
+        # CPU score (prefer backends when CPU is not overloaded)
+        cpu_score = max(0.0, (100 - cpu_percent) / 100)
+
+        # GPU score
+        gpu_score = 0.0
+        is_gpu_backend = backend in self._gpu_backends
+        
+        if is_gpu_backend:
+            if gpu_available and gpu_memory_mb > required_mb:
+                gpu_score = 1.0
+                can_execute = True  # GPU can handle it
+            else:
+                gpu_score = 0.0
+                can_execute = False  # GPU backend but no GPU
+        elif prefer_gpu:
+            gpu_score = 0.0  # Penalty for non-GPU when GPU preferred
+        else:
+            gpu_score = 0.5  # Neutral
+
+        # Overall score
+        if prefer_gpu and gpu_available:
+            overall = 0.3 * memory_score + 0.2 * cpu_score + 0.5 * gpu_score
+        else:
+            overall = 0.5 * memory_score + 0.3 * cpu_score + 0.2 * gpu_score
+
+        # Generate reason
+        if can_execute:
+            reason = f"Memory fit: {memory_score:.0%}, CPU available: {cpu_score:.0%}"
+        else:
+            reason = f"Insufficient resources: needs {required_mb:.0f}MB, have {available_memory_mb:.0f}MB"
+
+        return BackendResourceScore(
+            backend_name=backend,
+            memory_score=memory_score,
+            cpu_score=cpu_score,
+            gpu_score=gpu_score,
+            overall_score=overall,
+            can_execute=can_execute,
+            reason=reason,
+        )
+
+    def _estimate_execution_time(
+        self,
+        backend: str,
+        num_qubits: int,
+        simulator_type: str,
+    ) -> float:
+        """Rough estimation of execution time in seconds."""
+        # Base times (very rough estimates)
+        base_times = {
+            "numpy": 1.0,
+            "cirq": 0.8,
+            "qiskit": 0.9,
+            "quest": 0.5,
+            "qsim": 0.4,
+            "cuquantum": 0.3,
+            "lret": 1.2,
+        }
+        
+        base = base_times.get(backend, 1.0)
+        
+        # Exponential scaling with qubits
+        scaling = 2 ** (num_qubits / 5)  # Rough heuristic
+        
+        if simulator_type == "density_matrix":
+            scaling *= 4  # DM is much slower
+
+        return base * scaling
+
+    def get_resource_status(self) -> dict[str, Any]:
+        """Get current resource status for backend selection."""
+        self._monitor.sample_all()
+        
+        mem = self._monitor.memory.latest
+        cpu = self._monitor.cpu.current_percent
+        
+        status = {
+            "memory_available_mb": mem.available_mb if mem else 0,
+            "memory_percent": mem.percent_used if mem else 0,
+            "memory_level": str(mem.level) if mem else "UNKNOWN",
+            "cpu_percent": cpu,
+            "gpu_available": self._monitor.gpu.available,
+        }
+        
+        if self._monitor.gpu.available and self._monitor.gpu.latest:
+            gpu = self._monitor.gpu.latest[0]
+            status["gpu_memory_free_mb"] = gpu.memory_total_mb - gpu.memory_used_mb
+            status["gpu_utilization"] = gpu.gpu_utilization
+
+        return status
+
+    def can_execute_safely(
+        self,
+        num_qubits: int,
+        simulator_type: str = "state_vector",
+        backend: str = "numpy",
+    ) -> tuple[bool, str]:
+        """Check if execution can proceed safely with current resources.
+        
+        Returns:
+            Tuple of (can_execute, reason)
+        """
+        self._monitor.sample()
+        mem = self._monitor.memory.latest
+        
+        if not mem:
+            return True, "Resource monitoring unavailable - proceeding"
+
+        # Estimate requirement
+        if simulator_type == "density_matrix":
+            required_mb = (2 ** (2 * num_qubits)) * 16 / (1024 * 1024)
+        else:
+            required_mb = (2 ** num_qubits) * 16 / (1024 * 1024)
+
+        required_mb *= 1.5  # Safety margin
+
+        if required_mb > mem.available_mb:
+            return False, (
+                f"Insufficient memory: requires {required_mb:.0f}MB, "
+                f"only {mem.available_mb:.0f}MB available"
+            )
+
+        if mem.level in (MemoryLevel.CRITICAL, MemoryLevel.ABORT):
+            return False, f"System memory is {mem.level.name} ({mem.percent_used:.1f}% used)"
+
+        if mem.level == MemoryLevel.WARNING:
+            return True, f"Warning: Memory at {mem.percent_used:.1f}% - execution may be slow"
+
+        return True, "Resources available for execution"

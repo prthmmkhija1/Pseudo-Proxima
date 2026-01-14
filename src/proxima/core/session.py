@@ -114,6 +114,59 @@ class Checkpoint:
         )
 
 
+@dataclass
+class ExecutionRecord:
+    """Records a single execution within a session.
+
+    Tracks task executions including timing, status, and results.
+    """
+
+    id: str
+    session_id: str
+    task_id: str
+    timestamp: datetime
+    duration_ms: float
+    status: str  # 'success', 'failed', 'cancelled'
+    backend: str
+    shots: int = 0
+    result_summary: dict[str, Any] = field(default_factory=dict)
+    error_message: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert record to dictionary for serialization."""
+        return {
+            "id": self.id,
+            "session_id": self.session_id,
+            "task_id": self.task_id,
+            "timestamp": self.timestamp.isoformat(),
+            "duration_ms": self.duration_ms,
+            "status": self.status,
+            "backend": self.backend,
+            "shots": self.shots,
+            "result_summary": self.result_summary,
+            "error_message": self.error_message,
+            "metadata": self.metadata,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> ExecutionRecord:
+        """Create record from dictionary."""
+        return cls(
+            id=data["id"],
+            session_id=data["session_id"],
+            task_id=data["task_id"],
+            timestamp=datetime.fromisoformat(data["timestamp"]),
+            duration_ms=data["duration_ms"],
+            status=data["status"],
+            backend=data["backend"],
+            shots=data.get("shots", 0),
+            result_summary=data.get("result_summary", {}),
+            error_message=data.get("error_message"),
+            metadata=data.get("metadata", {}),
+        )
+
+
 # ==================== STORAGE BACKENDS ====================
 
 
