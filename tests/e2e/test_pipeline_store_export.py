@@ -186,8 +186,7 @@ class TestStoreE2E:
     """End-to-end tests for store functionality."""
 
     @pytest.mark.e2e
-    @pytest.mark.asyncio
-    async def test_memory_store_lifecycle(self):
+    def test_memory_store_lifecycle(self):
         """Test complete memory store lifecycle."""
         from proxima.data.store import MemoryStore, StoredResult, StoredSession
         
@@ -195,76 +194,79 @@ class TestStoreE2E:
         
         # Create session
         session = StoredSession(
-            session_id="e2e_session_001",
+            id="e2e_session_001",
             name="E2E Test Session",
-            created_at=time.time(),
             metadata={"test": True},
         )
-        await store.save_session(session)
+        store.create_session(session)
         
         # Add results
         for i in range(5):
             result = StoredResult(
-                result_id=f"e2e_result_{i}",
+                id=f"e2e_result_{i}",
                 session_id="e2e_session_001",
                 backend_name=f"backend_{i % 3}",
-                success=True,
+                qubit_count=2,
+                shots=1000,
                 execution_time_ms=50.0 + i * 10,
-                result_data={"iteration": i},
-                created_at=time.time(),
+                memory_used_mb=128.0,
+                counts={},
+                metadata={"iteration": i},
             )
-            await store.save_result(result)
+            store.save_result(result)
         
         # Query results
-        all_results = await store.list_results()
+        all_results = store.list_results()
         assert len(all_results) == 5
         
         # Get specific result
-        result = await store.get_result("e2e_result_2")
+        result = store.get_result("e2e_result_2")
         assert result is not None
-        assert result.result_data["iteration"] == 2
+        assert result.metadata["iteration"] == 2
         
         # Get session
-        retrieved_session = await store.get_session("e2e_session_001")
+        retrieved_session = store.get_session("e2e_session_001")
         assert retrieved_session.name == "E2E Test Session"
         
         # Delete result
-        await store.delete_result("e2e_result_0")
-        remaining = await store.list_results()
+        store.delete_result("e2e_result_0")
+        remaining = store.list_results()
         assert len(remaining) == 4
 
     @pytest.mark.e2e
     def test_json_store_persistence(self):
         """Test JSON store file persistence."""
         from proxima.data.store import JSONStore, StoredResult
+        from pathlib import Path
         
         with tempfile.TemporaryDirectory() as tmpdir:
-            store_path = os.path.join(tmpdir, "e2e_store.json")
+            store_path = Path(tmpdir) / "e2e_store.json"
             
             # First session: write data
             store1 = JSONStore(store_path)
             result = StoredResult(
-                result_id="persistent_001",
+                id="persistent_001",
                 session_id="session_001",
                 backend_name="cirq",
-                success=True,
+                qubit_count=2,
+                shots=1000,
                 execution_time_ms=100.0,
-                result_data={"persisted": True},
-                created_at=time.time(),
+                memory_used_mb=128.0,
+                counts={},
+                metadata={"persisted": True},
             )
-            asyncio.run(store1.save_result(result))
+            store1.save_result(result)
             
             # Second session: read data
             store2 = JSONStore(store_path)
-            retrieved = asyncio.run(store2.get_result("persistent_001"))
+            retrieved = store2.get_result("persistent_001")
             
             assert retrieved is not None
             assert retrieved.backend_name == "cirq"
-            assert retrieved.result_data["persisted"] is True
+            assert retrieved.metadata["persisted"] is True
 
     @pytest.mark.e2e
-    @pytest.mark.asyncio
-    async def test_store_query_by_session(self):
+    def test_store_query_by_session(self):
         """Test querying results by session."""
         from proxima.data.store import MemoryStore, StoredResult
         
@@ -275,18 +277,20 @@ class TestStoreE2E:
         for session_id in sessions:
             for i in range(3):
                 result = StoredResult(
-                    result_id=f"{session_id}_result_{i}",
+                    id=f"{session_id}_result_{i}",
                     session_id=session_id,
                     backend_name="cirq",
-                    success=True,
+                    qubit_count=2,
+                    shots=1000,
                     execution_time_ms=50.0,
-                    result_data={},
-                    created_at=time.time(),
+                    memory_used_mb=128.0,
+                    counts={},
+                    metadata={},
                 )
-                await store.save_result(result)
+                store.save_result(result)
         
         # Query by session
-        all_results = await store.list_results()
+        all_results = store.list_results()
         session_a_results = [r for r in all_results if r.session_id == "session_a"]
         
         assert len(all_results) == 9
@@ -668,24 +672,25 @@ class TestCompleteWorkflow:
         async def store_results(ctx, results):
             session_id = f"workflow_{int(time.time())}"
             session = StoredSession(
-                session_id=session_id,
+                id=session_id,
                 name="Full Workflow Test",
-                created_at=time.time(),
                 metadata={"circuit": ctx.get("circuit")},
             )
-            await store.save_session(session)
+            store.create_session(session)
             
             for result in results:
                 stored = StoredResult(
-                    result_id=f"{session_id}_{result.backend_name}",
+                    id=f"{session_id}_{result.backend_name}",
                     session_id=session_id,
                     backend_name=result.backend_name,
-                    success=result.success,
+                    qubit_count=2,
+                    shots=1000,
                     execution_time_ms=result.execution_time_ms,
-                    result_data={},
-                    created_at=time.time(),
+                    memory_used_mb=result.memory_peak_mb,
+                    counts={},
+                    metadata={},
                 )
-                await store.save_result(stored)
+                store.save_result(stored)
             
             ctx.set("session_id", session_id)
             return session_id
@@ -735,7 +740,7 @@ class TestCompleteWorkflow:
         assert len(result.successful_stages) == 4
         
         # Verify data was stored
-        stored_results = await store.list_results()
+        stored_results = store.list_results()
         assert len(stored_results) == 3
         
         # Verify report was generated

@@ -100,7 +100,7 @@ class TestCrossBackendConsistency:
                 success=True,
                 execution_time_ms=mock_circuit_result["execution_time_ms"],
                 memory_peak_mb=mock_circuit_result["memory_mb"],
-                result_data={"measurements": mock_circuit_result["measurements"]},
+                metadata={"measurements": mock_circuit_result["measurements"]},
             )
             results.append(result)
         
@@ -109,7 +109,7 @@ class TestCrossBackendConsistency:
         
         # All backends should have similar measurement distributions
         for result in results:
-            measurements = result.result_data.get("measurements", {})
+            measurements = result.metadata.get("measurements", {})
             if measurements:
                 total = sum(measurements.values())
                 for state in ["00", "11"]:
@@ -132,13 +132,13 @@ class TestCrossBackendConsistency:
                 success=True,
                 execution_time_ms=75.0,
                 memory_peak_mb=256.0,
-                result_data={"measurements": ghz_measurements},
+                metadata={"measurements": ghz_measurements},
             )
             results.append(result)
         
         # Verify all have expected states
         for result in results:
-            measurements = result.result_data["measurements"]
+            measurements = result.metadata["measurements"]
             assert "000" in measurements
             assert "111" in measurements
             assert measurements["000"] + measurements["111"] == 1000
@@ -336,8 +336,7 @@ class TestStoreIntegration:
     """Tests for store integration with backend results."""
 
     @pytest.mark.integration
-    @pytest.mark.asyncio
-    async def test_store_backend_results(self):
+    def test_store_backend_results(self):
         """Test storing backend results in different stores."""
         from proxima.data.store import MemoryStore, StoredResult
         from proxima.data.compare import BackendResult
@@ -348,18 +347,20 @@ class TestStoreIntegration:
         # Create and store results from multiple backends
         for backend in ["cirq", "qiskit_aer", "lret"]:
             result = StoredResult(
-                result_id=f"result_{backend}_{int(time.time())}",
+                id=f"result_{backend}_{int(time.time())}",
                 session_id="test_session",
                 backend_name=backend,
-                success=True,
+                qubit_count=2,
+                shots=1000,
                 execution_time_ms=50.0,
-                result_data={"measurements": {"00": 500, "11": 500}},
-                created_at=time.time(),
+                memory_used_mb=128.0,
+                counts={"00": 500, "11": 500},
+                metadata={},
             )
-            await store.save_result(result)
+            store.save_result(result)
         
         # Retrieve all results
-        all_results = await store.list_results()
+        all_results = store.list_results()
         assert len(all_results) == 3
         
         # Query by backend
@@ -367,8 +368,7 @@ class TestStoreIntegration:
         assert len(cirq_results) == 1
 
     @pytest.mark.integration
-    @pytest.mark.asyncio
-    async def test_store_comparison_session(self):
+    def test_store_comparison_session(self):
         """Test storing a complete comparison session."""
         from proxima.data.store import MemoryStore, StoredSession, StoredResult
         import time
@@ -377,31 +377,32 @@ class TestStoreIntegration:
         
         # Create session
         session = StoredSession(
-            session_id="comparison_001",
+            id="comparison_001",
             name="Backend Comparison Test",
-            created_at=time.time(),
             metadata={
                 "backends": ["cirq", "qiskit_aer", "lret"],
                 "circuit_type": "bell_state",
             },
         )
-        await store.save_session(session)
+        store.create_session(session)
         
         # Store results for session
         for backend in ["cirq", "qiskit_aer", "lret"]:
             result = StoredResult(
-                result_id=f"comp_001_{backend}",
+                id=f"comp_001_{backend}",
                 session_id="comparison_001",
                 backend_name=backend,
-                success=True,
+                qubit_count=2,
+                shots=1000,
                 execution_time_ms=50.0 + hash(backend) % 20,
-                result_data={},
-                created_at=time.time(),
+                memory_used_mb=128.0,
+                counts={},
+                metadata={},
             )
-            await store.save_result(result)
+            store.save_result(result)
         
         # Retrieve session with results
-        retrieved_session = await store.get_session("comparison_001")
+        retrieved_session = store.get_session("comparison_001")
         assert retrieved_session is not None
         assert retrieved_session.name == "Backend Comparison Test"
 
@@ -409,29 +410,32 @@ class TestStoreIntegration:
     def test_json_store_persistence(self):
         """Test JSON store persistence."""
         from proxima.data.store import JSONStore, StoredResult
+        from pathlib import Path
         import time
         
         with tempfile.TemporaryDirectory() as tmpdir:
-            store_path = os.path.join(tmpdir, "test_store.json")
+            store_path = Path(tmpdir) / "test_store.json"
             store = JSONStore(store_path)
             
             # Store result
             result = StoredResult(
-                result_id="persist_test_001",
+                id="persist_test_001",
                 session_id="session_001",
                 backend_name="cirq",
-                success=True,
+                qubit_count=2,
+                shots=1000,
                 execution_time_ms=100.0,
-                result_data={"test": "data"},
-                created_at=time.time(),
+                memory_used_mb=128.0,
+                counts={},
+                metadata={"test": "data"},
             )
             
-            # Run async operation
-            asyncio.run(store.save_result(result))
+            # Store result (synchronous)
+            store.save_result(result)
             
             # Create new store instance and verify persistence
             store2 = JSONStore(store_path)
-            retrieved = asyncio.run(store2.get_result("persist_test_001"))
+            retrieved = store2.get_result("persist_test_001")
             
             assert retrieved is not None
             assert retrieved.backend_name == "cirq"
@@ -582,15 +586,17 @@ class TestFullWorkflowIntegration:
             session_id = f"session_{int(time.time())}"
             for result in backend_results:
                 stored = StoredResult(
-                    result_id=f"{session_id}_{result.backend_name}",
+                    id=f"{session_id}_{result.backend_name}",
                     session_id=session_id,
                     backend_name=result.backend_name,
-                    success=result.success,
+                    qubit_count=2,
+                    shots=1000,
                     execution_time_ms=result.execution_time_ms,
-                    result_data={},
-                    created_at=time.time(),
+                    memory_used_mb=result.memory_peak_mb,
+                    counts={},
+                    metadata={},
                 )
-                await store.save_result(stored)
+                store.save_result(stored)
             ctx.set("session_id", session_id)
             return session_id
         
@@ -630,7 +636,7 @@ class TestFullWorkflowIntegration:
         assert len(result.successful_stages) == 3
         
         # Verify stored results
-        stored_results = await store.list_results()
+        stored_results = store.list_results()
         assert len(stored_results) == 3
 
     @pytest.mark.integration
