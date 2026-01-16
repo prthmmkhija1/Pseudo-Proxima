@@ -2,7 +2,10 @@
 # Build: docker build -t proxima:latest .
 # Run: docker run --rm proxima --help
 
-FROM python:3.11-slim as builder
+# =============================================================================
+# Builder Stage
+# =============================================================================
+FROM python:3.11-slim AS builder
 
 # Set working directory
 WORKDIR /app
@@ -20,8 +23,10 @@ COPY src/ ./src/
 # Install Proxima with core dependencies
 RUN pip install --no-cache-dir --user .
 
-# Production image
-FROM python:3.11-slim
+# =============================================================================
+# Runtime Stage
+# =============================================================================
+FROM python:3.11-slim AS runtime
 
 # Labels
 LABEL org.opencontainers.image.title="Proxima"
