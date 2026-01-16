@@ -1,4 +1,4 @@
-"""Data handling module - Step 5.1, 5.3 & 5.6: Multi-Backend Comparison, Export Engine & Data Pipeline."""
+﻿"""Data handling module - Step 5.1, 5.3 & 5.6: Multi-Backend Comparison, Export Engine & Data Pipeline."""
 
 from .compare import (
     # Data classes
@@ -74,6 +74,20 @@ from .pipeline import (
     run_pipeline,
     create_stage,
 )
+from .session import (
+    # Enums
+    SessionStatus,
+    # Data classes
+    ExecutionContext,
+    SessionState,
+    UserPreferences,
+    WorkflowStep,
+    # Main class
+    SessionPersistence,
+    # Global functions
+    get_session_persistence,
+    reset_session_persistence,
+)
 
 __all__ = [
     # ===== Step 5.1: Multi-Backend Comparison =====
@@ -147,4 +161,17 @@ __all__ = [
     # Convenience functions
     "run_pipeline",
     "create_stage",
+    # ===== Session Persistence =====
+    # Enums
+    "SessionStatus",
+    # Data classes
+    "ExecutionContext",
+    "SessionState",
+    "UserPreferences",
+    "WorkflowStep",
+    # Main class
+    "SessionPersistence",
+    # Global functions
+    "get_session_persistence",
+    "reset_session_persistence",
 ]

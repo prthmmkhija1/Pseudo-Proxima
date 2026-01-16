@@ -13,16 +13,24 @@ nav:
   - User Guide:
       - Running Simulations: user-guide/running-simulations.md
       - Comparing Backends: user-guide/comparing-backends.md
+      - CLI Reference: user-guide/cli-reference.md
       - Using LLM: user-guide/using-llm.md
       - Agent Files: user-guide/agent-files.md
       - Advanced Topics: user-guide/advanced-topics.md
   - Developer Guide:
       - Architecture: developer-guide/architecture.md
       - Adding Backends: developer-guide/adding-backends.md
+      - Backend Development: developer-guide/backend-development.md
       - Deployment: developer-guide/deployment.md
-      - Contributing: developer-guide/contributing.md
+      - Packaging: developer-guide/packaging.md
       - Testing: developer-guide/testing.md
+      - Contributing: developer-guide/contributing.md
   - API Reference: api-reference/index.md
+  - Backends:
+      - Overview: backends/backend-selection.md
+      - QuEST: backends/quest-usage.md
+      - cuQuantum: backends/cuquantum-usage.md
+      - qsim: backends/qsim-usage.md
 
 theme:
   name: material

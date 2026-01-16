@@ -1217,6 +1217,19 @@ class QsimAdapter(BaseBackendAdapter):
             },
         )
 
+    def supports_simulator(self, sim_type: SimulatorType) -> bool:
+        """Check if the simulator type is supported.
+
+        qsim supports state vector simulation only.
+
+        Args:
+            sim_type: The simulator type to check.
+
+        Returns:
+            True if the simulator type is supported.
+        """
+        return sim_type == SimulatorType.STATE_VECTOR
+
     def validate_circuit(self, circuit: Any) -> ValidationResult:
         """Validate a circuit for qsim execution."""
         if not self.is_available():

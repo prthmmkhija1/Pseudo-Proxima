@@ -313,5 +313,249 @@ def quick_ghz(
     run_task(f"create ghz state with {qubits} qubits", backend=backend, shots=shots)
 
 
+
+# ==============================================================================
+# Additional Commands and Aliases for 100% Coverage
+# ==============================================================================
+
+
+@app.command("status")
+def show_status():
+    """Show current Proxima status and active sessions.
+    
+    \b
+    Displays:
+    - Active session (if any)
+    - Current backend configuration
+    - Recent execution history
+    - System resource status
+    
+    \b
+    EXAMPLES:
+      proxima status
+    """
+    from proxima.config.settings import config_service
+    from proxima.data.store import get_store
+    
+    typer.echo("\n" + "=" * 60)
+    typer.echo("PROXIMA STATUS")
+    typer.echo("=" * 60)
+    
+    # Configuration
+    settings = config_service.load()
+    typer.echo(f"\nDefault Backend: {settings.backends.default_backend}")
+    typer.echo(f"Output Format:   {settings.general.output_format}")
+    typer.echo(f"Color Enabled:   {settings.general.color_enabled}")
+    
+    # Recent sessions
+    store = get_store()
+    sessions = store.list_sessions(limit=3)
+    if sessions:
+        typer.echo("\nRecent Sessions:")
+        for session in sessions:
+            name = session.name or "(unnamed)"
+            typer.echo(f"  - {session.id[:8]}... {name} ({session.result_count} results)")
+    else:
+        typer.echo("\nNo sessions found.")
+    
+    # Recent results
+    results = store.list_results(limit=3)
+    if results:
+        typer.echo("\nRecent Executions:")
+        for result in results:
+            typer.echo(f"  - {result.backend_name}: {result.qubit_count} qubits, {result.shot_count} shots")
+    
+    typer.echo()
+
+
+@app.command("export")
+def export_results(
+    session_id: str | None = typer.Option(None, "--session", "-s", help="Session ID to export"),
+    format: str = typer.Option("json", "--format", "-f", help="Export format (json|csv|yaml)"),
+    output: str = typer.Option(None, "--output", "-o", help="Output file path"),
+):
+    """Export execution results to file.
+    
+    \b
+    Exports results from a session or all results to the specified format.
+    
+    \b
+    FORMATS:
+      json  - JSON format (default)
+      csv   - Comma-separated values
+      yaml  - YAML format
+    
+    \b
+    EXAMPLES:
+      proxima export --session abc123 --format json
+      proxima export --format csv --output results.csv
+    """
+    from proxima.data.store import get_store
+    import json
+    
+    store = get_store()
+    
+    if session_id:
+        results = store.list_results(session_id=session_id)
+    else:
+        results = store.list_results(limit=100)
+    
+    if not results:
+        typer.echo("No results to export.", err=True)
+        raise typer.Exit(1)
+    
+    # Convert to exportable format
+    export_data = []
+    for result in results:
+        export_data.append({
+            "id": result.id,
+            "session_id": result.session_id,
+            "backend": result.backend_name,
+            "qubits": result.qubit_count,
+            "shots": result.shot_count,
+            "execution_time_ms": result.execution_time_ms,
+            "created_at": str(result.created_at),
+        })
+    
+    if format.lower() == "json":
+        output_str = json.dumps(export_data, indent=2)
+    elif format.lower() == "csv":
+        if export_data:
+            headers = list(export_data[0].keys())
+            lines = [",".join(headers)]
+            for item in export_data:
+                lines.append(",".join(str(item.get(h, "")) for h in headers))
+            output_str = "\n".join(lines)
+        else:
+            output_str = ""
+    elif format.lower() == "yaml":
+        import yaml
+        output_str = yaml.dump(export_data, default_flow_style=False)
+    else:
+        typer.echo(f"Unknown format: {format}", err=True)
+        raise typer.Exit(1)
+    
+    if output:
+        with open(output, 'w') as f:
+            f.write(output_str)
+        typer.echo(f"Exported {len(export_data)} results to {output}")
+    else:
+        typer.echo(output_str)
+
+
+@app.command("doctor")
+def run_diagnostics():
+    """Run Proxima diagnostics and health checks.
+    
+    \b
+    Checks:
+    - Backend availability
+    - Configuration validity
+    - Data store connectivity
+    - Python environment
+    
+    \b
+    EXAMPLES:
+      proxima doctor
+    """
+    typer.echo("\n" + "=" * 60)
+    typer.echo("PROXIMA DIAGNOSTICS")
+    typer.echo("=" * 60 + "\n")
+    
+    issues = []
+    
+    # Check Python version
+    import sys
+    typer.echo(f"✓ Python version: {sys.version.split()[0]}")
+    
+    # Check configuration
+    try:
+        from proxima.config.settings import config_service
+        settings = config_service.load()
+        typer.echo(f"✓ Configuration loaded: {settings.backends.default_backend}")
+    except Exception as exc:
+        issues.append(f"Configuration error: {exc}")
+        typer.echo(f"✗ Configuration: {exc}")
+    
+    # Check data store
+    try:
+        from proxima.data.store import get_store
+        store = get_store()
+        session_count = len(store.list_sessions(limit=10))
+        typer.echo(f"✓ Data store: {session_count} sessions found")
+    except Exception as exc:
+        issues.append(f"Data store error: {exc}")
+        typer.echo(f"✗ Data store: {exc}")
+    
+    # Check backends
+    typer.echo("\nBackend Status:")
+    backends_to_check = ["lret", "cirq", "qiskit", "quest", "qsim", "cuquantum"]
+    
+    for backend in backends_to_check:
+        try:
+            # Try importing backend adapter
+            adapter_module = f"proxima.backends.{backend}_adapter" if backend != "lret" else "proxima.backends.lret"
+            __import__(adapter_module)
+            typer.echo(f"  ✓ {backend}: module available")
+        except ImportError:
+            typer.echo(f"  ○ {backend}: module not installed")
+        except Exception as exc:
+            typer.echo(f"  ✗ {backend}: {exc}")
+    
+    # Summary
+    typer.echo("\n" + "-" * 60)
+    if issues:
+        typer.echo(f"Found {len(issues)} issue(s):")
+        for issue in issues:
+            typer.echo(f"  - {issue}")
+    else:
+        typer.echo("All checks passed! Proxima is ready to use.")
+    typer.echo()
+
+
+# Additional Aliases
+@app.command("be", hidden=True)
+def alias_be():
+    """Alias for 'backends list'."""
+    from proxima.cli.commands.backends import list_backends
+    list_backends()
+
+
+@app.command("cfg", hidden=True)
+def alias_cfg():
+    """Alias for 'config show'."""
+    from proxima.cli.commands.config import show
+    show()
+
+
+@app.command("hist", hidden=True)
+def alias_hist(
+    limit: int = typer.Option(20, "--limit", "-n", help="Number of results"),
+):
+    """Alias for 'history list'."""
+    from proxima.cli.commands.history import list_history
+    list_history(limit=limit)
+
+
+@app.command("sess", hidden=True)
+def alias_sess(
+    limit: int = typer.Option(20, "--limit", "-n", help="Number of sessions"),
+):
+    """Alias for 'session list'."""
+    from proxima.cli.commands.session import list_sessions
+    list_sessions(limit=limit)
+
+
+@app.command("diff", hidden=True)
+def alias_diff(
+    ctx: typer.Context,
+    task: str = typer.Argument(..., help="Task to compare"),
+):
+    """Alias for 'compare'."""
+    from proxima.cli.commands.compare import compare
+    ctx.invoke(compare, task=task)
+
+
+
 if __name__ == "__main__":
     app()

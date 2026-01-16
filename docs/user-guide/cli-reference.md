@@ -1,89 +1,144 @@
-# Proxima CLI Reference
+﻿# CLI Reference
 
-> **Version:** 1.0  
-> **Last Updated:** January 12, 2026
-
----
-
-## Overview
-
-The Proxima CLI provides commands for running quantum circuit simulations, managing backends, comparing results, and configuring the system.
-
----
+This document provides a comprehensive reference for all Proxima CLI commands.
 
 ## Global Options
 
-```bash
-proxima [OPTIONS] COMMAND [ARGS]
+These options are available for all commands:
 
-Options:
-  --version           Show version and exit
-  --verbose, -v       Enable verbose output (can be repeated: -vv, -vvv)
-  --quiet, -q         Suppress non-essential output
-  --config FILE       Path to configuration file
-  --no-color          Disable colored output
-  --help              Show help message and exit
+```bash
+proxima [OPTIONS] COMMAND [ARGS]...
+```
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--version` | `-V` | Show version and exit |
+| `--help` | `-h` | Show help message and exit |
+| `--verbose` | `-v` | Enable verbose output |
+| `--quiet` | `-q` | Suppress non-essential output |
+| `--config` | `-c` | Path to config file |
+| `--no-color` | | Disable colored output |
+| `--json` | | Output in JSON format |
+
+## Commands Overview
+
+| Command | Description |
+|---------|-------------|
+| `run` | Execute a quantum circuit |
+| `compare` | Compare execution across backends |
+| `backends` | Manage quantum backends |
+| `config` | View and modify configuration |
+| `results` | View and manage execution results |
+| `export` | Export results to various formats |
+| `session` | Manage sessions |
+| `llm` | LLM integration commands |
+| `tui` | Launch terminal user interface |
+| `agent` | Agent file operations |
+| `init` | Initialize a new project |
+
+---
+
+## `proxima run`
+
+Execute a quantum circuit on a specified backend.
+
+### Usage
+
+```bash
+proxima run [OPTIONS] CIRCUIT
+```
+
+### Arguments
+
+| Argument | Required | Description |
+|----------|----------|-------------|
+| `CIRCUIT` | Yes | Path to circuit file (JSON/QASM) |
+
+### Options
+
+| Option | Short | Default | Description |
+|--------|-------|---------|-------------|
+| `--backend` | `-b` | `auto` | Backend to use (lret, cirq, qiskit, quest, qsim, cuquantum) |
+| `--shots` | `-s` | `1000` | Number of measurement shots |
+| `--timeout` | `-t` | `300` | Execution timeout in seconds |
+| `--output` | `-o` | auto | Output file path for results |
+| `--no-save` | | | Don't save results to history |
+| `--dry-run` | | | Show execution plan without running |
+| `--watch` | `-w` | | Watch file for changes and re-run |
+| `--parameters` | `-p` | | Parameter values as JSON |
+
+### Examples
+
+```bash
+# Basic execution
+proxima run circuits/bell.json
+
+# Use specific backend with more shots
+proxima run circuits/vqe.json --backend cirq --shots 10000
+
+# Execute with custom parameters
+proxima run circuits/parametric.json -p '{"theta": 0.5, "phi": 1.2}'
+
+# Dry run to see execution plan
+proxima run circuits/complex.json --dry-run
+
+# Watch mode for iterative development
+proxima run circuits/test.json --watch
 ```
 
 ---
 
-## Commands
+## `proxima compare`
 
-### `proxima run`
+Compare circuit execution across multiple backends.
 
-Execute a quantum circuit simulation.
+### Usage
 
 ```bash
-proxima run [OPTIONS] CIRCUIT_FILE
-
-Arguments:
-  CIRCUIT_FILE        Path to circuit file (.py, .qasm, .json)
-
-Options:
-  --backend, -b TEXT  Backend to use (auto, quest, cuquantum, qsim, cirq, 
-                      qiskit, lret) [default: auto]
-  --sim-type TEXT     Simulation type (statevector, density_matrix)
-                      [default: statevector]
-  --shots, -s INT     Number of measurement shots [default: 1024]
-  --seed INT          Random seed for reproducibility
-  --gpu               Enable GPU acceleration
-  --threads INT       Number of CPU threads to use
-  --output, -o FILE   Output file for results (json, csv, xlsx)
-  --profile           Enable performance profiling
-  --dry-run           Validate without execution
-  --help              Show help message and exit
+proxima compare [OPTIONS] CIRCUIT
 ```
 
-**Examples:**
+### Arguments
+
+| Argument | Required | Description |
+|----------|----------|-------------|
+| `CIRCUIT` | Yes | Path to circuit file |
+
+### Options
+
+| Option | Short | Default | Description |
+|--------|-------|---------|-------------|
+| `--backends` | `-b` | `all` | Comma-separated list of backends |
+| `--shots` | `-s` | `1000` | Number of shots per backend |
+| `--output` | `-o` | auto | Output file for comparison report |
+| `--detailed` | `-d` | | Include detailed statistics |
+| `--parallel` | | | Run backends in parallel |
+| `--timeout` | `-t` | `600` | Total timeout in seconds |
+| `--format` | `-f` | `table` | Output format (table, json, csv) |
+
+### Examples
 
 ```bash
-# Basic execution with auto-selected backend
-proxima run my_circuit.py
+# Compare all available backends
+proxima compare circuits/bell.json
 
-# Use QuEST backend with 10000 shots
-proxima run --backend quest --shots 10000 my_circuit.py
+# Compare specific backends
+proxima compare circuits/bell.json --backends lret,cirq,qiskit
 
-# GPU-accelerated execution with cuQuantum
-proxima run --backend cuquantum --gpu large_circuit.py
+# Detailed comparison with parallel execution
+proxima compare circuits/complex.json -b all --detailed --parallel
 
-# Density matrix simulation
-proxima run --backend quest --sim-type density_matrix noisy_circuit.py
-
-# Save results to file
-proxima run --backend qsim --output results.json my_circuit.py
-
-# Dry run to validate circuit
-proxima run --dry-run --backend quest my_circuit.py
-
-# Verbose output with profiling
-proxima run -vv --profile --backend qsim my_circuit.py
+# Export comparison as JSON
+proxima compare circuits/bell.json -f json -o comparison.json
 ```
 
 ---
 
-### `proxima backends`
+## `proxima backends`
 
-Manage and inspect quantum simulation backends.
+Manage and inspect quantum backends.
+
+### Subcommands
 
 #### `proxima backends list`
 
@@ -93,246 +148,89 @@ List all available backends.
 proxima backends list [OPTIONS]
 
 Options:
-  --all, -a           Show all backends (including unavailable)
-  --json              Output as JSON
-  --help              Show help message and exit
+  --available    Show only available backends
+  --all          Show all backends including unavailable
+  --format       Output format (table, json)
 ```
-
-**Example Output:**
-
-```
-┌─────────────┬───────────┬────────────────────────┬───────────┐
-│ Backend     │ Status    │ Capabilities           │ Max Qubits│
-├─────────────┼───────────┼────────────────────────┼───────────┤
-│ quest       │ ✓ Ready   │ SV, DM, GPU, Noise     │ 30        │
-│ cuquantum   │ ✓ Ready   │ SV, GPU                │ 35        │
-│ qsim        │ ✓ Ready   │ SV, AVX512             │ 35        │
-│ cirq        │ ✓ Ready   │ SV, DM, Noise          │ 20        │
-│ qiskit      │ ✓ Ready   │ SV, DM, Noise          │ 30        │
-│ lret        │ ✓ Ready   │ SV, DM, Low-Rank       │ 15        │
-└─────────────┴───────────┴────────────────────────┴───────────┘
-
-Legend: SV=State Vector, DM=Density Matrix
-```
-
----
 
 #### `proxima backends info`
 
-Get detailed information about a specific backend.
+Show detailed information about a backend.
 
 ```bash
-proxima backends info [OPTIONS] BACKEND_NAME
+proxima backends info BACKEND
 
 Arguments:
-  BACKEND_NAME        Name of the backend (quest, cuquantum, qsim, etc.)
-
-Options:
-  --json              Output as JSON
-  --verbose, -v       Show additional details
-  --help              Show help message and exit
+  BACKEND    Backend name (lret, cirq, qiskit, quest, qsim, cuquantum)
 ```
-
-**Example Output:**
-
-```bash
-$ proxima backends info quest
-
-QuEST Backend
-═════════════
-
-Version:        3.5.0
-Status:         Available ✓
-Library Path:   /usr/local/lib/libQuEST.so
-
-Capabilities:
-  ├─ State Vector:      ✓
-  ├─ Density Matrix:    ✓
-  ├─ GPU Acceleration:  ✓ (CUDA 12.0)
-  ├─ Noise Simulation:  ✓
-  ├─ Gate Fusion:       ✓
-  └─ Max Qubits:        30
-
-Hardware:
-  ├─ CPU Threads:       16 (available)
-  ├─ GPU:               NVIDIA RTX 4090
-  └─ GPU Memory:        24576 MB
-
-Configuration:
-  ├─ Default Precision: double
-  ├─ GPU Enabled:       auto
-  └─ Thread Count:      auto
-
-Supported Gates:
-  Single-qubit: X, Y, Z, H, S, T, Rx, Ry, Rz, U3
-  Two-qubit:    CNOT, CZ, CRx, CRy, CRz, SWAP
-  Multi-qubit:  CCX, CCZ, Multi-controlled
-
-Example:
-  proxima run --backend quest --gpu my_circuit.py
-```
-
----
-
-#### `proxima backends compare`
-
-Compare multiple backends.
-
-```bash
-proxima backends compare [OPTIONS] BACKENDS...
-
-Arguments:
-  BACKENDS            Backend names to compare (space-separated)
-
-Options:
-  --output, -o FILE   Output comparison to file
-  --json              Output as JSON
-  --help              Show help message and exit
-```
-
-**Example:**
-
-```bash
-$ proxima backends compare quest cuquantum qsim
-
-Backend Comparison
-══════════════════
-
-                    │ quest      │ cuquantum  │ qsim       │
-────────────────────┼────────────┼────────────┼────────────┤
-State Vector        │ ✓          │ ✓          │ ✓          │
-Density Matrix      │ ✓          │ ✗          │ ✗          │
-GPU Support         │ ✓          │ ✓          │ ✗          │
-CPU Optimized       │ ✓          │ ✗          │ ✓✓         │
-Noise Simulation    │ ✓          │ ✗          │ ✗          │
-Max Qubits          │ 30         │ 35+        │ 35+        │
-────────────────────┼────────────┼────────────┼────────────┤
-Best For            │ Research   │ Large GPU  │ Large CPU  │
-```
-
----
 
 #### `proxima backends test`
 
-Test backend functionality.
+Test a backend's functionality.
 
 ```bash
-proxima backends test [OPTIONS] [BACKEND_NAME]
-
-Arguments:
-  BACKEND_NAME        Backend to test (optional, tests all if omitted)
+proxima backends test BACKEND [OPTIONS]
 
 Options:
-  --all               Test all available backends
-  --quick             Run quick smoke tests only
-  --verbose, -v       Show detailed test output
-  --help              Show help message and exit
+  --circuit      Path to test circuit
+  --shots        Number of test shots
+  --verbose      Show detailed test output
 ```
 
-**Example:**
+#### `proxima backends benchmark`
+
+Run performance benchmarks.
 
 ```bash
-$ proxima backends test --all
+proxima backends benchmark [OPTIONS]
 
-Testing Backends
-════════════════
+Options:
+  --backends     Backends to benchmark
+  --qubits       Qubit range (e.g., "2-10")
+  --output       Output file for results
+```
 
-quest:
-  ├─ Import:          ✓ (0.12s)
-  ├─ Initialization:  ✓ (0.05s)
-  ├─ Bell State:      ✓ (0.03s)
-  ├─ 10-Qubit GHZ:    ✓ (0.15s)
-  └─ Cleanup:         ✓ (0.01s)
-  Status: PASSED
+### Examples
 
-cuquantum:
-  ├─ Import:          ✓ (0.08s)
-  ├─ GPU Detection:   ✓ (NVIDIA RTX 4090)
-  ├─ Bell State:      ✓ (0.02s)
-  ├─ 20-Qubit GHZ:    ✓ (0.45s)
-  └─ Cleanup:         ✓ (0.01s)
-  Status: PASSED
+```bash
+# List all backends with status
+proxima backends list
 
-qsim:
-  ├─ Import:          ✓ (0.10s)
-  ├─ AVX Detection:   ✓ (AVX512)
-  ├─ Bell State:      ✓ (0.01s)
-  ├─ 20-Qubit GHZ:    ✓ (0.25s)
-  └─ Cleanup:         ✓ (0.00s)
-  Status: PASSED
+# Get detailed info about QuEST
+proxima backends info quest
 
-Summary: 3/3 backends passed
+# Test Cirq backend
+proxima backends test cirq --verbose
+
+# Benchmark all GPU backends
+proxima backends benchmark --backends cuquantum,quest
 ```
 
 ---
 
-### `proxima compare`
+## `proxima config`
 
-Run the same circuit on multiple backends and compare results.
+View and modify configuration.
 
-```bash
-proxima compare [OPTIONS] CIRCUIT_FILE
-
-Arguments:
-  CIRCUIT_FILE        Path to circuit file
-
-Options:
-  --backends, -b TEXT Backend names (comma-separated or 'all')
-                      [default: auto]
-  --shots, -s INT     Number of shots per backend [default: 1024]
-  --output, -o FILE   Output file for comparison report
-  --format TEXT       Output format (text, json, csv, xlsx) [default: text]
-  --fidelity          Calculate cross-backend fidelity
-  --help              Show help message and exit
-```
-
-**Example:**
-
-```bash
-$ proxima compare --backends quest,cuquantum,qsim --shots 10000 bell_state.py
-
-Multi-Backend Comparison Report
-═══════════════════════════════
-
-Circuit: bell_state.py (2 qubits, depth 2)
-Shots: 10000 per backend
-
-Results:
-┌───────────┬───────────┬───────────┬──────────────┬────────────┐
-│ Backend   │ |00⟩      │ |11⟩      │ Time (ms)    │ Memory (MB)│
-├───────────┼───────────┼───────────┼──────────────┼────────────┤
-│ quest     │ 4987      │ 5013      │ 12.3         │ 0.02       │
-│ cuquantum │ 5021      │ 4979      │ 8.1          │ 256.0      │
-│ qsim      │ 4995      │ 5005      │ 5.2          │ 0.02       │
-└───────────┴───────────┴───────────┴──────────────┴────────────┘
-
-Cross-Backend Fidelity:
-  quest ↔ cuquantum:    0.9999
-  quest ↔ qsim:         0.9999
-  cuquantum ↔ qsim:     0.9999
-
-Performance Winner: qsim (5.2 ms)
-Result Agreement: EXCELLENT (fidelity > 0.999)
-```
-
----
-
-### `proxima config`
-
-Manage Proxima configuration.
+### Subcommands
 
 #### `proxima config show`
 
-Show current configuration.
+Display current configuration.
 
 ```bash
-proxima config show [OPTIONS]
+proxima config show [SECTION]
 
-Options:
-  --section TEXT      Show only specific section
-  --defaults          Include default values
-  --json              Output as JSON
-  --help              Show help message and exit
+Arguments:
+  SECTION    Optional section (backends, llm, resources, etc.)
+```
+
+#### `proxima config get`
+
+Get a specific configuration value.
+
+```bash
+proxima config get KEY
 ```
 
 #### `proxima config set`
@@ -341,140 +239,421 @@ Set a configuration value.
 
 ```bash
 proxima config set KEY VALUE
-
-Arguments:
-  KEY                 Configuration key (e.g., backends.quest.gpu_enabled)
-  VALUE               Value to set
 ```
 
-#### `proxima config init`
+#### `proxima config reset`
 
-Initialize a new configuration file.
+Reset configuration to defaults.
 
 ```bash
-proxima config init [OPTIONS]
+proxima config reset [--section SECTION]
+```
+
+#### `proxima config validate`
+
+Validate current configuration.
+
+```bash
+proxima config validate
+```
+
+#### `proxima config edit`
+
+Open configuration in editor.
+
+```bash
+proxima config edit
+```
+
+### Examples
+
+```bash
+# Show all configuration
+proxima config show
+
+# Show backend configuration
+proxima config show backends
+
+# Get specific value
+proxima config get llm.provider
+
+# Set values
+proxima config set backends.default cirq
+proxima config set llm.model gpt-4
+proxima config set resources.memory_warn_threshold_mb 8192
+
+# Reset to defaults
+proxima config reset
+
+# Validate configuration
+proxima config validate
+```
+
+---
+
+## `proxima results`
+
+View and manage execution results.
+
+### Subcommands
+
+#### `proxima results list`
+
+List execution results.
+
+```bash
+proxima results list [OPTIONS]
 
 Options:
-  --path FILE         Path for config file [default: ./proxima.yaml]
-  --force             Overwrite existing file
-  --help              Show help message and exit
+  --limit        Maximum results to show (default: 20)
+  --since        Show results since date
+  --until        Show results until date
+  --backend      Filter by backend
+  --circuit      Filter by circuit name
+  --format       Output format (table, json)
+```
+
+#### `proxima results show`
+
+Show details of a specific result.
+
+```bash
+proxima results show RESULT_ID [OPTIONS]
+
+Options:
+  --format       Output format (table, json, full)
+```
+
+#### `proxima results delete`
+
+Delete a result.
+
+```bash
+proxima results delete RESULT_ID [--force]
+```
+
+#### `proxima results clear`
+
+Clear all results.
+
+```bash
+proxima results clear [--before DATE] [--force]
+```
+
+### Examples
+
+```bash
+# List recent results
+proxima results list
+
+# Filter by backend
+proxima results list --backend cirq --limit 10
+
+# Show specific result
+proxima results show res-abc123
+
+# Delete old results
+proxima results clear --before 2025-01-01
 ```
 
 ---
 
-### `proxima version`
+## `proxima export`
 
-Show version and system information.
+Export results to various formats.
+
+### Usage
 
 ```bash
-$ proxima version
+proxima export [OPTIONS]
+```
 
-Proxima v1.0.0
-══════════════
+### Options
 
-Python:       3.11.5
-Platform:     Windows 11 (AMD64)
-Install Path: C:\Users\user\envs\proxima
+| Option | Short | Default | Description |
+|--------|-------|---------|-------------|
+| `--format` | `-f` | `json` | Export format (json, csv, xlsx) |
+| `--output` | `-o` | Required | Output file path |
+| `--results` | `-r` | all | Result IDs to export (comma-separated) |
+| `--since` | | | Export results since date |
+| `--until` | | | Export results until date |
+| `--with-insights` | | | Include LLM-generated insights |
+| `--template` | | | Use export template |
 
-Backends:
-  ├─ quest:      3.5.0 ✓
-  ├─ cuquantum:  1.2.0 ✓
-  ├─ qsim:       0.22.0 ✓
-  ├─ cirq:       1.3.0 ✓
-  ├─ qiskit:     1.0.0 ✓
-  └─ lret:       0.1.0 ✓
+### Examples
 
-Hardware:
-  ├─ CPU:        AMD Ryzen 9 5900X (24 threads)
-  ├─ RAM:        64 GB
-  ├─ GPU:        NVIDIA RTX 4090 (24 GB)
-  └─ CUDA:       12.0
+```bash
+# Export all results to JSON
+proxima export -f json -o results.json
+
+# Export to Excel with insights
+proxima export -f xlsx -o report.xlsx --with-insights
+
+# Export specific results
+proxima export -f csv -o subset.csv -r res-001,res-002,res-003
+
+# Export recent results
+proxima export -f json -o recent.json --since 2025-01-15
 ```
 
 ---
 
-## Backend-Specific Examples
+## `proxima session`
 
-### QuEST Examples
+Manage execution sessions.
+
+### Subcommands
+
+#### `proxima session list`
+
+List all sessions.
 
 ```bash
-# Basic QuEST execution
-proxima run --backend quest my_circuit.py
-
-# QuEST with GPU acceleration
-proxima run --backend quest --gpu my_circuit.py
-
-# QuEST density matrix simulation
-proxima run --backend quest --sim-type density_matrix noisy_circuit.py
-
-# QuEST with specific precision
-proxima run --backend quest --config quest.precision=double my_circuit.py
-
-# QuEST with custom thread count
-proxima run --backend quest --threads 16 my_circuit.py
-
-# QuEST verbose execution with profiling
-proxima run --backend quest -vv --profile my_circuit.py
+proxima session list
 ```
 
-### cuQuantum Examples
+#### `proxima session new`
+
+Create a new session.
 
 ```bash
-# Basic cuQuantum execution (requires NVIDIA GPU)
-proxima run --backend cuquantum my_circuit.py
-
-# cuQuantum with specific GPU device
-proxima run --backend cuquantum --config cuquantum.device_id=0 my_circuit.py
-
-# cuQuantum for large circuits
-proxima run --backend cuquantum --shots 100000 large_circuit.py
-
-# cuQuantum with memory profiling
-proxima run --backend cuquantum --profile my_circuit.py
+proxima session new [NAME]
 ```
 
-### qsim Examples
+#### `proxima session load`
+
+Load a saved session.
 
 ```bash
-# Basic qsim execution (CPU-optimized)
-proxima run --backend qsim my_circuit.py
-
-# qsim with all CPU threads
-proxima run --backend qsim --threads 0 my_circuit.py  # 0 = all threads
-
-# qsim with gate fusion disabled
-proxima run --backend qsim --config qsim.enable_gate_fusion=false my_circuit.py
-
-# qsim for Cirq circuits
-proxima run --backend qsim cirq_circuit.py
+proxima session load NAME
 ```
 
-### Multi-Backend Workflow
+#### `proxima session save`
+
+Save current session.
 
 ```bash
-# Step 1: Validate circuit on all backends
-proxima run --dry-run --backend quest my_circuit.py
-proxima run --dry-run --backend cuquantum my_circuit.py
-proxima run --dry-run --backend qsim my_circuit.py
+proxima session save [NAME]
+```
 
-# Step 2: Run comparison
-proxima compare --backends quest,cuquantum,qsim --shots 10000 my_circuit.py
+#### `proxima session delete`
 
-# Step 3: Run with best backend
-proxima run --backend qsim --shots 100000 --output results.json my_circuit.py
+Delete a session.
+
+```bash
+proxima session delete NAME [--force]
+```
+
+### Examples
+
+```bash
+# Create new session
+proxima session new my-experiment
+
+# Save current session
+proxima session save
+
+# Load previous session
+proxima session load my-experiment
+
+# List all sessions
+proxima session list
+```
+
+---
+
+## `proxima llm`
+
+LLM integration commands.
+
+### Subcommands
+
+#### `proxima llm plan`
+
+Generate execution plan using LLM.
+
+```bash
+proxima llm plan CIRCUIT [OPTIONS]
+
+Options:
+  --max-time         Maximum execution time
+  --prefer-gpu       Prefer GPU backends
+  --interactive      Interactive planning mode
+```
+
+#### `proxima llm summarize`
+
+Summarize results using LLM.
+
+```bash
+proxima llm summarize RESULT_FILE [OPTIONS]
+
+Options:
+  --focus            Focus area (comparison, statistics, insights)
+  --output           Output file for summary
+```
+
+#### `proxima llm test`
+
+Test LLM connection.
+
+```bash
+proxima llm test
+```
+
+#### `proxima llm usage`
+
+Show LLM usage statistics.
+
+```bash
+proxima llm usage [--show-cost]
+```
+
+### Examples
+
+```bash
+# Generate execution plan
+proxima llm plan circuits/complex.json
+
+# Summarize results
+proxima llm summarize results/latest.json
+
+# Test LLM connection
+proxima llm test
+```
+
+---
+
+## `proxima tui`
+
+Launch the terminal user interface.
+
+### Usage
+
+```bash
+proxima tui [OPTIONS]
+```
+
+### Options
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--session` | `-s` | Load specific session |
+| `--theme` | | UI theme (dark, light) |
+| `--no-mouse` | | Disable mouse support |
+
+### Examples
+
+```bash
+# Launch TUI
+proxima tui
+
+# Launch with specific session
+proxima tui --session my-experiment
+```
+
+---
+
+## `proxima agent`
+
+Agent file operations.
+
+### Subcommands
+
+#### `proxima agent run`
+
+Execute an agent file.
+
+```bash
+proxima agent run AGENT_FILE [OPTIONS]
+
+Options:
+  --dry-run         Show plan without executing
+  --interactive     Confirm each step
+```
+
+#### `proxima agent validate`
+
+Validate an agent file.
+
+```bash
+proxima agent validate AGENT_FILE
+```
+
+#### `proxima agent create`
+
+Create a new agent file from template.
+
+```bash
+proxima agent create OUTPUT_FILE [--template TEMPLATE]
+```
+
+### Examples
+
+```bash
+# Run agent file
+proxima agent run my_experiment.agent.md
+
+# Validate agent file
+proxima agent validate my_experiment.agent.md
+
+# Create new agent file
+proxima agent create new_experiment.agent.md
+```
+
+---
+
+## `proxima init`
+
+Initialize a new Proxima project.
+
+### Usage
+
+```bash
+proxima init [OPTIONS] [DIRECTORY]
+```
+
+### Arguments
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `DIRECTORY` | `.` | Project directory |
+
+### Options
+
+| Option | Description |
+|--------|-------------|
+| `--template` | Project template (default, minimal, full) |
+| `--name` | Project name |
+| `--no-examples` | Don't create example files |
+
+### Examples
+
+```bash
+# Initialize in current directory
+proxima init
+
+# Initialize with full template
+proxima init --template full
+
+# Initialize in new directory
+proxima init my-project --template default
 ```
 
 ---
 
 ## Environment Variables
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `PROXIMA_CONFIG` | Path to config file | `~/.proxima/config.yaml` |
-| `PROXIMA_LOG_LEVEL` | Logging level | `INFO` |
-| `PROXIMA_BACKEND` | Default backend | `auto` |
-| `PROXIMA_NO_COLOR` | Disable colors | `false` |
-| `PROXIMA_GPU` | Enable GPU by default | `auto` |
+Proxima respects the following environment variables:
+
+| Variable | Description |
+|----------|-------------|
+| `PROXIMA_CONFIG` | Path to configuration file |
+| `PROXIMA_LOG_LEVEL` | Logging level (DEBUG, INFO, WARNING, ERROR) |
+| `PROXIMA_NO_COLOR` | Disable colored output |
+| `OPENAI_API_KEY` | OpenAI API key for LLM |
+| `ANTHROPIC_API_KEY` | Anthropic API key for LLM |
+| `OLLAMA_HOST` | Ollama server URL |
 
 ---
 
@@ -482,19 +661,17 @@ proxima run --backend qsim --shots 100000 --output results.json my_circuit.py
 
 | Code | Meaning |
 |------|---------|
-| 0 | Success |
-| 1 | General error |
-| 2 | Invalid arguments |
-| 3 | Backend not available |
-| 4 | Circuit validation failed |
-| 5 | Execution error |
-| 6 | Resource error (memory, GPU) |
-| 7 | Configuration error |
+| `0` | Success |
+| `1` | General error |
+| `2` | Configuration error |
+| `3` | Backend error |
+| `4` | Timeout error |
+| `5` | User abort |
 
 ---
 
 ## See Also
 
-- [Backend Selection Guide](../backends/backend-selection.md)
-- [Configuration Reference](configuration.md)
-- [API Reference](../api-reference/)
+- [Quickstart Guide](../getting-started/quickstart.md)
+- [Configuration](../getting-started/configuration.md)
+- [Using LLM](using-llm.md)

@@ -100,6 +100,46 @@ class NormalizedResult:
         return result
 
 
+
+@dataclass
+class LRETBatchExecutionResult:
+    """Result of batch circuit execution for LRET backend.
+    
+    Attributes:
+        total_circuits: Total number of circuits submitted
+        successful: Number of successfully executed circuits
+        failed: Number of failed circuits
+        results: List of ExecutionResults (None for failed circuits)
+        errors: List of (index, error_message) tuples for failures
+        total_execution_time_ms: Total execution time in milliseconds
+        average_time_per_circuit_ms: Average time per circuit
+    """
+    
+    total_circuits: int
+    successful: int
+    failed: int
+    results: list[ExecutionResult | None]
+    errors: list[tuple[int, str]]
+    total_execution_time_ms: float
+    average_time_per_circuit_ms: float
+    
+    def get_successful_results(self) -> list[ExecutionResult]:
+        """Get only successful results, filtering out None values."""
+        return [r for r in self.results if r is not None]
+    
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary representation."""
+        return {
+            "total_circuits": self.total_circuits,
+            "successful": self.successful,
+            "failed": self.failed,
+            "results": [r.to_dict() if r else None for r in self.results],
+            "errors": self.errors,
+            "total_execution_time_ms": self.total_execution_time_ms,
+            "average_time_per_circuit_ms": self.average_time_per_circuit_ms,
+        }
+
+
 class LRETResultNormalizer:
     """Complete result normalizer for all LRET output formats.
     
@@ -691,7 +731,7 @@ class LRETBackendAdapter(BaseBackendAdapter):
         standard StateVector/DensityMatrix simulators.
         """
         return Capabilities(
-            simulator_types=[SimulatorType.CUSTOM, SimulatorType.STATE_VECTOR],
+            simulator_types=[SimulatorType.CUSTOM, SimulatorType.STATE_VECTOR, SimulatorType.DENSITY_MATRIX],
             max_qubits=32,
             supports_noise=False,
             supports_gpu=False,
@@ -1038,6 +1078,164 @@ class LRETBackendAdapter(BaseBackendAdapter):
     def supports_simulator(self, sim_type: SimulatorType) -> bool:
         """Check if simulator type is supported."""
         return sim_type in self.get_capabilities().simulator_types
+
+    def execute_batch(
+        self,
+        circuits: list[Any],
+        shots: int = 1024,
+        continue_on_error: bool = True,
+        **kwargs: Any,
+    ) -> LRETBatchExecutionResult:
+        """Execute multiple circuits in batch.
+        
+        Provides efficient batch execution of multiple circuits, reusing
+        simulator setup and providing aggregated results.
+        
+        Args:
+            circuits: List of circuits to execute
+            shots: Number of measurement shots per circuit
+            continue_on_error: Whether to continue if a circuit fails
+            **kwargs: Additional execution parameters
+            
+        Returns:
+            LRETBatchExecutionResult with all results
+            
+        Example:
+            >>> adapter = LRETBackendAdapter()
+            >>> circuits = [circuit1, circuit2, circuit3]
+            >>> batch_result = adapter.execute_batch(circuits, shots=1000)
+            >>> print(f"Executed {batch_result.successful}/{batch_result.total_circuits}")
+        """
+        start_time = time.time()
+        
+        results: list[ExecutionResult | None] = []
+        errors: list[tuple[int, str]] = []
+        successful = 0
+        failed = 0
+        
+        for idx, circuit in enumerate(circuits):
+            try:
+                result = self.execute(circuit, shots=shots, **kwargs)
+                results.append(result)
+                successful += 1
+            except Exception as exc:
+                failed += 1
+                error_msg = str(exc)
+                errors.append((idx, error_msg))
+                results.append(None)
+                logger.warning("Batch execution failed for circuit %d: %s", idx, error_msg)
+                
+                if not continue_on_error:
+                    # Fill remaining with None
+                    for _ in range(idx + 1, len(circuits)):
+                        results.append(None)
+                    break
+        
+        total_time_ms = (time.time() - start_time) * 1000
+        avg_time = total_time_ms / len(circuits) if circuits else 0.0
+        
+        return LRETBatchExecutionResult(
+            total_circuits=len(circuits),
+            successful=successful,
+            failed=failed,
+            results=results,
+            errors=errors,
+            total_execution_time_ms=total_time_ms,
+            average_time_per_circuit_ms=avg_time,
+        )
+
+    def execute_parameter_sweep(
+        self,
+        circuit: Any,
+        parameter_sets: list[dict[str, float]],
+        shots: int = 1024,
+        continue_on_error: bool = True,
+        **kwargs: Any,
+    ) -> LRETBatchExecutionResult:
+        """Execute a circuit with multiple parameter sets.
+        
+        Optimized for variational algorithms where the same circuit
+        structure is executed with different parameter values.
+        
+        Args:
+            circuit: Parameterized circuit template
+            parameter_sets: List of parameter value dictionaries
+            shots: Number of measurement shots per execution
+            continue_on_error: Whether to continue if an execution fails
+            **kwargs: Additional execution parameters
+            
+        Returns:
+            LRETBatchExecutionResult with results for each parameter set
+        """
+        start_time = time.time()
+        
+        results: list[ExecutionResult | None] = []
+        errors: list[tuple[int, str]] = []
+        successful = 0
+        failed = 0
+        
+        for idx, params in enumerate(parameter_sets):
+            try:
+                # Bind parameters if circuit supports it
+                bound_circuit = self._bind_parameters(circuit, params)
+                result = self.execute(bound_circuit, shots=shots, **kwargs)
+                results.append(result)
+                successful += 1
+            except Exception as exc:
+                failed += 1
+                error_msg = str(exc)
+                errors.append((idx, error_msg))
+                results.append(None)
+                logger.warning("Parameter sweep failed for set %d: %s", idx, error_msg)
+                
+                if not continue_on_error:
+                    for _ in range(idx + 1, len(parameter_sets)):
+                        results.append(None)
+                    break
+        
+        total_time_ms = (time.time() - start_time) * 1000
+        avg_time = total_time_ms / len(parameter_sets) if parameter_sets else 0.0
+        
+        return LRETBatchExecutionResult(
+            total_circuits=len(parameter_sets),
+            successful=successful,
+            failed=failed,
+            results=results,
+            errors=errors,
+            total_execution_time_ms=total_time_ms,
+            average_time_per_circuit_ms=avg_time,
+        )
+
+    def _bind_parameters(self, circuit: Any, params: dict[str, float]) -> Any:
+        """Bind parameters to a parameterized circuit.
+        
+        Args:
+            circuit: Circuit with parameters
+            params: Dictionary mapping parameter names to values
+            
+        Returns:
+            Circuit with bound parameters
+        """
+        # Try common parameter binding methods
+        if hasattr(circuit, "bind_parameters"):
+            return circuit.bind_parameters(params)
+        elif hasattr(circuit, "assign_parameters"):
+            return circuit.assign_parameters(params)
+        elif hasattr(circuit, "resolve_parameters"):
+            return circuit.resolve_parameters(params)
+        
+        # If circuit is LRET-native, try LRET API
+        if self.is_available() and not self._use_mock:
+            try:
+                lret = self._get_lret_module()
+                if hasattr(lret, "bind_parameters"):
+                    return lret.bind_parameters(circuit, params)
+            except Exception:
+                pass
+        
+        # Return circuit as-is if no binding method found
+        return circuit
+
 
     def get_supported_gates(self) -> list[str]:
         """Get list of gates supported by LRET."""

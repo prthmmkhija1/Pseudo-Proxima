@@ -1302,6 +1302,19 @@ class QuestAdapter(BaseBackendAdapter):
             },
         )
 
+    def supports_simulator(self, sim_type: SimulatorType) -> bool:
+        """Check if the simulator type is supported.
+
+        QuEST supports state vector and density matrix simulation.
+
+        Args:
+            sim_type: The simulator type to check.
+
+        Returns:
+            True if the simulator type is supported.
+        """
+        return sim_type in (SimulatorType.STATE_VECTOR, SimulatorType.DENSITY_MATRIX)
+
     def validate_circuit(self, circuit: Any) -> ValidationResult:
         """Validate a circuit for QuEST execution."""
         if not self.is_available():
