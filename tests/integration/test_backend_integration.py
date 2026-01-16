@@ -452,7 +452,7 @@ class TestExportIntegration:
     @pytest.mark.integration
     def test_export_comparison_to_json(self):
         """Test exporting comparison results to JSON."""
-        from proxima.data.export import JSONExporter, ReportData
+        from proxima.data.export import JSONExporter, ReportData, ExportOptions, ExportFormat
         from proxima.data.compare import BackendResult, ComparisonReport
         import time
         
@@ -476,51 +476,52 @@ class TestExportIntegration:
             title="Backend Comparison",
             generated_at=time.time(),
             summary={"total_backends": 2, "successful": 2},
-            sections=[
-                {"name": "Results", "content": [r.backend_name for r in results]},
-            ],
-            raw_data={"results": [{"backend": r.backend_name} for r in results]},
+            custom_sections={
+                "Results": {"content": [r.backend_name for r in results]},
+            },
+            metadata={"results": [{"backend": r.backend_name} for r in results]},
         )
         
         exporter = JSONExporter()
-        output = exporter.export(report_data)
+        options = ExportOptions(format=ExportFormat.JSON, stream_output=True)
+        result = exporter.export(report_data, options)
         
-        assert output is not None
+        assert result.success
+        assert result.content is not None
         # Verify it's valid JSON
-        parsed = json.loads(output)
+        parsed = json.loads(result.content)
         assert parsed["title"] == "Backend Comparison"
 
     @pytest.mark.integration
     def test_export_comparison_to_csv(self):
         """Test exporting comparison results to CSV."""
-        from proxima.data.export import CSVExporter, ReportData
+        from proxima.data.export import CSVExporter, ReportData, ExportOptions, ExportFormat
         import time
         
         report_data = ReportData(
             title="Backend Metrics",
             generated_at=time.time(),
             summary={},
-            sections=[],
-            raw_data={
-                "rows": [
-                    {"backend": "cirq", "time_ms": 50.0, "memory_mb": 128.0},
-                    {"backend": "qiskit_aer", "time_ms": 45.0, "memory_mb": 150.0},
-                    {"backend": "lret", "time_ms": 55.0, "memory_mb": 100.0},
-                ],
-            },
+            raw_results=[
+                {"backend": "cirq", "time_ms": 50.0, "memory_mb": 128.0},
+                {"backend": "qiskit_aer", "time_ms": 45.0, "memory_mb": 150.0},
+                {"backend": "lret", "time_ms": 55.0, "memory_mb": 100.0},
+            ],
         )
         
         exporter = CSVExporter()
-        output = exporter.export(report_data)
+        options = ExportOptions(format=ExportFormat.CSV, stream_output=True)
+        result = exporter.export(report_data, options)
         
-        assert output is not None
-        lines = output.strip().split("\n")
+        assert result.success
+        assert result.content is not None
+        lines = result.content.strip().split("\n")
         assert len(lines) >= 1  # At least header
 
     @pytest.mark.integration
     def test_export_comparison_to_markdown(self):
         """Test exporting comparison results to Markdown."""
-        from proxima.data.export import MarkdownExporter, ReportData
+        from proxima.data.export import MarkdownExporter, ReportData, ExportOptions, ExportFormat
         import time
         
         report_data = ReportData(
@@ -530,20 +531,18 @@ class TestExportIntegration:
                 "fastest_backend": "qiskit_aer",
                 "most_efficient": "lret",
             },
-            sections=[
-                {
-                    "name": "Performance",
-                    "content": "All backends performed within expected parameters.",
-                },
-            ],
-            raw_data={},
+            custom_sections={
+                "Performance": {"content": "All backends performed within expected parameters."},
+            },
         )
         
         exporter = MarkdownExporter()
-        output = exporter.export(report_data)
+        options = ExportOptions(format=ExportFormat.MARKDOWN, stream_output=True)
+        result = exporter.export(report_data, options)
         
-        assert output is not None
-        assert "# Backend Comparison Report" in output or "Backend Comparison Report" in output
+        assert result.success
+        assert result.content is not None
+        assert "# Backend Comparison Report" in result.content or "Backend Comparison Report" in result.content
 
 
 # =============================================================================
@@ -561,7 +560,7 @@ class TestFullWorkflowIntegration:
         from proxima.data.pipeline import Pipeline, PipelineConfig, Stage
         from proxima.data.compare import BackendResult
         from proxima.data.store import MemoryStore, StoredResult
-        from proxima.data.export import JSONExporter, ReportData
+        from proxima.data.export import JSONExporter, ReportData, ExportOptions, ExportFormat
         import time
         
         store = MemoryStore()
@@ -613,12 +612,12 @@ class TestFullWorkflowIntegration:
                     "fastest_backend": fastest.backend_name,
                     "backends_tested": len(backend_results),
                 },
-                sections=[],
-                raw_data={},
             )
             
             exporter = JSONExporter()
-            return exporter.export(report_data)
+            options = ExportOptions(format=ExportFormat.JSON, stream_output=True)
+            result = exporter.export(report_data, options)
+            return result.content
         
         # Build and execute pipeline
         config = PipelineConfig(name="full_workflow")

@@ -323,13 +323,10 @@ class TestExportE2E:
                 "successful": 3,
                 "fastest_backend": "qiskit_aer",
             },
-            sections=[
-                {
-                    "name": "Results",
-                    "content": "All backends executed successfully.",
-                },
-            ],
-            raw_data={
+            custom_sections={
+                "Results": {"content": "All backends executed successfully."},
+            },
+            metadata={
                 "backends": ["cirq", "qiskit_aer", "lret"],
                 "times": [100.0, 85.0, 110.0],
             },
@@ -344,8 +341,7 @@ class TestExportE2E:
         ]
         
         for fmt in formats:
-            options = ExportOptions(format=fmt)
-            result = engine.export(report_data, options)
+            result = engine.export(report_data, format=fmt, stream_output=True)
             
             assert result.success, f"Export to {fmt.name} failed"
             assert result.content is not None
@@ -361,16 +357,14 @@ class TestExportE2E:
                 title="File Export Test",
                 generated_at=time.time(),
                 summary={"test": True},
-                sections=[],
-                raw_data={},
             )
             
             engine = ExportEngine()
             
             # Export to JSON file
             json_path = os.path.join(tmpdir, "report.json")
-            options = ExportOptions(format=ExportFormat.JSON, output_path=json_path)
-            result = engine.export(report_data, options)
+            from pathlib import Path
+            result = engine.export(report_data, format=ExportFormat.JSON, output_path=Path(json_path))
             
             assert result.success
             assert os.path.exists(json_path)
@@ -418,18 +412,11 @@ class TestExportE2E:
                 "fastest": min(backend_results, key=lambda r: r.execution_time_ms).backend_name,
                 "most_efficient": min(backend_results, key=lambda r: r.memory_peak_mb).backend_name,
             },
-            sections=[
-                {
-                    "name": "Execution Times",
-                    "content": {r.backend_name: r.execution_time_ms for r in backend_results},
-                },
-                {
-                    "name": "Memory Usage",
-                    "content": {r.backend_name: r.memory_peak_mb for r in backend_results},
-                },
-            ],
-            raw_data={
-                "results": [
+            custom_sections={
+                "Execution Times": {"content": {r.backend_name: r.execution_time_ms for r in backend_results}},
+                "Memory Usage": {"content": {r.backend_name: r.memory_peak_mb for r in backend_results}},
+            },
+            raw_results=[
                     {
                         "backend": r.backend_name,
                         "success": r.success,
@@ -438,13 +425,12 @@ class TestExportE2E:
                     }
                     for r in backend_results
                 ],
-            },
         )
         
         engine = ExportEngine()
         
         # Export to Markdown
-        md_result = engine.export(report_data, ExportOptions(format=ExportFormat.MARKDOWN))
+        md_result = engine.export(report_data, format=ExportFormat.MARKDOWN, stream_output=True)
         assert md_result.success
         assert "qiskit_aer" in md_result.content  # Fastest backend
 
@@ -708,14 +694,14 @@ class TestCompleteWorkflow:
                     "backends": len(results),
                     "fastest": fastest.backend_name,
                 },
-                sections=[],
-                raw_data={"results": [r.backend_name for r in results]},
+                metadata={"results": [r.backend_name for r in results]},
             )
             
             engine = ExportEngine()
             export_result = engine.export(
                 report_data,
-                ExportOptions(format=ExportFormat.JSON),
+                format=ExportFormat.JSON,
+                stream_output=True,
             )
             
             ctx.set("report", export_result.content)
