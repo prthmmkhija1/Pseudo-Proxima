@@ -1053,6 +1053,23 @@ class QiskitBackendAdapter(BaseBackendAdapter):
         self._noise_manager = NoiseModelManager()
         self._gpu_config = GPUConfiguration()
 
+    # ------------------------------------------------------------------
+    # Benchmarking hooks
+    # ------------------------------------------------------------------
+    def prepare_for_benchmark(self, circuit: Any | None = None, shots: int | None = None) -> None:
+        """Reset transient managers to avoid cache effects during benchmarks."""
+        # Fresh GPU detection/transpiler state per benchmark run
+        self._cached_version = None
+        self._transpiler = AdvancedTranspiler()
+        self._snapshot_manager = SnapshotManager()
+        self._noise_manager = NoiseModelManager()
+        # Ensure GPU status is refreshed if benchmarks toggle GPU usage
+        self._gpu_manager = GPUManager()
+
+    def cleanup_after_benchmark(self) -> None:
+        """No-op cleanup hook for Qiskit adapter (placeholder)."""
+        return
+
     def get_name(self) -> str:
         return "qiskit"
 
@@ -1265,7 +1282,10 @@ class QiskitBackendAdapter(BaseBackendAdapter):
         circuit: Any,
         params: dict[str, float] | list[float],
     ) -> Any:
-        """Bind parameters to a variational circuit."""
+        """Bind parameters to a variational circuit.
+        
+        Note: Uses assign_parameters for Qiskit 1.0+ compatibility.
+        """
         if not self.is_available():
             raise BackendNotInstalledError("qiskit", ["qiskit", "qiskit-aer"])
 
@@ -1291,7 +1311,9 @@ class QiskitBackendAdapter(BaseBackendAdapter):
                 if str(p) in params
             }
 
-        return circuit.bind_parameters(param_dict)
+        # Use assign_parameters for Qiskit 1.0+ compatibility
+        # (bind_parameters was deprecated in favor of assign_parameters)
+        return circuit.assign_parameters(param_dict)
 
     # ==========================================================================
     # EXECUTION
@@ -1418,6 +1440,7 @@ class QiskitBackendAdapter(BaseBackendAdapter):
                 data = {"counts": counts, "shots": shots}
                 result_type = ResultType.COUNTS
                 raw_result = result
+                result_data = result.data(final_circuit)  # Get data for potential snapshots
             else:
                 result_data = result.data(final_circuit)
                 if density_mode:
@@ -1433,7 +1456,7 @@ class QiskitBackendAdapter(BaseBackendAdapter):
 
             # Add any snapshot data
             for key in result_data.keys():
-                if key.startswith("snapshot_") or key not in ("statevector", "density_matrix"):
+                if key.startswith("snapshot_") or key not in ("statevector", "density_matrix", "counts"):
                     if key not in data:
                         data[key] = result_data[key]
 

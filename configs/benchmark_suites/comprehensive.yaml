@@ -1,0 +1,25 @@
+name: comprehensive
+circuits:
+  - "bell_state"
+  - "ghz_3"
+  - "ghz_4"
+  - "ghz_5"
+  - "qft_3"
+  - "qft_5"
+  - "qft_8"
+  - "random_4"
+  - "random_6"
+  - "random_8"
+  - "teleport_3"
+  - "grover_3"
+  - "grover_5"
+  - "phase_estimation_4"
+  - "phase_estimation_6"
+  - "qaoa_5"
+  - "qaoa_8"
+  - "vqe_4"
+  - "vqe_6"
+  - "swap_test_5"
+backends: []
+shots: 1024
+runs: 10

@@ -808,3 +808,498 @@ def bind_event_to_handler(
     """
     event_bus.subscribe(event_type, handler)
     return lambda: event_bus.unsubscribe(event_type, handler)
+
+
+# ========== Session Controller ==========
+
+
+@dataclass
+class SessionInfo:
+    """Information about a TUI session."""
+    
+    id: str
+    created_at: float
+    updated_at: float
+    screen_history: list[str]
+    user_preferences: dict[str, Any]
+    execution_history: list[str]
+
+
+class SessionController:
+    """Controller for managing TUI sessions.
+    
+    Provides:
+    - Session persistence
+    - User preferences
+    - Cross-session state
+    - Undo/Redo support
+    """
+    
+    _instance: SessionController | None = None
+    _sessions: dict[str, SessionInfo]
+    _current_session: str | None
+    _undo_stack: list[tuple[str, Any, Any]]
+    _redo_stack: list[tuple[str, Any, Any]]
+    
+    def __new__(cls) -> SessionController:
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+            cls._instance._sessions = {}
+            cls._instance._current_session = None
+            cls._instance._undo_stack = []
+            cls._instance._redo_stack = []
+        return cls._instance
+    
+    def create_session(self, session_id: str | None = None) -> str:
+        """Create a new TUI session.
+        
+        Args:
+            session_id: Optional session ID (auto-generated if None)
+            
+        Returns:
+            Session ID
+        """
+        import time
+        import uuid
+        
+        if session_id is None:
+            session_id = str(uuid.uuid4())[:8]
+        
+        now = time.time()
+        self._sessions[session_id] = SessionInfo(
+            id=session_id,
+            created_at=now,
+            updated_at=now,
+            screen_history=[],
+            user_preferences={},
+            execution_history=[],
+        )
+        self._current_session = session_id
+        return session_id
+    
+    def get_session(self, session_id: str | None = None) -> SessionInfo | None:
+        """Get session info.
+        
+        Args:
+            session_id: Session ID (current if None)
+            
+        Returns:
+            Session info or None
+        """
+        session_id = session_id or self._current_session
+        if session_id:
+            return self._sessions.get(session_id)
+        return None
+    
+    def update_session(self, **kwargs) -> None:
+        """Update current session with values."""
+        import time
+        
+        session = self.get_session()
+        if session:
+            for key, value in kwargs.items():
+                if hasattr(session, key):
+                    setattr(session, key, value)
+            session.updated_at = time.time()
+    
+    def set_preference(self, key: str, value: Any) -> None:
+        """Set a user preference.
+        
+        Args:
+            key: Preference key
+            value: Preference value
+        """
+        session = self.get_session()
+        if session:
+            old_value = session.user_preferences.get(key)
+            session.user_preferences[key] = value
+            self._push_undo("preference", key, old_value, value)
+    
+    def get_preference(self, key: str, default: Any = None) -> Any:
+        """Get a user preference.
+        
+        Args:
+            key: Preference key
+            default: Default value
+            
+        Returns:
+            Preference value or default
+        """
+        session = self.get_session()
+        if session:
+            return session.user_preferences.get(key, default)
+        return default
+    
+    def _push_undo(self, type: str, key: str, old: Any, new: Any) -> None:
+        """Push action to undo stack."""
+        self._undo_stack.append((type, key, old))
+        self._redo_stack.clear()  # Clear redo on new action
+    
+    def undo(self) -> bool:
+        """Undo last action.
+        
+        Returns:
+            True if undo was performed
+        """
+        if not self._undo_stack:
+            return False
+        
+        type, key, old = self._undo_stack.pop()
+        session = self.get_session()
+        
+        if session and type == "preference":
+            current = session.user_preferences.get(key)
+            session.user_preferences[key] = old
+            self._redo_stack.append((type, key, current))
+            return True
+        
+        return False
+    
+    def redo(self) -> bool:
+        """Redo last undone action.
+        
+        Returns:
+            True if redo was performed
+        """
+        if not self._redo_stack:
+            return False
+        
+        type, key, value = self._redo_stack.pop()
+        session = self.get_session()
+        
+        if session and type == "preference":
+            current = session.user_preferences.get(key)
+            session.user_preferences[key] = value
+            self._undo_stack.append((type, key, current))
+            return True
+        
+        return False
+    
+    def record_execution(self, execution_id: str) -> None:
+        """Record an execution in session history."""
+        session = self.get_session()
+        if session:
+            session.execution_history.append(execution_id)
+    
+    def clear(self) -> None:
+        """Clear all sessions."""
+        self._sessions.clear()
+        self._current_session = None
+        self._undo_stack.clear()
+        self._redo_stack.clear()
+
+
+# Global session controller
+session_controller = SessionController()
+
+
+# ========== Form Controller ==========
+
+
+@dataclass
+class FormField:
+    """Definition of a form field."""
+    
+    name: str
+    field_type: str  # text, number, select, checkbox, etc.
+    label: str
+    default: Any = None
+    required: bool = False
+    validators: list[Callable[[Any], str | None]] = field(default_factory=list)
+    options: list[tuple[str, Any]] | None = None  # For select fields
+    help_text: str = ""
+
+
+@dataclass
+class FormValidationResult:
+    """Result of form validation."""
+    
+    valid: bool
+    errors: dict[str, str] = field(default_factory=dict)
+
+
+class FormController:
+    """Controller for managing form state and validation.
+    
+    Features:
+    - Field validation
+    - Form state management
+    - Dirty tracking
+    - Submission handling
+    """
+    
+    def __init__(self) -> None:
+        self._fields: dict[str, FormField] = {}
+        self._values: dict[str, Any] = {}
+        self._initial_values: dict[str, Any] = {}
+        self._errors: dict[str, str] = {}
+    
+    def add_field(self, field: FormField) -> None:
+        """Add a form field.
+        
+        Args:
+            field: Field definition
+        """
+        self._fields[field.name] = field
+        self._values[field.name] = field.default
+        self._initial_values[field.name] = field.default
+    
+    def set_value(self, name: str, value: Any) -> str | None:
+        """Set a field value and validate.
+        
+        Args:
+            name: Field name
+            value: New value
+            
+        Returns:
+            Error message or None if valid
+        """
+        if name not in self._fields:
+            return f"Unknown field: {name}"
+        
+        self._values[name] = value
+        error = self._validate_field(name, value)
+        
+        if error:
+            self._errors[name] = error
+        elif name in self._errors:
+            del self._errors[name]
+        
+        return error
+    
+    def get_value(self, name: str) -> Any:
+        """Get a field value."""
+        return self._values.get(name)
+    
+    def get_values(self) -> dict[str, Any]:
+        """Get all field values."""
+        return dict(self._values)
+    
+    def _validate_field(self, name: str, value: Any) -> str | None:
+        """Validate a single field.
+        
+        Returns:
+            Error message or None
+        """
+        field = self._fields.get(name)
+        if not field:
+            return None
+        
+        # Check required
+        if field.required and (value is None or value == ""):
+            return f"{field.label} is required"
+        
+        # Run custom validators
+        for validator in field.validators:
+            error = validator(value)
+            if error:
+                return error
+        
+        return None
+    
+    def validate(self) -> FormValidationResult:
+        """Validate entire form.
+        
+        Returns:
+            Validation result
+        """
+        self._errors.clear()
+        
+        for name, value in self._values.items():
+            error = self._validate_field(name, value)
+            if error:
+                self._errors[name] = error
+        
+        return FormValidationResult(
+            valid=len(self._errors) == 0,
+            errors=dict(self._errors),
+        )
+    
+    def is_dirty(self) -> bool:
+        """Check if form has unsaved changes."""
+        return self._values != self._initial_values
+    
+    def get_dirty_fields(self) -> list[str]:
+        """Get list of fields with changes."""
+        return [
+            name for name, value in self._values.items()
+            if value != self._initial_values.get(name)
+        ]
+    
+    def reset(self) -> None:
+        """Reset form to initial values."""
+        self._values = dict(self._initial_values)
+        self._errors.clear()
+    
+    def commit(self) -> None:
+        """Commit current values as initial (after save)."""
+        self._initial_values = dict(self._values)
+
+
+# ========== Clipboard Controller ==========
+
+
+class ClipboardController:
+    """Controller for clipboard operations.
+    
+    Provides clipboard functionality for TUI components.
+    """
+    
+    _instance: ClipboardController | None = None
+    _internal_clipboard: Any
+    
+    def __new__(cls) -> ClipboardController:
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+            cls._instance._internal_clipboard = None
+        return cls._instance
+    
+    def copy(self, value: Any) -> bool:
+        """Copy value to clipboard.
+        
+        Args:
+            value: Value to copy
+            
+        Returns:
+            True if successful
+        """
+        self._internal_clipboard = value
+        
+        # Try system clipboard
+        try:
+            import pyperclip
+            pyperclip.copy(str(value))
+            return True
+        except ImportError:
+            pass
+        
+        return True  # Internal clipboard always works
+    
+    def paste(self) -> Any:
+        """Paste from clipboard.
+        
+        Returns:
+            Clipboard contents
+        """
+        # Try system clipboard first
+        try:
+            import pyperclip
+            return pyperclip.paste()
+        except ImportError:
+            pass
+        
+        return self._internal_clipboard
+    
+    def clear(self) -> None:
+        """Clear clipboard."""
+        self._internal_clipboard = None
+
+
+# Global clipboard controller
+clipboard_controller = ClipboardController()
+
+
+# ========== Keyboard Controller ==========
+
+
+@dataclass
+class KeyBinding:
+    """A keyboard binding."""
+    
+    key: str
+    action: str
+    description: str
+    context: str = "global"
+    enabled: bool = True
+
+
+class KeyboardController:
+    """Controller for keyboard shortcuts.
+    
+    Manages dynamic key bindings across contexts.
+    """
+    
+    _instance: KeyboardController | None = None
+    _bindings: dict[str, list[KeyBinding]]
+    _current_context: str
+    
+    def __new__(cls) -> KeyboardController:
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+            cls._instance._bindings = {"global": []}
+            cls._instance._current_context = "global"
+        return cls._instance
+    
+    def register(self, binding: KeyBinding) -> None:
+        """Register a key binding.
+        
+        Args:
+            binding: Key binding to register
+        """
+        context = binding.context
+        if context not in self._bindings:
+            self._bindings[context] = []
+        
+        # Remove existing binding for same key in context
+        self._bindings[context] = [
+            b for b in self._bindings[context] if b.key != binding.key
+        ]
+        self._bindings[context].append(binding)
+    
+    def unregister(self, key: str, context: str = "global") -> bool:
+        """Unregister a key binding.
+        
+        Returns:
+            True if binding was removed
+        """
+        if context not in self._bindings:
+            return False
+        
+        original = len(self._bindings[context])
+        self._bindings[context] = [
+            b for b in self._bindings[context] if b.key != key
+        ]
+        return len(self._bindings[context]) < original
+    
+    def set_context(self, context: str) -> None:
+        """Set current keyboard context.
+        
+        Args:
+            context: Context name
+        """
+        self._current_context = context
+    
+    def get_bindings(self, context: str | None = None) -> list[KeyBinding]:
+        """Get bindings for a context.
+        
+        Args:
+            context: Context name (current if None)
+            
+        Returns:
+            List of key bindings
+        """
+        context = context or self._current_context
+        bindings = list(self._bindings.get("global", []))
+        
+        if context != "global" and context in self._bindings:
+            bindings.extend(self._bindings[context])
+        
+        return [b for b in bindings if b.enabled]
+    
+    def get_action(self, key: str) -> str | None:
+        """Get action for a key.
+        
+        Args:
+            key: Key pressed
+            
+        Returns:
+            Action name or None
+        """
+        for binding in self.get_bindings():
+            if binding.key == key:
+                return binding.action
+        return None
+
+
+# Global keyboard controller
+keyboard_controller = KeyboardController()

@@ -99,7 +99,7 @@
 {% if metadata %}
 ## Metadata
 
-{% if code_blocks %}
+{% if use_code_blocks %}
 ```yaml
 {% for key, value in metadata.items() %}
 {{ key }}: {{ value }}

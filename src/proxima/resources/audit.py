@@ -1264,3 +1264,520 @@ def create_audited_manager(
     audit_log = create_audit_log(audit_path)
 
     return AuditedConsentManager(consent_manager=manager, audit_log=audit_log)
+
+
+# =============================================================================
+# Audit Retention Policy
+# =============================================================================
+
+
+@dataclass
+class RetentionPolicy:
+    """Defines audit log retention rules."""
+
+    max_age_days: int = 90
+    max_events: int | None = None
+    archive_before_delete: bool = True
+    archive_path: Path | None = None
+    compress_archive: bool = True
+
+    def get_cutoff_timestamp(self) -> float:
+        """Get timestamp before which events should be purged."""
+        return time.time() - (self.max_age_days * 86400)
+
+
+class AuditRetentionManager:
+    """Manages audit log retention and archival.
+
+    Features:
+    - Time-based retention
+    - Event count limits
+    - Archival before deletion
+    - Compressed archives
+    """
+
+    def __init__(
+        self,
+        audit_log: AuditLog,
+        policy: RetentionPolicy | None = None,
+    ) -> None:
+        """Initialize retention manager.
+
+        Args:
+            audit_log: The audit log to manage.
+            policy: Retention policy. Uses defaults if not provided.
+        """
+        self._audit_log = audit_log
+        self._policy = policy or RetentionPolicy()
+
+    @property
+    def policy(self) -> RetentionPolicy:
+        """Get the current retention policy."""
+        return self._policy
+
+    def apply_retention(self) -> dict[str, Any]:
+        """Apply retention policy and return statistics.
+
+        Returns:
+            Dictionary with counts of archived and deleted events.
+        """
+        all_events = self._audit_log.get_all()
+        cutoff = self._policy.get_cutoff_timestamp()
+
+        # Separate events to keep vs archive/delete
+        events_to_keep: list[AuditEvent] = []
+        events_to_archive: list[AuditEvent] = []
+
+        for event in all_events:
+            if event.timestamp >= cutoff:
+                events_to_keep.append(event)
+            else:
+                events_to_archive.append(event)
+
+        # Also check max events limit
+        if self._policy.max_events and len(events_to_keep) > self._policy.max_events:
+            # Keep newest, archive older
+            events_to_keep.sort(key=lambda e: e.timestamp, reverse=True)
+            overflow = events_to_keep[self._policy.max_events:]
+            events_to_keep = events_to_keep[:self._policy.max_events]
+            events_to_archive.extend(overflow)
+
+        # Archive if needed
+        archived_count = 0
+        if events_to_archive and self._policy.archive_before_delete:
+            archived_count = self._archive_events(events_to_archive)
+
+        # Clear and re-add kept events
+        self._audit_log.clear()
+        for event in sorted(events_to_keep, key=lambda e: e.timestamp):
+            self._audit_log._storage.append(event)
+
+        return {
+            "events_archived": archived_count,
+            "events_deleted": len(events_to_archive) - archived_count,
+            "events_kept": len(events_to_keep),
+            "cutoff_timestamp": cutoff,
+        }
+
+    def _archive_events(self, events: list[AuditEvent]) -> int:
+        """Archive events to a file.
+
+        Args:
+            events: Events to archive.
+
+        Returns:
+            Number of events archived.
+        """
+        if not events:
+            return 0
+
+        archive_path = self._policy.archive_path or (
+            Path.home() / ".proxima" / "audit_archives"
+        )
+        archive_path.mkdir(parents=True, exist_ok=True)
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"audit_archive_{timestamp}.json"
+        if self._policy.compress_archive:
+            filename += ".gz"
+
+        filepath = archive_path / filename
+
+        data = [e.to_dict() for e in events]
+
+        if self._policy.compress_archive:
+            with gzip.open(filepath, "wt", encoding="utf-8") as f:
+                json.dump(data, f)
+        else:
+            with open(filepath, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+
+        return len(events)
+
+    def get_archives(self) -> list[Path]:
+        """List available archive files.
+
+        Returns:
+            List of archive file paths.
+        """
+        archive_path = self._policy.archive_path or (
+            Path.home() / ".proxima" / "audit_archives"
+        )
+        if not archive_path.exists():
+            return []
+
+        archives = list(archive_path.glob("audit_archive_*.json*"))
+        return sorted(archives, key=lambda p: p.name)
+
+    def load_archive(self, filepath: Path) -> list[AuditEvent]:
+        """Load events from an archive file.
+
+        Args:
+            filepath: Path to archive file.
+
+        Returns:
+            List of events from the archive.
+        """
+        if filepath.suffix == ".gz":
+            with gzip.open(filepath, "rt", encoding="utf-8") as f:
+                data = json.load(f)
+        else:
+            with open(filepath, "r", encoding="utf-8") as f:
+                data = json.load(f)
+
+        return [AuditEvent.from_dict(item) for item in data]
+
+
+# =============================================================================
+# Audit Alerting System
+# =============================================================================
+
+
+class AlertSeverity(Enum):
+    """Alert severity levels."""
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    CRITICAL = "critical"
+
+
+@dataclass
+class AuditAlert:
+    """An alert triggered by audit events."""
+    alert_id: str
+    rule_name: str
+    severity: AlertSeverity
+    message: str
+    triggered_at: float
+    events: list[AuditEvent]
+    acknowledged: bool = False
+    acknowledged_at: float | None = None
+    acknowledged_by: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary."""
+        return {
+            "alert_id": self.alert_id,
+            "rule_name": self.rule_name,
+            "severity": self.severity.value,
+            "message": self.message,
+            "triggered_at": self.triggered_at,
+            "events": [e.to_dict() for e in self.events],
+            "acknowledged": self.acknowledged,
+            "acknowledged_at": self.acknowledged_at,
+            "acknowledged_by": self.acknowledged_by,
+        }
+
+
+@dataclass
+class AlertRule:
+    """Rule for triggering alerts based on audit events."""
+    name: str
+    description: str
+    severity: AlertSeverity
+    event_types: list[AuditEventType] | None = None
+    categories: list[ConsentCategory] | None = None
+    threshold_count: int = 1
+    threshold_window_seconds: float = 3600.0
+    condition: Callable[[list[AuditEvent]], bool] | None = None
+    message_template: str = "Alert: {rule_name} triggered with {event_count} events"
+
+
+class AuditAlertManager:
+    """Manages audit alerting rules and notifications.
+
+    Features:
+    - Configurable alerting rules
+    - Threshold-based detection
+    - Custom conditions
+    - Alert notifications
+    """
+
+    def __init__(self, audit_log: AuditLog) -> None:
+        """Initialize alert manager.
+
+        Args:
+            audit_log: Audit log to monitor.
+        """
+        self._audit_log = audit_log
+        self._rules: list[AlertRule] = []
+        self._alerts: list[AuditAlert] = []
+        self._handlers: list[Callable[[AuditAlert], None]] = []
+        self._lock = threading.Lock()
+
+    def add_rule(self, rule: AlertRule) -> None:
+        """Add an alerting rule."""
+        with self._lock:
+            self._rules.append(rule)
+
+    def remove_rule(self, rule_name: str) -> bool:
+        """Remove a rule by name."""
+        with self._lock:
+            for i, rule in enumerate(self._rules):
+                if rule.name == rule_name:
+                    del self._rules[i]
+                    return True
+            return False
+
+    def add_handler(self, handler: Callable[[AuditAlert], None]) -> None:
+        """Add an alert notification handler."""
+        with self._lock:
+            self._handlers.append(handler)
+
+    def check_rules(self) -> list[AuditAlert]:
+        """Check all rules against current audit log.
+
+        Returns:
+            List of newly triggered alerts.
+        """
+        new_alerts: list[AuditAlert] = []
+        current_time = time.time()
+
+        with self._lock:
+            rules = list(self._rules)
+
+        for rule in rules:
+            window_start = current_time - rule.threshold_window_seconds
+
+            # Get matching events
+            events = self._audit_log.get_range(window_start, current_time)
+
+            # Filter by event types
+            if rule.event_types:
+                events = [e for e in events if e.event_type in rule.event_types]
+
+            # Filter by categories
+            if rule.categories:
+                events = [e for e in events if e.category in rule.categories]
+
+            # Check threshold
+            if len(events) < rule.threshold_count:
+                continue
+
+            # Check custom condition
+            if rule.condition and not rule.condition(events):
+                continue
+
+            # Create alert
+            message = rule.message_template.format(
+                rule_name=rule.name,
+                event_count=len(events),
+            )
+
+            alert = AuditAlert(
+                alert_id=str(uuid.uuid4()),
+                rule_name=rule.name,
+                severity=rule.severity,
+                message=message,
+                triggered_at=current_time,
+                events=events,
+            )
+
+            new_alerts.append(alert)
+            self._alerts.append(alert)
+
+            # Notify handlers
+            for handler in self._handlers:
+                try:
+                    handler(alert)
+                except Exception:
+                    pass
+
+        return new_alerts
+
+    def get_alerts(
+        self,
+        unacknowledged_only: bool = False,
+        severity: AlertSeverity | None = None,
+    ) -> list[AuditAlert]:
+        """Get alerts with optional filtering."""
+        alerts = self._alerts
+        if unacknowledged_only:
+            alerts = [a for a in alerts if not a.acknowledged]
+        if severity:
+            alerts = [a for a in alerts if a.severity == severity]
+        return alerts
+
+    def acknowledge_alert(
+        self,
+        alert_id: str,
+        acknowledged_by: str = "system",
+    ) -> bool:
+        """Acknowledge an alert."""
+        for alert in self._alerts:
+            if alert.alert_id == alert_id and not alert.acknowledged:
+                alert.acknowledged = True
+                alert.acknowledged_at = time.time()
+                alert.acknowledged_by = acknowledged_by
+                return True
+        return False
+
+    def clear_alerts(self, acknowledged_only: bool = True) -> int:
+        """Clear alerts. Returns count cleared."""
+        with self._lock:
+            if acknowledged_only:
+                original = len(self._alerts)
+                self._alerts = [a for a in self._alerts if not a.acknowledged]
+                return original - len(self._alerts)
+            else:
+                count = len(self._alerts)
+                self._alerts = []
+                return count
+
+    def add_standard_rules(self) -> None:
+        """Add standard security-related alerting rules."""
+        # Force override detection
+        self.add_rule(AlertRule(
+            name="force_override_usage",
+            description="Detect force override usage",
+            severity=AlertSeverity.HIGH,
+            event_types=[AuditEventType.FORCE_OVERRIDE_USED],
+            threshold_count=1,
+            message_template="Force override was used - review for compliance",
+        ))
+
+        # Bulk revocation detection
+        self.add_rule(AlertRule(
+            name="bulk_revocation",
+            description="Detect bulk consent revocations",
+            severity=AlertSeverity.MEDIUM,
+            event_types=[
+                AuditEventType.ALL_CONSENTS_REVOKED,
+                AuditEventType.CATEGORY_CONSENTS_REVOKED,
+            ],
+            threshold_count=1,
+            message_template="Bulk consent revocation detected",
+        ))
+
+        # High denial rate detection
+        def high_denial_check(events: list[AuditEvent]) -> bool:
+            denials = sum(1 for e in events if e.event_type == AuditEventType.CONSENT_DENIED)
+            grants = sum(1 for e in events if e.event_type == AuditEventType.CONSENT_GRANTED)
+            total = denials + grants
+            return total >= 5 and (denials / total) > 0.8
+
+        self.add_rule(AlertRule(
+            name="high_denial_rate",
+            description="Detect high consent denial rate",
+            severity=AlertSeverity.LOW,
+            event_types=[
+                AuditEventType.CONSENT_DENIED,
+                AuditEventType.CONSENT_GRANTED,
+            ],
+            threshold_count=5,
+            condition=high_denial_check,
+            message_template="High denial rate detected ({event_count} recent decisions)",
+        ))
+
+
+# =============================================================================
+# Audit Chain Verification (Tamper Detection)
+# =============================================================================
+
+
+@dataclass
+class ChainedAuditEvent(AuditEvent):
+    """Audit event with blockchain-style chaining for tamper detection."""
+    previous_hash: str = ""
+    chain_hash: str = ""
+
+    def compute_chain_hash(self) -> str:
+        """Compute hash including previous hash."""
+        data = f"{self.checksum}:{self.previous_hash}"
+        return hashlib.sha256(data.encode()).hexdigest()[:32]
+
+
+class VerifiableAuditLog:
+    """Audit log with blockchain-style verification.
+
+    Each event references the hash of the previous event,
+    creating a tamper-evident chain.
+    """
+
+    def __init__(self, storage: AuditStorage | None = None) -> None:
+        """Initialize verifiable audit log."""
+        self._storage = storage or MemoryAuditStorage()
+        self._last_hash = "genesis"
+        self._lock = threading.Lock()
+
+    def append(self, event: AuditEvent) -> ChainedAuditEvent:
+        """Append an event with chain verification.
+
+        Args:
+            event: Base audit event to add.
+
+        Returns:
+            ChainedAuditEvent with chain hash computed.
+        """
+        with self._lock:
+            chained = ChainedAuditEvent(
+                event_type=event.event_type,
+                timestamp=event.timestamp,
+                event_id=event.event_id,
+                topic=event.topic,
+                category=event.category,
+                granted=event.granted,
+                level=event.level,
+                source=event.source,
+                user_id=event.user_id,
+                session_id=event.session_id,
+                details=event.details,
+                severity=event.severity,
+                previous_hash=self._last_hash,
+            )
+            chained.chain_hash = chained.compute_chain_hash()
+            self._last_hash = chained.chain_hash
+
+            # Store as regular event with chain info in details
+            event.details["chain_hash"] = chained.chain_hash
+            event.details["previous_hash"] = chained.previous_hash
+            self._storage.append(event)
+
+            return chained
+
+    def verify_chain(self) -> tuple[bool, list[str]]:
+        """Verify the integrity of the entire chain.
+
+        Returns:
+            Tuple of (is_valid, list of error messages).
+        """
+        events = self._storage.read_all()
+        errors: list[str] = []
+        expected_prev = "genesis"
+
+        for i, event in enumerate(events):
+            chain_hash = event.details.get("chain_hash", "")
+            prev_hash = event.details.get("previous_hash", "")
+
+            if prev_hash != expected_prev:
+                errors.append(
+                    f"Event {i} ({event.event_id}): previous_hash mismatch. "
+                    f"Expected {expected_prev}, got {prev_hash}"
+                )
+
+            # Verify event integrity
+            if not event.verify_integrity():
+                errors.append(
+                    f"Event {i} ({event.event_id}): checksum verification failed"
+                )
+
+            expected_prev = chain_hash
+
+        return len(errors) == 0, errors
+
+    def get_chain_status(self) -> dict[str, Any]:
+        """Get current chain status.
+
+        Returns:
+            Dictionary with chain statistics and status.
+        """
+        events = self._storage.read_all()
+        is_valid, errors = self.verify_chain()
+
+        return {
+            "chain_length": len(events),
+            "is_valid": is_valid,
+            "errors": errors,
+            "last_hash": self._last_hash,
+            "genesis_hash": "genesis",
+        }

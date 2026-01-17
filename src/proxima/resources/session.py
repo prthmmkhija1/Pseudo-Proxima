@@ -785,3 +785,384 @@ class LockingSessionManager(SessionManager):
         for lock in self._locks.values():
             lock.release()
         self._locks.clear()
+
+
+# =============================================================================
+# Session State Diff and History
+# =============================================================================
+
+
+@dataclass
+class SessionDiff:
+    """Represents differences between two session states."""
+
+    added_keys: list[str]
+    removed_keys: list[str]
+    changed_keys: dict[str, tuple[Any, Any]]  # key -> (old_value, new_value)
+    timestamp: float = 0.0
+
+    def is_empty(self) -> bool:
+        """Check if there are no differences."""
+        return not self.added_keys and not self.removed_keys and not self.changed_keys
+
+    def summary(self) -> str:
+        """Generate a human-readable summary."""
+        parts = []
+        if self.added_keys:
+            parts.append(f"+{len(self.added_keys)} added")
+        if self.removed_keys:
+            parts.append(f"-{len(self.removed_keys)} removed")
+        if self.changed_keys:
+            parts.append(f"~{len(self.changed_keys)} changed")
+        return ", ".join(parts) if parts else "No changes"
+
+
+class SessionStateTracker:
+    """Tracks state changes within a session for debugging and audit."""
+
+    def __init__(self, session: Session, max_history: int = 100) -> None:
+        """Initialize the state tracker.
+
+        Args:
+            session: Session to track.
+            max_history: Maximum number of state snapshots to keep.
+        """
+        self._session = session
+        self._max_history = max_history
+        self._history: list[tuple[float, dict[str, Any]]] = []
+        self._diffs: list[SessionDiff] = []
+
+        # Take initial snapshot
+        self._take_snapshot()
+
+    def _take_snapshot(self) -> None:
+        """Take a snapshot of current state."""
+        snapshot = dict(self._session.state)
+        self._history.append((time.time(), snapshot))
+        
+        # Trim if over limit
+        if len(self._history) > self._max_history:
+            self._history = self._history[-self._max_history:]
+
+    def record_change(self) -> SessionDiff:
+        """Record current state and compute diff from previous.
+
+        Returns:
+            Diff from previous state.
+        """
+        if not self._history:
+            self._take_snapshot()
+            return SessionDiff([], [], {}, time.time())
+
+        _, prev_state = self._history[-1]
+        curr_state = dict(self._session.state)
+
+        # Compute diff
+        added = [k for k in curr_state if k not in prev_state]
+        removed = [k for k in prev_state if k not in curr_state]
+        changed = {}
+        
+        for key in set(prev_state.keys()) & set(curr_state.keys()):
+            if prev_state[key] != curr_state[key]:
+                changed[key] = (prev_state[key], curr_state[key])
+
+        diff = SessionDiff(
+            added_keys=added,
+            removed_keys=removed,
+            changed_keys=changed,
+            timestamp=time.time(),
+        )
+
+        self._take_snapshot()
+        self._diffs.append(diff)
+
+        return diff
+
+    def get_history(self, limit: int | None = None) -> list[tuple[float, dict[str, Any]]]:
+        """Get state history.
+
+        Args:
+            limit: Maximum number of entries to return.
+
+        Returns:
+            List of (timestamp, state) tuples.
+        """
+        if limit:
+            return self._history[-limit:]
+        return list(self._history)
+
+    def get_diffs(self, limit: int | None = None) -> list[SessionDiff]:
+        """Get recorded diffs.
+
+        Args:
+            limit: Maximum number of diffs to return.
+
+        Returns:
+            List of SessionDiff objects.
+        """
+        if limit:
+            return self._diffs[-limit:]
+        return list(self._diffs)
+
+    def revert_to_snapshot(self, index: int) -> bool:
+        """Revert session state to a historical snapshot.
+
+        Args:
+            index: Index in history (negative indices supported).
+
+        Returns:
+            True if reverted successfully.
+        """
+        try:
+            _, snapshot = self._history[index]
+            self._session.state = dict(snapshot)
+            self.record_change()
+            return True
+        except IndexError:
+            return False
+
+
+# =============================================================================
+# Session Recovery Manager
+# =============================================================================
+
+
+class SessionRecoveryManager:
+    """Manages session recovery after crashes or unexpected termination."""
+
+    CRASH_MARKER_SUFFIX = ".crash"
+
+    def __init__(self, storage_dir: Path) -> None:
+        """Initialize the recovery manager.
+
+        Args:
+            storage_dir: Directory containing session files.
+        """
+        self._storage_dir = storage_dir
+        self._storage_dir.mkdir(parents=True, exist_ok=True)
+
+    def mark_session_active(self, session_id: str) -> None:
+        """Mark a session as actively running.
+
+        Creates a crash marker file that will be checked on recovery.
+        """
+        marker_path = self._storage_dir / f"{session_id}{self.CRASH_MARKER_SUFFIX}"
+        marker_path.write_text(json.dumps({
+            "session_id": session_id,
+            "pid": os.getpid(),
+            "started_at": time.time(),
+        }))
+
+    def clear_session_marker(self, session_id: str) -> None:
+        """Clear the crash marker for a session (on clean exit)."""
+        marker_path = self._storage_dir / f"{session_id}{self.CRASH_MARKER_SUFFIX}"
+        if marker_path.exists():
+            marker_path.unlink()
+
+    def find_crashed_sessions(self) -> list[str]:
+        """Find sessions that crashed (have marker but no active process).
+
+        Returns:
+            List of crashed session IDs.
+        """
+        crashed = []
+        
+        for marker_path in self._storage_dir.glob(f"*{self.CRASH_MARKER_SUFFIX}"):
+            try:
+                data = json.loads(marker_path.read_text())
+                pid = data.get("pid")
+                session_id = data.get("session_id")
+                
+                # Check if process is still running
+                if pid and not self._is_process_running(pid):
+                    if session_id:
+                        crashed.append(session_id)
+            except (json.JSONDecodeError, OSError):
+                # Corrupted marker, treat as crashed
+                session_id = marker_path.stem
+                if session_id:
+                    crashed.append(session_id)
+
+        return crashed
+
+    def _is_process_running(self, pid: int) -> bool:
+        """Check if a process is running.
+
+        Args:
+            pid: Process ID to check.
+
+        Returns:
+            True if process is running.
+        """
+        try:
+            os.kill(pid, 0)
+            return True
+        except (OSError, ProcessLookupError):
+            return False
+
+    def recover_session(
+        self,
+        session_id: str,
+        manager: SessionManager,
+    ) -> Session | None:
+        """Attempt to recover a crashed session.
+
+        Args:
+            session_id: Session ID to recover.
+            manager: Session manager to load session with.
+
+        Returns:
+            Recovered session or None if recovery failed.
+        """
+        session = manager.load(session_id)
+        if not session:
+            return None
+
+        # Find latest checkpoint
+        latest = session.latest_checkpoint()
+        if latest:
+            # Restore from checkpoint
+            session.state = latest.state.copy()
+            session.add_log(
+                "warning",
+                f"Session recovered from checkpoint at {latest.stage}",
+                checkpoint_id=latest.id,
+            )
+        else:
+            session.add_log(
+                "warning",
+                "Session recovered without checkpoint",
+            )
+
+        # Update status
+        session.update_status(SessionStatus.PAUSED)
+        
+        # Clear crash marker
+        self.clear_session_marker(session_id)
+        
+        # Save recovered state
+        manager.save(session)
+
+        return session
+
+    def recover_all(self, manager: SessionManager) -> list[Session]:
+        """Recover all crashed sessions.
+
+        Args:
+            manager: Session manager to use.
+
+        Returns:
+            List of recovered sessions.
+        """
+        recovered = []
+        
+        for session_id in self.find_crashed_sessions():
+            session = self.recover_session(session_id, manager)
+            if session:
+                recovered.append(session)
+
+        return recovered
+
+
+# =============================================================================
+# Session Event Hooks
+# =============================================================================
+
+
+class SessionEventType(Enum):
+    """Types of session events."""
+
+    CREATED = auto()
+    STARTED = auto()
+    PAUSED = auto()
+    RESUMED = auto()
+    COMPLETED = auto()
+    FAILED = auto()
+    CHECKPOINT_CREATED = auto()
+    STATE_CHANGED = auto()
+
+
+@dataclass
+class SessionEvent:
+    """Session lifecycle event."""
+
+    event_type: SessionEventType
+    session_id: str
+    timestamp: float
+    data: dict[str, Any] = field(default_factory=dict)
+
+
+class SessionEventHook:
+    """Manages session event callbacks."""
+
+    def __init__(self) -> None:
+        """Initialize the event hook manager."""
+        self._callbacks: dict[SessionEventType, list[Callable[[SessionEvent], None]]] = {
+            event_type: [] for event_type in SessionEventType
+        }
+        self._global_callbacks: list[Callable[[SessionEvent], None]] = []
+        self._lock = threading.Lock()
+
+    def register(
+        self,
+        event_type: SessionEventType | None,
+        callback: Callable[[SessionEvent], None],
+    ) -> None:
+        """Register a callback for an event type.
+
+        Args:
+            event_type: Event type to listen for. None for all events.
+            callback: Callback function.
+        """
+        with self._lock:
+            if event_type is None:
+                self._global_callbacks.append(callback)
+            else:
+                self._callbacks[event_type].append(callback)
+
+    def unregister(
+        self,
+        event_type: SessionEventType | None,
+        callback: Callable[[SessionEvent], None],
+    ) -> None:
+        """Unregister a callback.
+
+        Args:
+            event_type: Event type. None for global callbacks.
+            callback: Callback to remove.
+        """
+        with self._lock:
+            if event_type is None:
+                if callback in self._global_callbacks:
+                    self._global_callbacks.remove(callback)
+            else:
+                if callback in self._callbacks[event_type]:
+                    self._callbacks[event_type].remove(callback)
+
+    def emit(self, event: SessionEvent) -> None:
+        """Emit an event to all registered callbacks.
+
+        Args:
+            event: Event to emit.
+        """
+        with self._lock:
+            callbacks = (
+                list(self._callbacks[event.event_type])
+                + list(self._global_callbacks)
+            )
+
+        for callback in callbacks:
+            try:
+                callback(event)
+            except Exception:
+                # Don't let callback errors break execution
+                pass
+
+
+# Global event hook instance
+_session_events = SessionEventHook()
+
+
+def get_session_event_hook() -> SessionEventHook:
+    """Get the global session event hook."""
+    return _session_events

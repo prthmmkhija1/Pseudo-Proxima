@@ -15,6 +15,15 @@ from .compare import (
     # Convenience function
     compare_backends,
 )
+from .metrics import (
+    # Enums
+    BenchmarkStatus,
+    # Data classes
+    BenchmarkMetrics,
+    BenchmarkResult,
+    BenchmarkComparison,
+)
+from .benchmark_registry import BenchmarkRegistry
 from .export import (
     # Exporter classes
     BaseExporter,
@@ -90,6 +99,14 @@ from .session import (
 )
 
 __all__ = [
+    # ===== Benchmarking Metrics =====
+    # Enums
+    "BenchmarkStatus",
+    # Data classes
+    "BenchmarkMetrics",
+    "BenchmarkResult",
+    "BenchmarkComparison",
+    "BenchmarkRegistry",
     # ===== Step 5.1: Multi-Backend Comparison =====
     # Enums
     "ComparisonStatus",

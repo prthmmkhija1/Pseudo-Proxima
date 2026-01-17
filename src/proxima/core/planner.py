@@ -657,4 +657,458 @@ __all__ = [
     "ExecutionDAG",
     "Planner",
     "PlanFunction",
+    "PlanTemplate",
+    "PlanValidator",
+    "PlanOptimizer",
 ]
+
+
+# ==============================================================================
+# PLAN TEMPLATES
+# ==============================================================================
+
+
+class PlanTemplate:
+    """Pre-defined plan templates for common scenarios.
+    
+    Provides ready-to-use plans for standard quantum computing tasks.
+    """
+    
+    @staticmethod
+    def single_circuit_execution(
+        circuit_type: str = "bell",
+        backend: str = "auto",
+        shots: int = 1024,
+        qubits: int = 2,
+    ) -> dict[str, Any]:
+        """Create a single circuit execution plan.
+        
+        Args:
+            circuit_type: Type of circuit to create
+            backend: Backend to use
+            shots: Number of shots
+            qubits: Number of qubits
+            
+        Returns:
+            Plan dictionary
+        """
+        return {
+            "objective": f"Execute {circuit_type} circuit",
+            "circuit_type": circuit_type,
+            "qubits": qubits,
+            "shots": shots,
+            "execution_mode": "single",
+            "backends": [backend],
+            "steps": [
+                {
+                    "step": 1,
+                    "action": "create_circuit",
+                    "description": f"Create {circuit_type} circuit with {qubits} qubits",
+                    "parameters": {"circuit_type": circuit_type, "qubits": qubits},
+                },
+                {
+                    "step": 2,
+                    "action": "execute",
+                    "description": f"Execute circuit with {shots} shots",
+                    "parameters": {"shots": shots, "backends": [backend]},
+                },
+                {
+                    "step": 3,
+                    "action": "collect_results",
+                    "description": "Collect and normalize results",
+                    "parameters": {},
+                },
+            ],
+        }
+    
+    @staticmethod
+    def backend_comparison(
+        backends: list[str],
+        circuit_type: str = "bell",
+        shots: int = 1024,
+        qubits: int = 2,
+    ) -> dict[str, Any]:
+        """Create a multi-backend comparison plan.
+        
+        Args:
+            backends: List of backends to compare
+            circuit_type: Type of circuit
+            shots: Number of shots per backend
+            qubits: Number of qubits
+            
+        Returns:
+            Plan dictionary
+        """
+        return {
+            "objective": f"Compare {circuit_type} across backends",
+            "circuit_type": circuit_type,
+            "qubits": qubits,
+            "shots": shots,
+            "execution_mode": "comparison",
+            "backends": backends,
+            "steps": [
+                {
+                    "step": 1,
+                    "action": "create_circuit",
+                    "parameters": {"circuit_type": circuit_type, "qubits": qubits},
+                },
+                {
+                    "step": 2,
+                    "action": "execute",
+                    "parameters": {"shots": shots, "backends": backends},
+                },
+                {
+                    "step": 3,
+                    "action": "collect_results",
+                    "parameters": {},
+                },
+                {
+                    "step": 4,
+                    "action": "compare",
+                    "parameters": {"backends": backends},
+                },
+            ],
+        }
+    
+    @staticmethod
+    def benchmark_suite(
+        backend: str,
+        circuit_types: list[str] | None = None,
+        shots: int = 1024,
+        runs_per_circuit: int = 3,
+    ) -> dict[str, Any]:
+        """Create a benchmark suite plan.
+        
+        Args:
+            backend: Backend to benchmark
+            circuit_types: Circuits to test (default: common set)
+            shots: Shots per run
+            runs_per_circuit: Number of runs per circuit
+            
+        Returns:
+            Plan dictionary
+        """
+        if circuit_types is None:
+            circuit_types = ["bell", "ghz", "superposition"]
+        
+        steps = []
+        step_num = 1
+        
+        for circuit_type in circuit_types:
+            steps.append({
+                "step": step_num,
+                "action": "create_circuit",
+                "parameters": {"circuit_type": circuit_type},
+            })
+            step_num += 1
+            
+            steps.append({
+                "step": step_num,
+                "action": "benchmark",
+                "parameters": {
+                    "backend": backend,
+                    "shots": shots,
+                    "runs": runs_per_circuit,
+                },
+            })
+            step_num += 1
+        
+        steps.append({
+            "step": step_num,
+            "action": "analyze",
+            "parameters": {"type": "benchmark_summary"},
+        })
+        
+        return {
+            "objective": f"Benchmark {backend} with {len(circuit_types)} circuits",
+            "execution_mode": "benchmark",
+            "backends": [backend],
+            "steps": steps,
+        }
+    
+    @staticmethod
+    def scaling_analysis(
+        backend: str,
+        qubit_range: tuple[int, int] = (2, 10),
+        circuit_type: str = "ghz",
+        shots: int = 1024,
+    ) -> dict[str, Any]:
+        """Create a scaling analysis plan.
+        
+        Args:
+            backend: Backend to test
+            qubit_range: (min_qubits, max_qubits) range
+            circuit_type: Circuit type to scale
+            shots: Shots per run
+            
+        Returns:
+            Plan dictionary
+        """
+        min_q, max_q = qubit_range
+        steps = []
+        step_num = 1
+        
+        for qubits in range(min_q, max_q + 1):
+            steps.append({
+                "step": step_num,
+                "action": "create_circuit",
+                "parameters": {"circuit_type": circuit_type, "qubits": qubits},
+            })
+            step_num += 1
+            
+            steps.append({
+                "step": step_num,
+                "action": "execute",
+                "parameters": {"backend": backend, "shots": shots},
+            })
+            step_num += 1
+        
+        steps.append({
+            "step": step_num,
+            "action": "analyze",
+            "parameters": {"type": "scaling_analysis"},
+        })
+        
+        return {
+            "objective": f"Scaling analysis for {backend} ({min_q}-{max_q} qubits)",
+            "execution_mode": "scaling",
+            "backends": [backend],
+            "steps": steps,
+        }
+
+
+# ==============================================================================
+# PLAN VALIDATOR
+# ==============================================================================
+
+
+@dataclass
+class ValidationResult:
+    """Result of plan validation."""
+    
+    valid: bool
+    errors: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+    
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary."""
+        return {
+            "valid": self.valid,
+            "errors": self.errors,
+            "warnings": self.warnings,
+        }
+
+
+class PlanValidator:
+    """Validates execution plans for correctness.
+    
+    Checks:
+    - Required fields are present
+    - Step dependencies are valid
+    - Actions are recognized
+    - Parameters are valid
+    """
+    
+    REQUIRED_FIELDS = ["steps"]
+    VALID_ACTIONS = [
+        "create_circuit", "execute", "collect_results",
+        "compare", "analyze", "export", "benchmark",
+    ]
+    
+    def validate(self, plan: dict[str, Any]) -> ValidationResult:
+        """Validate a plan.
+        
+        Args:
+            plan: Plan to validate
+            
+        Returns:
+            ValidationResult with errors and warnings
+        """
+        errors: list[str] = []
+        warnings: list[str] = []
+        
+        # Check required fields
+        for field_name in self.REQUIRED_FIELDS:
+            if field_name not in plan:
+                errors.append(f"Missing required field: {field_name}")
+        
+        if "steps" not in plan:
+            return ValidationResult(False, errors, warnings)
+        
+        steps = plan["steps"]
+        if not isinstance(steps, list):
+            errors.append("'steps' must be a list")
+            return ValidationResult(False, errors, warnings)
+        
+        if len(steps) == 0:
+            errors.append("Plan must have at least one step")
+            return ValidationResult(False, errors, warnings)
+        
+        # Validate each step
+        step_numbers = set()
+        for i, step in enumerate(steps):
+            step_num = step.get("step", i + 1)
+            
+            if step_num in step_numbers:
+                warnings.append(f"Duplicate step number: {step_num}")
+            step_numbers.add(step_num)
+            
+            action = step.get("action")
+            if not action:
+                errors.append(f"Step {step_num}: missing 'action' field")
+            elif action not in self.VALID_ACTIONS:
+                warnings.append(
+                    f"Step {step_num}: unknown action '{action}' "
+                    f"(known: {', '.join(self.VALID_ACTIONS)})"
+                )
+            
+            # Validate action-specific parameters
+            params = step.get("parameters", {})
+            self._validate_action_params(action, params, step_num, errors, warnings)
+        
+        # Check for logical issues
+        if plan.get("execution_mode") == "comparison":
+            backends = plan.get("backends", [])
+            if len(backends) < 2:
+                warnings.append("Comparison mode requires at least 2 backends")
+        
+        return ValidationResult(len(errors) == 0, errors, warnings)
+    
+    def _validate_action_params(
+        self,
+        action: str | None,
+        params: dict,
+        step_num: int,
+        errors: list[str],
+        warnings: list[str],
+    ) -> None:
+        """Validate parameters for specific actions."""
+        if action == "create_circuit":
+            if not params.get("circuit_type") and not params.get("qasm"):
+                warnings.append(
+                    f"Step {step_num}: create_circuit should have "
+                    "'circuit_type' or 'qasm' parameter"
+                )
+        
+        elif action == "execute":
+            shots = params.get("shots")
+            if shots is not None and (not isinstance(shots, int) or shots < 1):
+                errors.append(f"Step {step_num}: 'shots' must be a positive integer")
+        
+        elif action == "benchmark":
+            runs = params.get("runs")
+            if runs is not None and (not isinstance(runs, int) or runs < 1):
+                errors.append(f"Step {step_num}: 'runs' must be a positive integer")
+
+
+# ==============================================================================
+# PLAN OPTIMIZER
+# ==============================================================================
+
+
+class PlanOptimizer:
+    """Optimizes execution plans for better performance.
+    
+    Optimizations:
+    - Merge compatible steps
+    - Reorder for parallelism
+    - Remove redundant steps
+    - Add caching hints
+    """
+    
+    def optimize(self, plan: dict[str, Any]) -> dict[str, Any]:
+        """Optimize a plan.
+        
+        Args:
+            plan: Plan to optimize
+            
+        Returns:
+            Optimized plan
+        """
+        optimized = dict(plan)
+        steps = list(plan.get("steps", []))
+        
+        # Apply optimizations
+        steps = self._merge_compatible_creates(steps)
+        steps = self._add_parallelism_hints(steps)
+        steps = self._add_caching_hints(steps, plan)
+        
+        optimized["steps"] = steps
+        optimized["_optimized"] = True
+        
+        return optimized
+    
+    def _merge_compatible_creates(
+        self, steps: list[dict]
+    ) -> list[dict]:
+        """Merge consecutive create_circuit steps if compatible."""
+        # For now, keep them separate for simplicity
+        return steps
+    
+    def _add_parallelism_hints(self, steps: list[dict]) -> list[dict]:
+        """Add hints about which steps can run in parallel."""
+        # Find independent execution steps
+        execute_indices = [
+            i for i, s in enumerate(steps)
+            if s.get("action") == "execute"
+        ]
+        
+        if len(execute_indices) > 1:
+            # Mark as parallelizable
+            for idx in execute_indices:
+                steps[idx]["_parallel_hint"] = True
+        
+        return steps
+    
+    def _add_caching_hints(
+        self,
+        steps: list[dict],
+        plan: dict,
+    ) -> list[dict]:
+        """Add caching hints for reusable results."""
+        # Mark circuit creation as cacheable
+        for step in steps:
+            if step.get("action") == "create_circuit":
+                params = step.get("parameters", {})
+                cache_key = f"{params.get('circuit_type', 'unknown')}_{params.get('qubits', 0)}"
+                step["_cache_key"] = cache_key
+        
+        return steps
+    
+    def estimate_duration(self, plan: dict[str, Any]) -> float:
+        """Estimate total plan execution duration in milliseconds.
+        
+        Args:
+            plan: Plan to estimate
+            
+        Returns:
+            Estimated duration in ms
+        """
+        total_ms = 0.0
+        
+        duration_estimates = {
+            "create_circuit": 10.0,
+            "execute": 500.0,
+            "collect_results": 50.0,
+            "compare": 100.0,
+            "analyze": 200.0,
+            "export": 100.0,
+            "benchmark": 2000.0,
+        }
+        
+        for step in plan.get("steps", []):
+            action = step.get("action", "")
+            base_duration = duration_estimates.get(action, 100.0)
+            
+            # Adjust for parameters
+            params = step.get("parameters", {})
+            if action == "execute":
+                shots = params.get("shots", 1024)
+                base_duration *= max(1, shots / 1024)
+            elif action == "benchmark":
+                runs = params.get("runs", 3)
+                base_duration *= runs
+            
+            total_ms += base_duration
+        
+        return total_ms

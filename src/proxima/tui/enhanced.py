@@ -1200,3 +1200,550 @@ class QuickCommandBar(Static):
         """Select next command."""
         if self._selected_index < len(self._filtered_commands) - 1:
             self._selected_index += 1
+
+
+# =============================================================================
+# Theme Switcher (Feature - TUI)
+# =============================================================================
+
+
+class ThemeVariant(Enum):
+    """Available theme variants."""
+    
+    DARK = "dark"
+    LIGHT = "light"
+    MONOKAI = "monokai"
+    DRACULA = "dracula"
+    NORD = "nord"
+    SOLARIZED_DARK = "solarized-dark"
+    SOLARIZED_LIGHT = "solarized-light"
+
+
+@dataclass
+class ThemeColors:
+    """Color definitions for a theme."""
+    
+    name: str
+    primary: str
+    secondary: str
+    background: str
+    surface: str
+    text: str
+    accent: str
+    success: str
+    warning: str
+    error: str
+
+
+class ThemeSwitcher(Static):
+    """Theme switching panel with preview.
+    
+    Features:
+    - Live theme preview
+    - Custom color support
+    - Persist theme selection
+    """
+    
+    DEFAULT_CSS = """
+    ThemeSwitcher {
+        width: 40;
+        height: auto;
+        border: heavy $primary;
+        background: $surface;
+        padding: 1;
+    }
+    ThemeSwitcher .theme-title { text-style: bold; margin-bottom: 1; }
+    ThemeSwitcher .theme-option {
+        height: 2;
+        padding: 0 1;
+    }
+    ThemeSwitcher .theme-option:hover { background: $surface-lighten-1; }
+    ThemeSwitcher .theme-preview {
+        height: 3;
+        margin-top: 1;
+        padding: 1;
+        border: solid $primary;
+    }
+    """
+    
+    THEMES: dict[ThemeVariant, ThemeColors] = {
+        ThemeVariant.DARK: ThemeColors(
+            name="Dark",
+            primary="#7c3aed", secondary="#a78bfa",
+            background="#1a1a2e", surface="#252542",
+            text="#e4e4e7", accent="#22d3ee",
+            success="#22c55e", warning="#eab308", error="#ef4444",
+        ),
+        ThemeVariant.LIGHT: ThemeColors(
+            name="Light",
+            primary="#6366f1", secondary="#818cf8",
+            background="#ffffff", surface="#f1f5f9",
+            text="#1e293b", accent="#0ea5e9",
+            success="#16a34a", warning="#ca8a04", error="#dc2626",
+        ),
+        ThemeVariant.MONOKAI: ThemeColors(
+            name="Monokai",
+            primary="#f92672", secondary="#ae81ff",
+            background="#272822", surface="#3e3d32",
+            text="#f8f8f2", accent="#a6e22e",
+            success="#a6e22e", warning="#e6db74", error="#f92672",
+        ),
+        ThemeVariant.DRACULA: ThemeColors(
+            name="Dracula",
+            primary="#bd93f9", secondary="#ff79c6",
+            background="#282a36", surface="#44475a",
+            text="#f8f8f2", accent="#8be9fd",
+            success="#50fa7b", warning="#f1fa8c", error="#ff5555",
+        ),
+        ThemeVariant.NORD: ThemeColors(
+            name="Nord",
+            primary="#88c0d0", secondary="#81a1c1",
+            background="#2e3440", surface="#3b4252",
+            text="#eceff4", accent="#8fbcbb",
+            success="#a3be8c", warning="#ebcb8b", error="#bf616a",
+        ),
+    }
+    
+    current_theme = reactive(ThemeVariant.DARK)
+    
+    BINDINGS = [
+        Binding("escape", "close", "Close"),
+        Binding("enter", "apply", "Apply"),
+    ]
+    
+    class ThemeChanged(Message):
+        """Emitted when theme is changed."""
+        
+        def __init__(self, theme: ThemeVariant) -> None:
+            super().__init__()
+            self.theme = theme
+    
+    def compose(self) -> ComposeResult:
+        yield Label("🎨 Theme Selector", classes="theme-title")
+        
+        for variant in self.THEMES:
+            colors = self.THEMES[variant]
+            yield Button(
+                f"{colors.name}",
+                id=f"theme-{variant.value}",
+                classes="theme-option",
+            )
+        
+        yield Container(id="theme-preview", classes="theme-preview")
+    
+    def on_mount(self) -> None:
+        """Load saved theme preference."""
+        self._update_preview()
+    
+    def _update_preview(self) -> None:
+        """Update theme preview."""
+        try:
+            preview = self.query_one("#theme-preview", Container)
+            preview.remove_children()
+            
+            colors = self.THEMES[self.current_theme]
+            preview.mount(Label(f"Preview: {colors.name}"))
+            preview.mount(
+                Label(f"Colors: Primary={colors.primary} Accent={colors.accent}")
+            )
+        except Exception:
+            pass
+    
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Handle theme selection."""
+        btn_id = event.button.id
+        if btn_id and btn_id.startswith("theme-"):
+            theme_name = btn_id.replace("theme-", "")
+            try:
+                self.current_theme = ThemeVariant(theme_name)
+                self._update_preview()
+            except ValueError:
+                pass
+    
+    def action_apply(self) -> None:
+        """Apply the selected theme."""
+        self.post_message(self.ThemeChanged(self.current_theme))
+        self.remove()
+    
+    def action_close(self) -> None:
+        """Close without applying."""
+        self.remove()
+
+
+# =============================================================================
+# Notification System (Feature - TUI)
+# =============================================================================
+
+
+class NotificationType(Enum):
+    """Types of notifications."""
+    
+    INFO = "info"
+    SUCCESS = "success"
+    WARNING = "warning"
+    ERROR = "error"
+
+
+@dataclass
+class Notification:
+    """A notification message."""
+    
+    message: str
+    type: NotificationType = NotificationType.INFO
+    title: str | None = None
+    timeout: float = 5.0
+    dismissible: bool = True
+    timestamp: datetime = field(default_factory=datetime.now)
+    id: str = field(default_factory=lambda: __import__('uuid').uuid4().hex[:8])
+
+
+class NotificationToast(Static):
+    """Toast notification widget."""
+    
+    DEFAULT_CSS = """
+    NotificationToast {
+        width: 50;
+        height: auto;
+        min-height: 3;
+        padding: 1;
+        border: solid $primary;
+        margin: 1;
+    }
+    NotificationToast.info { border: solid $primary; }
+    NotificationToast.success { border: solid $success; }
+    NotificationToast.warning { border: solid $warning; }
+    NotificationToast.error { border: solid $error; }
+    NotificationToast .toast-title { text-style: bold; }
+    NotificationToast .toast-close { dock: right; }
+    """
+    
+    def __init__(self, notification: Notification, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._notification = notification
+        self.add_class(notification.type.value)
+    
+    def compose(self) -> ComposeResult:
+        icons = {
+            NotificationType.INFO: "ℹ️",
+            NotificationType.SUCCESS: "✅",
+            NotificationType.WARNING: "⚠️",
+            NotificationType.ERROR: "❌",
+        }
+        icon = icons.get(self._notification.type, "•")
+        
+        with Horizontal():
+            if self._notification.title:
+                yield Label(
+                    f"{icon} {self._notification.title}",
+                    classes="toast-title",
+                )
+            else:
+                yield Label(icon)
+            
+            if self._notification.dismissible:
+                yield Button("×", id="toast-close", classes="toast-close")
+        
+        yield Label(self._notification.message)
+    
+    def on_mount(self) -> None:
+        """Set up auto-dismiss timer."""
+        if self._notification.timeout > 0:
+            self.set_timer(self._notification.timeout, self._dismiss)
+    
+    def _dismiss(self) -> None:
+        """Dismiss the notification."""
+        self.remove()
+    
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Handle close button."""
+        if event.button.id == "toast-close":
+            self._dismiss()
+
+
+class NotificationCenter(Static):
+    """Central notification management panel.
+    
+    Features:
+    - Stack multiple notifications
+    - Auto-dismiss with timeout
+    - Notification history
+    - Filter by type
+    """
+    
+    DEFAULT_CSS = """
+    NotificationCenter {
+        dock: right;
+        width: 55;
+        height: 100%;
+        background: $surface;
+        border-left: solid $surface-lighten-1;
+    }
+    NotificationCenter .center-header {
+        height: 3;
+        padding: 1;
+        background: $primary;
+    }
+    NotificationCenter .notifications-container {
+        height: 100%;
+        overflow: auto;
+    }
+    """
+    
+    def __init__(self, max_visible: int = 5, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._max_visible = max_visible
+        self._notifications: list[Notification] = []
+        self._history: list[Notification] = []
+    
+    def compose(self) -> ComposeResult:
+        with Horizontal(classes="center-header"):
+            yield Label("🔔 Notifications")
+            yield Button("Clear All", id="btn-clear-all")
+        
+        yield ScrollableContainer(
+            id="notifications-container",
+            classes="notifications-container",
+        )
+    
+    def add_notification(self, notification: Notification) -> None:
+        """Add a notification to the center."""
+        self._notifications.append(notification)
+        self._history.append(notification)
+        
+        # Limit visible notifications
+        while len(self._notifications) > self._max_visible:
+            old = self._notifications.pop(0)
+            try:
+                self.query_one(f"#toast-{old.id}", NotificationToast).remove()
+            except Exception:
+                pass
+        
+        # Add toast widget
+        container = self.query_one(
+            "#notifications-container",
+            ScrollableContainer,
+        )
+        toast = NotificationToast(notification, id=f"toast-{notification.id}")
+        container.mount(toast)
+    
+    def notify(
+        self,
+        message: str,
+        type: NotificationType = NotificationType.INFO,
+        title: str | None = None,
+        timeout: float = 5.0,
+    ) -> None:
+        """Quick notification helper."""
+        self.add_notification(
+            Notification(
+                message=message,
+                type=type,
+                title=title,
+                timeout=timeout,
+            )
+        )
+    
+    def clear_all(self) -> None:
+        """Clear all visible notifications."""
+        self._notifications.clear()
+        container = self.query_one(
+            "#notifications-container",
+            ScrollableContainer,
+        )
+        container.remove_children()
+    
+    def get_history(
+        self,
+        type_filter: NotificationType | None = None,
+        limit: int = 50,
+    ) -> list[Notification]:
+        """Get notification history."""
+        if type_filter:
+            filtered = [n for n in self._history if n.type == type_filter]
+        else:
+            filtered = list(self._history)
+        return filtered[-limit:]
+    
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Handle button presses."""
+        if event.button.id == "btn-clear-all":
+            self.clear_all()
+
+
+# =============================================================================
+# Resource Monitor Widget (Feature - TUI)
+# =============================================================================
+
+
+class ResourceMonitor(Static):
+    """Compact resource monitoring widget.
+    
+    Shows:
+    - GPU memory (if CUDA available)
+    - Active backends
+    - Running executions
+    """
+    
+    DEFAULT_CSS = """
+    ResourceMonitor {
+        height: 3;
+        width: 100%;
+        padding: 0 1;
+        background: $surface;
+        border-bottom: solid $surface-lighten-1;
+    }
+    ResourceMonitor .resource-item { margin: 0 2; }
+    ResourceMonitor .resource-warning { color: $warning; }
+    ResourceMonitor .resource-critical { color: $error; }
+    """
+    
+    def __init__(self, refresh_interval: float = 5.0, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._refresh_interval = refresh_interval
+    
+    def compose(self) -> ComposeResult:
+        with Horizontal():
+            yield Label("💻 CPU: --", id="cpu-usage", classes="resource-item")
+            yield Label("🧠 RAM: --", id="ram-usage", classes="resource-item")
+            yield Label("🎮 GPU: --", id="gpu-usage", classes="resource-item")
+            yield Label("⚡ Active: 0", id="active-count", classes="resource-item")
+    
+    def on_mount(self) -> None:
+        """Start refresh timer."""
+        self.set_interval(self._refresh_interval, self._refresh)
+        self._refresh()
+    
+    def _refresh(self) -> None:
+        """Refresh resource data."""
+        try:
+            import psutil
+            
+            cpu = psutil.cpu_percent(interval=None)
+            ram = psutil.virtual_memory().percent
+            
+            cpu_label = self.query_one("#cpu-usage", Label)
+            cpu_label.update(f"💻 CPU: {cpu:.0f}%")
+            cpu_label.remove_class("resource-warning", "resource-critical")
+            if cpu > 90:
+                cpu_label.add_class("resource-critical")
+            elif cpu > 70:
+                cpu_label.add_class("resource-warning")
+            
+            ram_label = self.query_one("#ram-usage", Label)
+            ram_label.update(f"🧠 RAM: {ram:.0f}%")
+            ram_label.remove_class("resource-warning", "resource-critical")
+            if ram > 90:
+                ram_label.add_class("resource-critical")
+            elif ram > 80:
+                ram_label.add_class("resource-warning")
+            
+        except ImportError:
+            pass
+        
+        # GPU info (if available)
+        try:
+            import torch
+            if torch.cuda.is_available():
+                gpu_mem = torch.cuda.memory_allocated() / 1e9
+                gpu_total = torch.cuda.get_device_properties(0).total_memory / 1e9
+                gpu_pct = (gpu_mem / gpu_total) * 100
+                self.query_one("#gpu-usage", Label).update(
+                    f"🎮 GPU: {gpu_mem:.1f}/{gpu_total:.1f}GB"
+                )
+        except Exception:
+            self.query_one("#gpu-usage", Label).update("🎮 GPU: N/A")
+
+
+# =============================================================================
+# Confirmation Dialog (Feature - TUI)
+# =============================================================================
+
+
+class ConfirmationDialog(Static):
+    """Modal confirmation dialog.
+    
+    For user confirmation before destructive actions.
+    """
+    
+    DEFAULT_CSS = """
+    ConfirmationDialog {
+        width: 50;
+        height: auto;
+        border: heavy $error;
+        background: $surface;
+        padding: 1 2;
+    }
+    ConfirmationDialog .dialog-title { text-style: bold; margin-bottom: 1; }
+    ConfirmationDialog .dialog-message { margin-bottom: 1; }
+    ConfirmationDialog .dialog-buttons { height: 3; margin-top: 1; }
+    """
+    
+    BINDINGS = [
+        Binding("escape", "cancel", "Cancel"),
+        Binding("enter", "confirm", "Confirm"),
+        Binding("y", "confirm", "Yes"),
+        Binding("n", "cancel", "No"),
+    ]
+    
+    class Confirmed(Message):
+        """Emitted when user confirms."""
+        
+        def __init__(self, action_id: str) -> None:
+            super().__init__()
+            self.action_id = action_id
+    
+    class Cancelled(Message):
+        """Emitted when user cancels."""
+        
+        def __init__(self, action_id: str) -> None:
+            super().__init__()
+            self.action_id = action_id
+    
+    def __init__(
+        self,
+        title: str,
+        message: str,
+        action_id: str = "",
+        confirm_label: str = "Yes, Continue",
+        cancel_label: str = "No, Cancel",
+        **kwargs,
+    ) -> None:
+        super().__init__(**kwargs)
+        self._title = title
+        self._message = message
+        self._action_id = action_id
+        self._confirm_label = confirm_label
+        self._cancel_label = cancel_label
+    
+    def compose(self) -> ComposeResult:
+        yield Label(f"⚠️ {self._title}", classes="dialog-title")
+        yield Label(self._message, classes="dialog-message")
+        
+        with Horizontal(classes="dialog-buttons"):
+            yield Button(
+                self._cancel_label,
+                id="btn-cancel",
+                variant="default",
+            )
+            yield Button(
+                self._confirm_label,
+                id="btn-confirm",
+                variant="error",
+            )
+    
+    def action_confirm(self) -> None:
+        """Handle confirmation."""
+        self.post_message(self.Confirmed(self._action_id))
+        self.remove()
+    
+    def action_cancel(self) -> None:
+        """Handle cancellation."""
+        self.post_message(self.Cancelled(self._action_id))
+        self.remove()
+    
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Handle button presses."""
+        if event.button.id == "btn-confirm":
+            self.action_confirm()
+        elif event.button.id == "btn-cancel":
+            self.action_cancel()

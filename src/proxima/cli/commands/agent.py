@@ -338,3 +338,293 @@ def list_tasks(
     except Exception as e:
         typer.echo(f"Failed to parse agent file: {e}", err=True)
         raise typer.Exit(1)
+
+
+@app.command("status")
+def agent_status(
+    agent_file: Path = typer.Argument(..., help="Path to proxima_agent.md file"),
+) -> None:
+    """Show execution status of an agent file.
+    
+    Displays whether the agent has been run, its last execution status,
+    and any checkpoint information available.
+    """
+    from proxima.core.session import get_session_manager
+    
+    if not agent_file.exists():
+        typer.echo(f"Agent file not found: {agent_file}", err=True)
+        raise typer.Exit(1)
+    
+    session_manager = get_session_manager()
+    agent_name = agent_file.stem
+    
+    # Look for sessions related to this agent
+    sessions = session_manager.list_sessions()
+    agent_sessions = [s for s in sessions if agent_name in s.get("name", "")]
+    
+    if not agent_sessions:
+        typer.echo(f"\nNo execution history for: {agent_file}")
+        typer.echo("Run with: proxima agent run " + str(agent_file))
+        return
+    
+    typer.echo(f"\nExecution History for: {agent_file}\n")
+    for session in agent_sessions[-5:]:  # Show last 5
+        status = session.get("status", "unknown")
+        timestamp = session.get("timestamp", "unknown")
+        typer.echo(f"  [{timestamp}] Status: {status}")
+        if session.get("error"):
+            typer.echo(f"      Error: {session['error'][:50]}...")
+
+
+@app.command("export")
+def export_agent(
+    agent_file: Path = typer.Argument(..., help="Path to proxima_agent.md file"),
+    output_format: str = typer.Option(
+        "json", "--format", "-f", help="Output format (json, yaml)"
+    ),
+    output_file: Path = typer.Option(
+        None, "--output", "-o", help="Output file (default: stdout)"
+    ),
+) -> None:
+    """Export agent file as structured data (JSON or YAML).
+    
+    Converts the agent.md file to a structured format for
+    integration with other tools or programmatic access.
+    """
+    import json
+    
+    from proxima.core.agent_interpreter import AgentFileParser
+    
+    if not agent_file.exists():
+        typer.echo(f"Agent file not found: {agent_file}", err=True)
+        raise typer.Exit(1)
+    
+    try:
+        parser = AgentFileParser()
+        agent_config = parser.parse_file(agent_file)
+        
+        # Convert to dictionary
+        data = {
+            "metadata": {
+                "name": agent_config.metadata.name,
+                "version": agent_config.metadata.version,
+                "author": getattr(agent_config.metadata, "author", None),
+            },
+            "configuration": agent_config.configuration,
+            "tasks": [
+                {
+                    "name": task.name,
+                    "type": task.type.value,
+                    "description": task.description,
+                    "parameters": task.parameters,
+                }
+                for task in agent_config.tasks
+            ],
+        }
+        
+        if output_format.lower() == "yaml":
+            try:
+                import yaml
+                output = yaml.dump(data, default_flow_style=False, sort_keys=False)
+            except ImportError:
+                typer.echo("YAML export requires PyYAML: pip install pyyaml", err=True)
+                raise typer.Exit(1)
+        else:
+            output = json.dumps(data, indent=2)
+        
+        if output_file:
+            output_file.write_text(output)
+            typer.echo(f"Exported to: {output_file}")
+        else:
+            typer.echo(output)
+            
+    except Exception as e:
+        typer.echo(f"Export failed: {e}", err=True)
+        raise typer.Exit(1)
+
+
+@app.command("import")
+def import_agent(
+    input_file: Path = typer.Argument(..., help="Path to JSON/YAML file"),
+    output_file: Path = typer.Option(
+        Path("proxima_agent.md"), "--output", "-o", help="Output agent.md file"
+    ),
+    force: bool = typer.Option(False, "--force", "-f", help="Overwrite existing file"),
+) -> None:
+    """Import structured data as agent.md file.
+    
+    Converts a JSON or YAML file to proxima_agent.md format.
+    """
+    import json
+    
+    if not input_file.exists():
+        typer.echo(f"Input file not found: {input_file}", err=True)
+        raise typer.Exit(1)
+    
+    if output_file.exists() and not force:
+        typer.echo(f"Output file exists: {output_file}", err=True)
+        typer.echo("Use --force to overwrite")
+        raise typer.Exit(1)
+    
+    try:
+        content = input_file.read_text()
+        
+        if input_file.suffix in [".yaml", ".yml"]:
+            try:
+                import yaml
+                data = yaml.safe_load(content)
+            except ImportError:
+                typer.echo("YAML import requires PyYAML: pip install pyyaml", err=True)
+                raise typer.Exit(1)
+        else:
+            data = json.loads(content)
+        
+        # Generate agent.md content
+        metadata = data.get("metadata", {})
+        tasks = data.get("tasks", [])
+        
+        md_lines = [
+            "# Proxima Agent Instructions",
+            "",
+            "## Metadata",
+            f"- name: {metadata.get('name', 'Imported Agent')}",
+            f"- version: {metadata.get('version', '1.0.0')}",
+        ]
+        
+        if metadata.get("author"):
+            md_lines.append(f"- author: {metadata['author']}")
+        
+        md_lines.extend(["", "## Tasks", ""])
+        
+        for i, task in enumerate(tasks, 1):
+            md_lines.extend([
+                f"### Task {i}: {task.get('name', f'Task {i}')}",
+                task.get("description", ""),
+                "",
+                f"**Type:** {task.get('type', 'simulation')}",
+            ])
+            
+            if task.get("parameters", {}).get("backend"):
+                md_lines.append(f"**Backend:** {task['parameters']['backend']}")
+            
+            md_lines.append("")
+        
+        output_file.write_text("\n".join(md_lines))
+        typer.echo(f"Created agent file: {output_file}")
+        
+    except Exception as e:
+        typer.echo(f"Import failed: {e}", err=True)
+        raise typer.Exit(1)
+
+
+@app.command("diff")
+def diff_agents(
+    file1: Path = typer.Argument(..., help="First agent file"),
+    file2: Path = typer.Argument(..., help="Second agent file"),
+) -> None:
+    """Compare two agent files and show differences.
+    
+    Useful for reviewing changes between agent file versions.
+    """
+    from proxima.core.agent_interpreter import AgentFileParser
+    
+    if not file1.exists():
+        typer.echo(f"File not found: {file1}", err=True)
+        raise typer.Exit(1)
+    
+    if not file2.exists():
+        typer.echo(f"File not found: {file2}", err=True)
+        raise typer.Exit(1)
+    
+    try:
+        parser = AgentFileParser()
+        config1 = parser.parse_file(file1)
+        config2 = parser.parse_file(file2)
+        
+        typer.echo(f"\nComparing: {file1} vs {file2}\n")
+        
+        # Compare metadata
+        if config1.metadata.name != config2.metadata.name:
+            typer.echo(f"Name: {config1.metadata.name} → {config2.metadata.name}")
+        if config1.metadata.version != config2.metadata.version:
+            typer.echo(f"Version: {config1.metadata.version} → {config2.metadata.version}")
+        
+        # Compare task counts
+        typer.echo(f"\nTasks: {len(config1.tasks)} → {len(config2.tasks)}")
+        
+        # Compare individual tasks
+        max_tasks = max(len(config1.tasks), len(config2.tasks))
+        for i in range(max_tasks):
+            task1 = config1.tasks[i] if i < len(config1.tasks) else None
+            task2 = config2.tasks[i] if i < len(config2.tasks) else None
+            
+            if task1 and task2:
+                if task1.name != task2.name or task1.type != task2.type:
+                    typer.echo(f"\n[Task {i+1}]")
+                    if task1.name != task2.name:
+                        typer.echo(f"  Name: {task1.name} → {task2.name}")
+                    if task1.type != task2.type:
+                        typer.echo(f"  Type: {task1.type.value} → {task2.type.value}")
+            elif task1:
+                typer.echo(f"\n[Task {i+1}] REMOVED: {task1.name}")
+            elif task2:
+                typer.echo(f"\n[Task {i+1}] ADDED: {task2.name}")
+        
+    except Exception as e:
+        typer.echo(f"Diff failed: {e}", err=True)
+        raise typer.Exit(1)
+
+
+@app.command("watch")
+def watch_agent(
+    agent_file: Path = typer.Argument(..., help="Path to proxima_agent.md file"),
+    interval: float = typer.Option(2.0, "--interval", "-i", help="Watch interval in seconds"),
+) -> None:
+    """Watch an agent file and re-run on changes.
+    
+    Monitors the agent file for changes and automatically
+    re-executes when modifications are detected.
+    """
+    import time
+    
+    from proxima.core.agent_interpreter import AgentFileParser, AgentInterpreter
+    
+    if not agent_file.exists():
+        typer.echo(f"Agent file not found: {agent_file}", err=True)
+        raise typer.Exit(1)
+    
+    typer.echo(f"Watching: {agent_file}")
+    typer.echo(f"Interval: {interval}s")
+    typer.echo("Press Ctrl+C to stop\n")
+    
+    last_mtime = agent_file.stat().st_mtime
+    
+    def execute_agent():
+        try:
+            parser = AgentFileParser()
+            agent_config = parser.parse_file(agent_file)
+            
+            def display_callback(message: str) -> None:
+                typer.echo(f"  {message}")
+            
+            interpreter = AgentInterpreter(display_callback=display_callback)
+            report = interpreter.execute(agent_config)
+            
+            status = "✓" if report.status == "completed" else "✗"
+            typer.echo(f"\n{status} Execution {report.status}")
+            
+        except Exception as e:
+            typer.echo(f"\n✗ Execution failed: {e}")
+    
+    try:
+        while True:
+            time.sleep(interval)
+            
+            current_mtime = agent_file.stat().st_mtime
+            if current_mtime != last_mtime:
+                last_mtime = current_mtime
+                typer.echo(f"\n[{time.strftime('%H:%M:%S')}] File changed, re-running...")
+                execute_agent()
+                
+    except KeyboardInterrupt:
+        typer.echo("\n\nWatch stopped.")

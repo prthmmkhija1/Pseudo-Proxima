@@ -633,6 +633,325 @@ class SessionPersistence:
             "storage_size_mb": sum(p.stat().st_size for p in self._sessions_dir.glob("**/*.json")) / 1024 / 1024,
         }
 
+    # Enhanced session management features
+    def clone_session(
+        self,
+        source_session_id: str,
+        new_name: str | None = None,
+    ) -> SessionState | None:
+        """Clone an existing session.
+
+        Args:
+            source_session_id: ID of session to clone.
+            new_name: Name for cloned session. Defaults to "Copy of {original}".
+
+        Returns:
+            New cloned session or None if source not found.
+        """
+        source = self.load_session(source_session_id)
+        if not source:
+            return None
+
+        cloned_data = source.to_dict()
+        cloned = SessionState.from_dict(cloned_data)
+        
+        # Generate new identifiers
+        cloned.session_id = str(uuid.uuid4())
+        cloned.name = new_name or f"Copy of {source.name}"
+        cloned.created_at = datetime.utcnow()
+        cloned.updated_at = datetime.utcnow()
+        cloned.last_accessed = datetime.utcnow()
+        cloned.status = SessionStatus.ACTIVE
+        
+        # Clear runtime state
+        cloned.result_ids = []
+        cloned.command_history = []
+        cloned.undo_stack = []
+        cloned.redo_stack = []
+        
+        self.save_session(cloned)
+        return cloned
+
+    def merge_sessions(
+        self,
+        session_ids: list[str],
+        new_name: str,
+    ) -> SessionState | None:
+        """Merge multiple sessions into one.
+
+        Args:
+            session_ids: List of session IDs to merge.
+            new_name: Name for merged session.
+
+        Returns:
+            New merged session or None if any session not found.
+        """
+        sessions = []
+        for sid in session_ids:
+            session = self.load_session(sid)
+            if not session:
+                return None
+            sessions.append(session)
+
+        if not sessions:
+            return None
+
+        merged = SessionState(
+            name=new_name,
+            description=f"Merged from {len(sessions)} sessions",
+            tags=list(set(tag for s in sessions for tag in s.tags)),
+        )
+
+        # Merge workflow steps
+        for session in sessions:
+            for step in session.workflow_steps:
+                merged.workflow_steps.append(step)
+
+        # Merge result IDs
+        for session in sessions:
+            merged.result_ids.extend(session.result_ids)
+        merged.result_ids = list(set(merged.result_ids))
+
+        # Merge command history
+        for session in sessions:
+            merged.command_history.extend(session.command_history)
+
+        # Use most recent preferences
+        sessions.sort(key=lambda s: s.updated_at, reverse=True)
+        merged.preferences = sessions[0].preferences
+
+        # Merge metadata
+        for session in sessions:
+            merged.metadata.update(session.metadata)
+        merged.metadata["merged_from"] = session_ids
+
+        self.save_session(merged)
+        return merged
+
+    def search_sessions(
+        self,
+        query: str,
+        search_fields: list[str] | None = None,
+        limit: int = 50,
+    ) -> list[SessionState]:
+        """Search sessions by query string.
+
+        Args:
+            query: Search query.
+            search_fields: Fields to search in. Defaults to name, description, tags.
+            limit: Maximum results.
+
+        Returns:
+            List of matching sessions.
+        """
+        search_fields = search_fields or ["name", "description", "tags"]
+        query_lower = query.lower()
+        
+        all_sessions = self.list_sessions(limit=10000)
+        matches = []
+        
+        for session in all_sessions:
+            for field in search_fields:
+                if field == "name" and query_lower in session.name.lower():
+                    matches.append(session)
+                    break
+                elif field == "description" and query_lower in session.description.lower():
+                    matches.append(session)
+                    break
+                elif field == "tags" and any(query_lower in tag.lower() for tag in session.tags):
+                    matches.append(session)
+                    break
+
+        return matches[:limit]
+
+    def get_session_timeline(
+        self,
+        session_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Get timeline of events for a session.
+
+        Args:
+            session_id: Session ID. Uses current if None.
+
+        Returns:
+            List of timeline events.
+        """
+        session = None
+        if session_id:
+            session = self.load_session(session_id)
+        else:
+            session = self._current_session
+
+        if not session:
+            return []
+
+        timeline = []
+
+        # Session creation
+        timeline.append({
+            "type": "session_created",
+            "timestamp": session.created_at.isoformat(),
+            "description": f"Session '{session.name}' created",
+        })
+
+        # Workflow steps
+        for step in session.workflow_steps:
+            if step.started_at:
+                timeline.append({
+                    "type": "step_started",
+                    "timestamp": step.started_at.isoformat(),
+                    "description": f"Started: {step.name}",
+                    "step_id": step.id,
+                })
+            if step.completed_at:
+                status = "Completed" if step.status == "completed" else "Failed"
+                timeline.append({
+                    "type": "step_completed",
+                    "timestamp": step.completed_at.isoformat(),
+                    "description": f"{status}: {step.name}",
+                    "step_id": step.id,
+                })
+
+        # Sort by timestamp
+        timeline.sort(key=lambda e: e["timestamp"])
+        return timeline
+
+    def compact_session(self, session_id: str | None = None) -> bool:
+        """Compact session data by removing old history.
+
+        Args:
+            session_id: Session ID. Uses current if None.
+
+        Returns:
+            True if compacted successfully.
+        """
+        session = None
+        if session_id:
+            session = self.load_session(session_id)
+        else:
+            session = self._current_session
+
+        if not session:
+            return False
+
+        # Keep only recent history
+        session.command_history = session.command_history[-100:]
+        session.undo_stack = session.undo_stack[-10:]
+        session.redo_stack = session.redo_stack[-10:]
+
+        # Remove completed workflow steps older than 30 days
+        cutoff = datetime.utcnow() - timedelta(days=30)
+        session.workflow_steps = [
+            step for step in session.workflow_steps
+            if step.status != "completed" or 
+               (step.completed_at and step.completed_at > cutoff)
+        ]
+
+        return self.save_session(session)
+
+    def backup_sessions(self, backup_path: Path) -> dict[str, Any]:
+        """Backup all sessions to a directory.
+
+        Args:
+            backup_path: Path to backup directory.
+
+        Returns:
+            Backup summary.
+        """
+        backup_path = Path(backup_path)
+        backup_path.mkdir(parents=True, exist_ok=True)
+
+        sessions = self.list_sessions(limit=10000)
+        backed_up = 0
+        errors = []
+
+        for session in sessions:
+            try:
+                session_file = backup_path / f"{session.session_id}.json"
+                data = session.to_dict()
+                data["_backup_time"] = datetime.utcnow().isoformat()
+                session_file.write_text(json.dumps(data, indent=2, default=str), encoding="utf-8")
+                backed_up += 1
+            except Exception as e:
+                errors.append({"session_id": session.session_id, "error": str(e)})
+
+        # Backup checkpoints
+        checkpoint_backup = backup_path / "checkpoints"
+        checkpoint_backup.mkdir(exist_ok=True)
+        
+        for checkpoint_file in self._checkpoints_dir.glob("*.json"):
+            try:
+                shutil.copy(checkpoint_file, checkpoint_backup / checkpoint_file.name)
+            except Exception:
+                pass
+
+        return {
+            "total_sessions": len(sessions),
+            "backed_up": backed_up,
+            "errors": errors,
+            "backup_path": str(backup_path),
+            "backup_time": datetime.utcnow().isoformat(),
+        }
+
+    def restore_backup(self, backup_path: Path, overwrite: bool = False) -> dict[str, Any]:
+        """Restore sessions from a backup.
+
+        Args:
+            backup_path: Path to backup directory.
+            overwrite: Whether to overwrite existing sessions.
+
+        Returns:
+            Restore summary.
+        """
+        backup_path = Path(backup_path)
+        if not backup_path.exists():
+            return {"error": "Backup path does not exist"}
+
+        restored = 0
+        skipped = 0
+        errors = []
+
+        for session_file in backup_path.glob("*.json"):
+            if session_file.name.startswith("_"):
+                continue
+
+            try:
+                data = json.loads(session_file.read_text(encoding="utf-8"))
+                session = SessionState.from_dict(data)
+
+                if not overwrite:
+                    existing_path = self._session_path(session.session_id)
+                    if existing_path.exists():
+                        skipped += 1
+                        continue
+
+                self.save_session(session)
+                restored += 1
+            except Exception as e:
+                errors.append({"file": session_file.name, "error": str(e)})
+
+        # Restore checkpoints
+        checkpoint_backup = backup_path / "checkpoints"
+        if checkpoint_backup.exists():
+            for checkpoint_file in checkpoint_backup.glob("*.json"):
+                try:
+                    target = self._checkpoints_dir / checkpoint_file.name
+                    if not target.exists() or overwrite:
+                        shutil.copy(checkpoint_file, target)
+                except Exception:
+                    pass
+
+        return {
+            "restored": restored,
+            "skipped": skipped,
+            "errors": errors,
+        }
+
+
+# Import required for backup
+import shutil
+from datetime import timedelta
+
 
 # Global session persistence singleton
 _session_persistence: SessionPersistence | None = None

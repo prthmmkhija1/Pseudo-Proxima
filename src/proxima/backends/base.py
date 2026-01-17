@@ -75,6 +75,8 @@ class ExecutionResult:
 class BaseBackendAdapter(ABC):
     """Contract for all backend adapters."""
 
+    supports_benchmarking: bool = True
+
     @abstractmethod
     def get_name(self) -> str:
         """Return backend identifier."""
@@ -109,3 +111,20 @@ class BaseBackendAdapter(ABC):
         """Return whether the backend is available on this system."""
 
         return True
+
+    # ------------------------------------------------------------------
+    # Benchmarking lifecycle hooks
+    # ------------------------------------------------------------------
+    def prepare_for_benchmark(self, circuit: Any | None = None, shots: int | None = None) -> None:
+        """Optional pre-execution setup for benchmarking.
+
+        Default implementation is a no-op; adapters can override to reset
+        caches, warm up simulators, or pre-allocate resources.
+        """
+
+    def cleanup_after_benchmark(self) -> None:
+        """Optional post-execution cleanup for benchmarking.
+
+        Default implementation is a no-op; adapters can override to release
+        resources or clear internal state between benchmark runs.
+        """

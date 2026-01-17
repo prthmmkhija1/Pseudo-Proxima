@@ -1,0 +1,11 @@
+name: gpu
+circuits:
+  - "ghz_8"
+  - "qft_10"
+  - "random_12"
+  - "qaoa_12"
+backends:
+  - "cuquantum"
+  - "qsim"
+shots: 2048
+runs: 5

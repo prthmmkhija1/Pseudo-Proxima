@@ -170,19 +170,27 @@ class ProximaApp(App):
         self._config_path = config_path
         self._theme = theme
         self._current_screen = initial_screen
-        self._apply_theme(theme)
+        # Initialize dark mode tracking
+        self._is_dark_mode = theme != "light"
 
     def _apply_theme(self, theme: str) -> None:
         """Apply color theme to the app."""
+        # Handle dark mode compatibility across Textual versions
         if theme == "light":
             # Light theme overrides
-            self.dark = False
+            if hasattr(self, 'dark'):
+                self.dark = False
+            self._is_dark_mode = False
         else:
             # Dark theme (default)
-            self.dark = True
+            if hasattr(self, 'dark'):
+                self.dark = True
+            self._is_dark_mode = True
 
     def on_mount(self) -> None:
         """Called when app is mounted."""
+        # Apply theme after app is fully initialized
+        self._apply_theme(self._theme)
         # Start with the configured initial screen
         self.push_screen(self._current_screen)
 
@@ -359,8 +367,10 @@ class ProximaApp(App):
 
     def _toggle_theme(self) -> None:
         """Toggle between light and dark theme."""
-        self.dark = not self.dark
-        self.notify(f"Theme: {'Dark' if self.dark else 'Light'}")
+        self._is_dark_mode = not getattr(self, '_is_dark_mode', True)
+        if hasattr(self, 'dark'):
+            self.dark = self._is_dark_mode
+        self.notify(f"Theme: {'Dark' if self._is_dark_mode else 'Light'}")
 
 
 
@@ -533,9 +543,9 @@ class ProximaApp(App):
         self.notify(message, title=title, severity=severity)
 
     @property
-    def current_theme(self) -> str:
-        """Get the current theme name."""
-        return "dark" if self.dark else "light"
+    def theme_mode(self) -> str:
+        """Get the current theme mode name (dark or light)."""
+        return "dark" if getattr(self, '_is_dark_mode', True) else "light"
 
     @property
     def available_screens(self) -> list[str]:

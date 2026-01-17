@@ -10,6 +10,7 @@ __all__ = [
     "run",
     "compare",
     "backends",
+    "benchmark",
     "version",
     "history",
     "session",

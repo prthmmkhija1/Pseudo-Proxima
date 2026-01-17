@@ -26,6 +26,7 @@ proxima [OPTIONS] COMMAND [ARGS]...
 |---------|-------------|
 | `run` | Execute a quantum circuit |
 | `compare` | Compare execution across backends |
+| `benchmark` | Run and manage benchmarks |
 | `backends` | Manage quantum backends |
 | `config` | View and modify configuration |
 | `results` | View and manage execution results |
@@ -133,6 +134,64 @@ proxima compare circuits/bell.json -f json -o comparison.json
 ```
 
 ---
+
+## `proxima benchmark`
+
+Run and manage benchmarking workflows.
+
+### Subcommands
+
+| Subcommand | Description |
+|------------|-------------|
+| `benchmark run` | Run a benchmark suite on one backend |
+| `benchmark compare` | Benchmark the same circuit across backends |
+| `benchmark list` | List stored benchmark results |
+| `benchmark history` | Show recent benchmarks |
+| `benchmark stats` | Compute statistics over stored benchmarks |
+| `benchmark profile` | Profile a backend (CPU/memory) during benchmarking |
+| `benchmark cleanup` | Remove old benchmark entries |
+| `benchmark export` | Export benchmark data (csv/json) |
+| `benchmark report` | Generate reports (markdown/html/pdf) |
+| `benchmark suite` | Run a predefined YAML benchmark suite |
+| `benchmark schedule` | Manage scheduled benchmark jobs |
+
+### Usage
+
+```bash
+proxima benchmark [SUBCOMMAND] [OPTIONS]
+```
+
+### Common Options
+
+| Option | Description |
+|--------|-------------|
+| `--backend`, `-b` | Backend name (for `run`, `profile`) |
+| `--backends` | Comma-separated backends (for `compare`) |
+| `--shots`, `-s` | Number of shots per run |
+| `--runs`, `-n` | Number of benchmark runs |
+| `--warmup`, `-w` | Warmup runs before measurement |
+| `--output`, `-o` | Output file path (json/csv/md/html/pdf) |
+
+### Examples
+
+```bash
+# Single-backend benchmark
+proxima benchmark run circuits/bell.json --backend lret --shots 1024 --runs 5
+
+# Compare backends
+proxima benchmark compare circuits/ghz_3.json --backends lret,cirq,qsim --runs 3
+
+# Run predefined suite
+proxima benchmark suite quick --output out/quick.json
+
+# Generate markdown report
+proxima benchmark report --format markdown --output reports/bench.md
+
+# Schedule daily benchmark at 2 AM
+proxima benchmark schedule start
+proxima benchmark schedule add quick --cron "0 2 * * *"
+```
+
 
 ## `proxima backends`
 

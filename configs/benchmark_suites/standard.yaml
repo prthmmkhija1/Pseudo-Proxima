@@ -1,0 +1,15 @@
+name: standard
+circuits:
+  - "bell_state"
+  - "ghz_4"
+  - "qft_5"
+  - "random_6"
+  - "teleport_3"
+  - "vqe_4"
+  - "qaoa_5"
+  - "phase_estimation_4"
+  - "swap_test_3"
+  - "bernstein_vazirani_5"
+backends: []
+shots: 1024
+runs: 5

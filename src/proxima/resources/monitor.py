@@ -22,11 +22,12 @@ import math
 import statistics
 import threading
 import time
+import psutil
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Optional
 
 if TYPE_CHECKING:
     from proxima.backends.registry import BackendRegistry
@@ -584,6 +585,7 @@ class ResourceSnapshot:
     timestamp: float
     memory: MemorySnapshot
     cpu_percent: float
+    gpu_percent: Optional[float] = None
 
 
 class ResourceMonitor:
@@ -592,7 +594,7 @@ class ResourceMonitor:
     def __init__(
         self,
         memory_thresholds: MemoryThresholds | None = None,
-        sample_interval: float = 1.0,
+        sample_interval: float = 0.1,
     ) -> None:
         self.memory = MemoryMonitor(
             thresholds=memory_thresholds,
@@ -600,27 +602,133 @@ class ResourceMonitor:
         )
         self.cpu = CPUMonitor(sample_interval=sample_interval)
         self._history: list[ResourceSnapshot] = []
+        self._sampling_interval = sample_interval
+        self._baseline_memory_bytes: float | None = None
+        self._peak_memory_bytes: float | None = None
+        self._cpu_samples: list[float] = []
+        self._gpu_samples: list[float] = []
+        self._running = False
+        self._monitor_thread: threading.Thread | None = None
+        self._proc: psutil.Process | None = None
+        self._gpu_monitor = GPUMonitor()
+        self._gpu_available: bool = self._gpu_monitor.available
 
     def sample(self) -> ResourceSnapshot:
         """Take combined sample."""
         mem_snapshot = self.memory.sample()
-        cpu_percent = self.cpu.sample()
+
+        # Process-level memory tracking
+        if self._proc is None:
+            try:
+                self._proc = psutil.Process()
+            except Exception:
+                self._proc = None
+
+        rss_bytes = None
+        if self._proc is not None:
+            try:
+                rss_bytes = self._proc.memory_info().rss
+            except Exception:
+                rss_bytes = None
+
+        if self._baseline_memory_bytes is None and rss_bytes is not None:
+            self._baseline_memory_bytes = rss_bytes
+            self._peak_memory_bytes = rss_bytes
+
+        if rss_bytes is not None and self._peak_memory_bytes is not None:
+            if rss_bytes > self._peak_memory_bytes:
+                self._peak_memory_bytes = rss_bytes
+
+        # Process CPU percent (non-blocking)
+        cpu_percent = None
+        if self._proc is not None:
+            try:
+                cpu_percent = self._proc.cpu_percent(interval=None)
+            except Exception:
+                cpu_percent = None
+
+        if cpu_percent is None:
+            cpu_percent = self.cpu.sample()
+            self._cpu_samples.append(cpu_percent)
+        else:
+            self._cpu_samples.append(cpu_percent)
+            self.cpu._history.append(
+                CPUSnapshot(timestamp=time.time(), percent=cpu_percent)
+            )
+
+        gpu_percent: Optional[float] = None
+        if self._gpu_available:
+            try:
+                gpu_snapshots = self._gpu_monitor.sample()
+                if gpu_snapshots:
+                    gpu_percent = sum(
+                        s.gpu_utilization for s in gpu_snapshots
+                    ) / len(gpu_snapshots)
+                    self._gpu_samples.append(gpu_percent)
+            except Exception:
+                self._gpu_available = False
 
         snapshot = ResourceSnapshot(
             timestamp=time.time(),
             memory=mem_snapshot,
             cpu_percent=cpu_percent,
+            gpu_percent=gpu_percent,
         )
         self._history.append(snapshot)
         return snapshot
 
     def start_monitoring(self) -> None:
         """Start background monitoring."""
+        if self._running:
+            return
+
+        # Capture baseline memory before starting the loop
+        try:
+            self._proc = psutil.Process()
+            rss = self._proc.memory_info().rss
+            self._baseline_memory_bytes = rss
+            self._peak_memory_bytes = rss
+        except Exception:
+            self._proc = None
+
+        self._running = True
         self.memory.start_monitoring()
+        self._monitor_thread = threading.Thread(
+            target=self._monitor_loop, daemon=True
+        )
+        self._monitor_thread.start()
 
     def stop_monitoring(self) -> None:
         """Stop background monitoring."""
+        self._running = False
+        if self._monitor_thread:
+            self._monitor_thread.join(timeout=2.0)
+            self._monitor_thread = None
         self.memory.stop_monitoring()
+
+    def __del__(self) -> None:
+        try:
+            self.stop_monitoring()
+        except Exception:
+            # Avoid raising during garbage collection
+            pass
+
+    def reset_samples(self) -> None:
+        """Clear collected samples for reuse across benchmarks."""
+        self._baseline_memory_bytes = None
+        self._peak_memory_bytes = None
+        self._cpu_samples.clear()
+        self._gpu_samples.clear()
+        self._history.clear()
+
+    def _monitor_loop(self) -> None:
+        """Background loop sampling CPU/GPU at the configured interval."""
+        while self._running:
+            try:
+                self.sample()
+            except Exception as exc:
+                logger.warning("Resource monitor sampling error: %s", exc)
+            time.sleep(self._sampling_interval)
 
     def on_memory_alert(self, callback: AlertCallback) -> None:
         """Register memory alert callback."""
@@ -645,13 +753,83 @@ class ResourceMonitor:
         return {
             **mem_summary,
             "cpu_percent": self.cpu.current_percent,
+            "cpu_average_percent": self.get_average_cpu_percent(),
+            "gpu_average_percent": self.get_average_gpu_percent(),
+            "memory_baseline_mb": self.get_memory_baseline_mb(),
+            "memory_peak_mb": self.get_peak_memory_mb(),
+            "memory_delta_mb": self.get_memory_delta_mb(),
         }
+
+    def get_memory_baseline_mb(self) -> float:
+        """Return the baseline memory measured when monitoring started."""
+        if self._baseline_memory_bytes is not None:
+            return self._baseline_memory_bytes / (1024 * 1024)
+        if self.memory.latest:
+            return self.memory.latest.used_mb
+        return 0.0
+
+    def get_peak_memory_mb(self) -> float:
+        """Return the peak memory (delta above baseline) in MB."""
+        if self._peak_memory_bytes is not None and self._baseline_memory_bytes is not None:
+            return max(
+                (self._peak_memory_bytes - self._baseline_memory_bytes) / (1024 * 1024),
+                0.0,
+            )
+        return 0.0
+
+    def get_absolute_peak_memory_mb(self) -> float:
+        """Return the absolute peak memory usage in MB."""
+        if self._peak_memory_bytes is not None:
+            return self._peak_memory_bytes / (1024 * 1024)
+        if self.memory.latest:
+            return self.memory.latest.used_mb
+        return 0.0
+
+    def get_memory_delta_mb(self) -> float:
+        """Return delta between current usage and baseline."""
+        if not self.memory.latest:
+            return 0.0
+        if self._proc:
+            try:
+                current_rss = self._proc.memory_info().rss
+                return max(
+                    (current_rss - (self._baseline_memory_bytes or current_rss))
+                    / (1024 * 1024),
+                    0.0,
+                )
+            except Exception:
+                return max(
+                    self.memory.latest.used_mb - self.get_memory_baseline_mb(), 0.0
+                )
+        return max(self.memory.latest.used_mb - self.get_memory_baseline_mb(), 0.0)
+
+    def get_average_cpu_percent(self) -> float:
+        """Return average CPU usage collected so far."""
+        if self._cpu_samples:
+            try:
+                return statistics.mean(self._cpu_samples)
+            except statistics.StatisticsError:
+                return self.cpu.current_percent
+        return self.cpu.current_percent
+
+    def get_average_gpu_percent(self) -> Optional[float]:
+        """Return average GPU utilization if samples are available."""
+        if self._gpu_samples:
+            try:
+                return statistics.mean(self._gpu_samples)
+            except statistics.StatisticsError:
+                return None
+        return None
 
     def display_line(self) -> str:
         """Combined status line."""
         mem_line = self.memory.display_line()
         cpu = self.cpu.current_percent
-        return f"{mem_line} | CPU: {cpu:.1f}%"
+        parts = [mem_line, f"CPU: {cpu:.1f}%"]
+        if self._gpu_available:
+            if self._gpu_samples:
+                parts.append(f"GPU: {self._gpu_samples[-1]:.1f}%")
+        return " | ".join(parts)
 
 
 # =============================================================================

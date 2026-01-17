@@ -1135,6 +1135,28 @@ class QsimAdapter(BaseBackendAdapter):
         if self.is_available():
             self._detect_environment()
 
+    # -----------------------------------------------------------------
+    # Benchmarking hooks
+    # -----------------------------------------------------------------
+    def prepare_for_benchmark(self, circuit: Any | None = None, shots: int | None = None) -> None:
+        """Prepare qsim adapter for a clean benchmark run."""
+        # Ensure environment detection is up-to-date before timing starts
+        if self.is_available():
+            try:
+                self._detect_environment()
+            except Exception:
+                pass
+        # Reset mid-circuit handler state if it tracks history
+        if hasattr(self._mid_circuit_handler, "reset"):
+            try:
+                self._mid_circuit_handler.reset()
+            except Exception:
+                pass
+
+    def cleanup_after_benchmark(self) -> None:
+        """Placeholder cleanup hook for qsim (no persistent resources)."""
+        return
+
     def _detect_environment(self) -> None:
         """Detect CPU environment and capabilities."""
         # Detect AVX

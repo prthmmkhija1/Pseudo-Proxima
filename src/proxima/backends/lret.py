@@ -676,6 +676,22 @@ class LRETBackendAdapter(BaseBackendAdapter):
         self._result_normalizer: LRETResultNormalizer | None = None
         self._use_mock: bool = False
 
+    # ------------------------------------------------------------------
+    # Benchmarking hooks
+    # ------------------------------------------------------------------
+    def prepare_for_benchmark(self, circuit: Any | None = None, shots: int | None = None) -> None:
+        """Reset transient state to avoid cross-run side effects."""
+        # Clear any cached adapters/normalizers to ensure a fresh run
+        self._cached_version = None
+        self._result_normalizer = None
+        # Reset API verifier cache to revalidate if needed
+        self._api_verifier = None
+
+    def cleanup_after_benchmark(self) -> None:
+        """No-op cleanup hook for LRET (placeholder for future)."""
+        # If the real LRET backend exposes cache clearing, invoke it here
+        return
+
     def get_name(self) -> str:
         """Return backend identifier."""
         return "lret"

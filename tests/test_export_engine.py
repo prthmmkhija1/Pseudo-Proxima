@@ -469,7 +469,7 @@ class TestMarkdownExporter:
         assert result.format == ExportFormat.MARKDOWN
         assert output_path.exists()
 
-        content = output_path.read_text()
+        content = output_path.read_text(encoding='utf-8')
         assert f"# {sample_data.title}" in content
         assert "## Summary" in content
         assert "## Insights" in content

@@ -99,18 +99,17 @@ class TestAuthenticationEndpoints:
 
     def test_login_with_valid_credentials(self, mock_auth_service):
         """Test successful login."""
-        with patch("proxima.api.auth.auth_service", mock_auth_service):
-            mock_auth_service.authenticate.return_value = {
-                "access_token": "mock-token",
-                "refresh_token": "mock-refresh",
-                "token_type": "bearer",
-                "expires_in": 3600,
-            }
-            
-            result = mock_auth_service.authenticate("user@test.com", "password")
-            
-            assert "access_token" in result
-            assert result["token_type"] == "bearer"
+        mock_auth_service.authenticate.return_value = {
+            "access_token": "mock-token",
+            "refresh_token": "mock-refresh",
+            "token_type": "bearer",
+            "expires_in": 3600,
+        }
+        
+        result = mock_auth_service.authenticate("user@test.com", "password")
+        
+        assert "access_token" in result
+        assert result["token_type"] == "bearer"
 
     def test_login_with_invalid_credentials(self, mock_auth_service):
         """Test login with invalid credentials."""

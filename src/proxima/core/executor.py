@@ -174,6 +174,9 @@ class Executor:
         runner: ExecuteFunction | None = None,
         auto_checkpoint: bool = True,
         checkpoint_interval: int = 1,  # Create checkpoint every N stages
+        benchmark_mode: bool = False,
+        benchmark_runner: Any | None = None,
+        benchmark_runs: int = 3,
     ) -> None:
         """Initialize the executor.
         
@@ -188,6 +191,9 @@ class Executor:
         self.auto_checkpoint = auto_checkpoint
         self.checkpoint_interval = checkpoint_interval
         self.logger = get_logger("executor")
+        self.benchmark_mode = benchmark_mode
+        self.benchmark_runner: Any | None = benchmark_runner
+        self._benchmark_runs: int = benchmark_runs
         
         # Execution state
         self._start_time: float = 0.0
@@ -324,7 +330,9 @@ class Executor:
                 result = self._run_with_timeout(plan, steps, timeout_seconds)
             else:
                 result = self._run_steps(plan, steps)
-            
+            benchmark_data = self._maybe_run_benchmark(plan)
+            if benchmark_data is not None:
+                result.metadata["benchmark"] = benchmark_data
             return result
             
         except TimeoutError as exc:
@@ -829,6 +837,47 @@ class Executor:
         
         self._cleanup_callbacks.clear()
 
+    # ==================== BENCHMARK INTEGRATION ====================
+
+    def enable_benchmarking(self, *, runner: Any, runs: int | None = None) -> None:
+        """Enable benchmarking for subsequent executions."""
+        self.benchmark_mode = True
+        self.benchmark_runner = runner
+        if runs is not None:
+            self._benchmark_runs = runs
+
+    def _maybe_run_benchmark(self, plan: dict[str, Any]) -> dict[str, Any] | None:
+        """Run benchmark suite if benchmarking is enabled and data is available."""
+        if not self.benchmark_mode or self.benchmark_runner is None:
+            return None
+
+        try:
+            # Extract circuit and backend hints from plan
+            task = plan.get("task", {}) if isinstance(plan, dict) else {}
+            circuit = plan.get("circuit") or task.get("circuit") or plan.get("benchmark_circuit")
+            backend = (
+                plan.get("backend")
+                or task.get("backend")
+                or plan.get("benchmark_backend")
+                or task.get("backend_name")
+            )
+            runs = plan.get("benchmark_runs", self._benchmark_runs)
+            shots = plan.get("shots") or task.get("shots") or 1024
+
+            if circuit is None or backend is None:
+                return None
+
+            bench_result = self.benchmark_runner.run_benchmark_suite(
+                circuit=circuit,
+                backend_name=backend,
+                num_runs=runs,
+                shots=shots,
+            )
+            return bench_result.to_dict()
+        except Exception as exc:  # pragma: no cover - defensive guard
+            self.logger.warning("benchmark.failed", error=str(exc))
+            return None
+
 
 # ==============================================================================
 # ASYNC EXECUTOR
@@ -943,3 +992,407 @@ def run_plan(
     """
     executor = create_executor(runner)
     return executor.run(plan, timeout_seconds)
+
+
+# ==============================================================================
+# EXECUTION METRICS COLLECTOR
+# ==============================================================================
+
+
+@dataclass
+class ExecutionMetrics:
+    """Detailed metrics for execution performance analysis."""
+    
+    total_duration_ms: float = 0.0
+    planning_duration_ms: float = 0.0
+    execution_duration_ms: float = 0.0
+    cleanup_duration_ms: float = 0.0
+    
+    stages_completed: int = 0
+    stages_failed: int = 0
+    stages_skipped: int = 0
+    
+    checkpoints_created: int = 0
+    pause_count: int = 0
+    resume_count: int = 0
+    
+    memory_peak_mb: float = 0.0
+    cpu_usage_percent: float = 0.0
+    
+    retries: int = 0
+    timeouts: int = 0
+    
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary."""
+        return {
+            "total_duration_ms": self.total_duration_ms,
+            "planning_duration_ms": self.planning_duration_ms,
+            "execution_duration_ms": self.execution_duration_ms,
+            "cleanup_duration_ms": self.cleanup_duration_ms,
+            "stages_completed": self.stages_completed,
+            "stages_failed": self.stages_failed,
+            "stages_skipped": self.stages_skipped,
+            "checkpoints_created": self.checkpoints_created,
+            "pause_count": self.pause_count,
+            "resume_count": self.resume_count,
+            "memory_peak_mb": self.memory_peak_mb,
+            "cpu_usage_percent": self.cpu_usage_percent,
+            "retries": self.retries,
+            "timeouts": self.timeouts,
+        }
+
+
+class ExecutionMetricsCollector:
+    """Collects detailed metrics during execution.
+    
+    Provides granular timing and resource usage data for
+    performance analysis and optimization.
+    """
+    
+    def __init__(self) -> None:
+        """Initialize metrics collector."""
+        self._metrics = ExecutionMetrics()
+        self._stage_times: dict[str, float] = {}
+        self._phase_start: dict[str, float] = {}
+        
+    def start_phase(self, phase_name: str) -> None:
+        """Start timing a phase."""
+        self._phase_start[phase_name] = time.time()
+    
+    def end_phase(self, phase_name: str) -> float:
+        """End timing a phase and return duration."""
+        if phase_name not in self._phase_start:
+            return 0.0
+        
+        duration_ms = (time.time() - self._phase_start[phase_name]) * 1000
+        
+        if phase_name == "planning":
+            self._metrics.planning_duration_ms = duration_ms
+        elif phase_name == "execution":
+            self._metrics.execution_duration_ms = duration_ms
+        elif phase_name == "cleanup":
+            self._metrics.cleanup_duration_ms = duration_ms
+        
+        return duration_ms
+    
+    def record_stage_completion(self, stage_name: str, duration_ms: float) -> None:
+        """Record a completed stage."""
+        self._stage_times[stage_name] = duration_ms
+        self._metrics.stages_completed += 1
+    
+    def record_stage_failure(self, stage_name: str) -> None:
+        """Record a failed stage."""
+        self._metrics.stages_failed += 1
+    
+    def record_stage_skip(self, stage_name: str) -> None:
+        """Record a skipped stage."""
+        self._metrics.stages_skipped += 1
+    
+    def record_checkpoint(self) -> None:
+        """Record checkpoint creation."""
+        self._metrics.checkpoints_created += 1
+    
+    def record_pause(self) -> None:
+        """Record execution pause."""
+        self._metrics.pause_count += 1
+    
+    def record_resume(self) -> None:
+        """Record execution resume."""
+        self._metrics.resume_count += 1
+    
+    def record_retry(self) -> None:
+        """Record a retry attempt."""
+        self._metrics.retries += 1
+    
+    def record_timeout(self) -> None:
+        """Record a timeout."""
+        self._metrics.timeouts += 1
+    
+    def set_resource_usage(self, memory_mb: float, cpu_percent: float) -> None:
+        """Set resource usage metrics."""
+        self._metrics.memory_peak_mb = max(self._metrics.memory_peak_mb, memory_mb)
+        self._metrics.cpu_usage_percent = cpu_percent
+    
+    def finalize(self) -> ExecutionMetrics:
+        """Finalize and return collected metrics."""
+        self._metrics.total_duration_ms = (
+            self._metrics.planning_duration_ms +
+            self._metrics.execution_duration_ms +
+            self._metrics.cleanup_duration_ms
+        )
+        return self._metrics
+    
+    def get_slowest_stages(self, top_n: int = 5) -> list[tuple[str, float]]:
+        """Get the slowest stages."""
+        sorted_stages = sorted(
+            self._stage_times.items(),
+            key=lambda x: x[1],
+            reverse=True
+        )
+        return sorted_stages[:top_n]
+
+
+# ==============================================================================
+# EXECUTION HOOKS
+# ==============================================================================
+
+
+class ExecutionHooks:
+    """Hook system for execution lifecycle events.
+    
+    Allows external code to react to execution events
+    without modifying the executor.
+    """
+    
+    def __init__(self) -> None:
+        """Initialize hooks."""
+        self._pre_execution: list[Callable[[dict], None]] = []
+        self._post_execution: list[Callable[[ExecutionResult], None]] = []
+        self._pre_stage: list[Callable[[str, int], None]] = []
+        self._post_stage: list[Callable[[str, int, bool], None]] = []
+        self._on_error: list[Callable[[Exception, str], None]] = []
+        self._on_checkpoint: list[Callable[[CheckpointData], None]] = []
+    
+    def add_pre_execution(self, hook: Callable[[dict], None]) -> None:
+        """Add hook to run before execution starts."""
+        self._pre_execution.append(hook)
+    
+    def add_post_execution(self, hook: Callable[[ExecutionResult], None]) -> None:
+        """Add hook to run after execution completes."""
+        self._post_execution.append(hook)
+    
+    def add_pre_stage(self, hook: Callable[[str, int], None]) -> None:
+        """Add hook to run before each stage."""
+        self._pre_stage.append(hook)
+    
+    def add_post_stage(self, hook: Callable[[str, int, bool], None]) -> None:
+        """Add hook to run after each stage (stage, index, success)."""
+        self._post_stage.append(hook)
+    
+    def add_on_error(self, hook: Callable[[Exception, str], None]) -> None:
+        """Add hook to run on errors."""
+        self._on_error.append(hook)
+    
+    def add_on_checkpoint(self, hook: Callable[[CheckpointData], None]) -> None:
+        """Add hook to run when checkpoint is created."""
+        self._on_checkpoint.append(hook)
+    
+    def fire_pre_execution(self, plan: dict) -> None:
+        """Fire pre-execution hooks."""
+        for hook in self._pre_execution:
+            try:
+                hook(plan)
+            except Exception:
+                pass
+    
+    def fire_post_execution(self, result: ExecutionResult) -> None:
+        """Fire post-execution hooks."""
+        for hook in self._post_execution:
+            try:
+                hook(result)
+            except Exception:
+                pass
+    
+    def fire_pre_stage(self, stage_name: str, index: int) -> None:
+        """Fire pre-stage hooks."""
+        for hook in self._pre_stage:
+            try:
+                hook(stage_name, index)
+            except Exception:
+                pass
+    
+    def fire_post_stage(self, stage_name: str, index: int, success: bool) -> None:
+        """Fire post-stage hooks."""
+        for hook in self._post_stage:
+            try:
+                hook(stage_name, index, success)
+            except Exception:
+                pass
+    
+    def fire_on_error(self, error: Exception, context: str) -> None:
+        """Fire error hooks."""
+        for hook in self._on_error:
+            try:
+                hook(error, context)
+            except Exception:
+                pass
+    
+    def fire_on_checkpoint(self, checkpoint: CheckpointData) -> None:
+        """Fire checkpoint hooks."""
+        for hook in self._on_checkpoint:
+            try:
+                hook(checkpoint)
+            except Exception:
+                pass
+
+
+# ==============================================================================
+# EXECUTION BATCH RUNNER
+# ==============================================================================
+
+
+@dataclass
+class BatchResult:
+    """Result of running multiple plans in batch."""
+    
+    successful: int = 0
+    failed: int = 0
+    results: list[ExecutionResult] = field(default_factory=list)
+    errors: list[tuple[int, str]] = field(default_factory=list)
+    total_duration_ms: float = 0.0
+    
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary."""
+        return {
+            "successful": self.successful,
+            "failed": self.failed,
+            "results": [r.to_dict() for r in self.results],
+            "errors": self.errors,
+            "total_duration_ms": self.total_duration_ms,
+        }
+
+
+class BatchExecutor:
+    """Execute multiple plans in sequence or parallel.
+    
+    Provides batch execution with:
+    - Sequential or parallel execution
+    - Aggregate results
+    - Error isolation
+    - Progress tracking
+    """
+    
+    def __init__(
+        self,
+        runner: ExecuteFunction | None = None,
+        parallel: bool = False,
+        max_workers: int = 4,
+        stop_on_error: bool = False,
+    ) -> None:
+        """Initialize batch executor.
+        
+        Args:
+            runner: Execution function
+            parallel: Whether to run in parallel
+            max_workers: Max parallel workers
+            stop_on_error: Stop on first error
+        """
+        self._runner = runner
+        self._parallel = parallel
+        self._max_workers = max_workers
+        self._stop_on_error = stop_on_error
+        self._progress_callbacks: list[Callable[[int, int], None]] = []
+    
+    def on_progress(self, callback: Callable[[int, int], None]) -> None:
+        """Add progress callback (completed, total)."""
+        self._progress_callbacks.append(callback)
+    
+    def _notify_progress(self, completed: int, total: int) -> None:
+        """Notify progress callbacks."""
+        for cb in self._progress_callbacks:
+            try:
+                cb(completed, total)
+            except Exception:
+                pass
+    
+    def run(
+        self,
+        plans: list[dict[str, Any]],
+        timeout_per_plan: float | None = None,
+    ) -> BatchResult:
+        """Run multiple plans.
+        
+        Args:
+            plans: List of plans to execute
+            timeout_per_plan: Timeout for each plan
+            
+        Returns:
+            BatchResult with aggregate results
+        """
+        start_time = time.time()
+        result = BatchResult()
+        
+        if self._parallel:
+            result = self._run_parallel(plans, timeout_per_plan)
+        else:
+            result = self._run_sequential(plans, timeout_per_plan)
+        
+        result.total_duration_ms = (time.time() - start_time) * 1000
+        return result
+    
+    def _run_sequential(
+        self,
+        plans: list[dict[str, Any]],
+        timeout: float | None,
+    ) -> BatchResult:
+        """Run plans sequentially."""
+        result = BatchResult()
+        total = len(plans)
+        
+        for idx, plan in enumerate(plans):
+            try:
+                executor = create_executor(self._runner)
+                exec_result = executor.run(plan, timeout)
+                result.results.append(exec_result)
+                
+                if exec_result.success:
+                    result.successful += 1
+                else:
+                    result.failed += 1
+                    result.errors.append((idx, exec_result.error or "Unknown error"))
+                    if self._stop_on_error:
+                        break
+                        
+            except Exception as e:
+                result.failed += 1
+                result.errors.append((idx, str(e)))
+                if self._stop_on_error:
+                    break
+            
+            self._notify_progress(idx + 1, total)
+        
+        return result
+    
+    def _run_parallel(
+        self,
+        plans: list[dict[str, Any]],
+        timeout: float | None,
+    ) -> BatchResult:
+        """Run plans in parallel using threading."""
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        
+        result = BatchResult()
+        results_lock = threading.Lock()
+        completed_count = [0]
+        total = len(plans)
+        
+        def run_one(idx: int, plan: dict) -> tuple[int, ExecutionResult | None, str | None]:
+            try:
+                executor = create_executor(self._runner)
+                exec_result = executor.run(plan, timeout)
+                return idx, exec_result, None
+            except Exception as e:
+                return idx, None, str(e)
+        
+        with ThreadPoolExecutor(max_workers=self._max_workers) as pool:
+            futures = {pool.submit(run_one, i, p): i for i, p in enumerate(plans)}
+            
+            for future in as_completed(futures):
+                idx, exec_result, error = future.result()
+                
+                with results_lock:
+                    if exec_result:
+                        result.results.append(exec_result)
+                        if exec_result.success:
+                            result.successful += 1
+                        else:
+                            result.failed += 1
+                            result.errors.append((idx, exec_result.error or "Unknown"))
+                    else:
+                        result.failed += 1
+                        result.errors.append((idx, error or "Unknown error"))
+                    
+                    completed_count[0] += 1
+                    self._notify_progress(completed_count[0], total)
+        
+        return result

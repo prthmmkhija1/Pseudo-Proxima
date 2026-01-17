@@ -123,7 +123,8 @@ class TestPipelineE2E:
         result = await pipeline.execute()
         
         assert result.status == PipelineStatus.FAILED
-        assert "slow" in result.failed_stages
+        # Pipeline-level timeout cancels the pipeline rather than recording stage failure
+        assert result.cancellation_reason == CancellationReason.TIMEOUT
 
     @pytest.mark.e2e
     @pytest.mark.asyncio
@@ -487,7 +488,7 @@ class TestTimerE2E:
     @pytest.mark.asyncio
     async def test_timer_tracks_execution(self):
         """Test timer tracks execution time."""
-        from proxima.core.timer import ExecutionTimer
+        from proxima.resources.timer import ExecutionTimer
         
         timer = ExecutionTimer()
         
@@ -495,7 +496,7 @@ class TestTimerE2E:
         await asyncio.sleep(0.1)
         timer.stop()
         
-        elapsed = timer.elapsed_ms
+        elapsed = timer.total_elapsed_ms
         assert elapsed >= 100  # At least 100ms
         assert elapsed < 200  # Not too much overhead
 
@@ -503,7 +504,7 @@ class TestTimerE2E:
     @pytest.mark.asyncio
     async def test_timer_with_pipeline(self):
         """Test timer integration with pipeline."""
-        from proxima.core.timer import ExecutionTimer
+        from proxima.resources.timer import ExecutionTimer
         from proxima.data.pipeline import PipelineBuilder, PipelineStatus
         
         async def timed_stage(ctx, _):
@@ -511,8 +512,8 @@ class TestTimerE2E:
             timer.start()
             await asyncio.sleep(0.05)
             timer.stop()
-            ctx.set("stage_time_ms", timer.elapsed_ms)
-            return timer.elapsed_ms
+            ctx.set("stage_time_ms", timer.total_elapsed_ms)
+            return timer.total_elapsed_ms
         
         pipeline = (
             PipelineBuilder("timer_test")

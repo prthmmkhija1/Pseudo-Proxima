@@ -24,6 +24,9 @@ from proxima.cli.workflows import (
     ValidationWorkflow,
     WorkflowContext,
 )
+from proxima.backends.registry import BackendRegistry
+from proxima.benchmarks.runner import BenchmarkRunner
+from proxima.data.benchmark_registry import BenchmarkRegistry
 from proxima.core.executor import Executor
 from proxima.core.planner import Planner
 from proxima.core.state import ExecutionStateMachine
@@ -50,6 +53,12 @@ def main(
     save_results: bool = typer.Option(
         True, "--save/--no-save", help="Save results to history"
     ),
+    benchmark: bool = typer.Option(
+        False, "--benchmark/--no-benchmark", help="Enable benchmarking alongside execution"
+    ),
+    benchmark_runs: int = typer.Option(
+        3, "--benchmark-runs", help="Number of benchmark runs when benchmarking is enabled"
+    ),
 ):
     """Plan (via model) and execute a run.
 
@@ -68,6 +77,16 @@ def main(
 
     logger = get_logger("cli.run")
     effective_backend = backend or settings.backends.default_backend
+
+    # Prepare benchmarking dependencies if requested
+    bench_runner: BenchmarkRunner | None = None
+    bench_registry: BenchmarkRegistry | None = None
+    bench_backend_registry: BackendRegistry | None = None
+    if benchmark:
+        bench_backend_registry = BackendRegistry()
+        bench_backend_registry.discover()
+        bench_registry = BenchmarkRegistry()
+        bench_runner = BenchmarkRunner(bench_backend_registry, results_storage=bench_registry)
 
     if verbose >= 2:
         typer.echo(f"[DEBUG] Starting run with backend: {effective_backend}")
@@ -174,6 +193,8 @@ def main(
             fsm = ExecutionStateMachine()
             planner = Planner(fsm)
             executor = Executor(fsm, runner=runner_func)
+            if bench_runner:
+                executor.enable_benchmarking(runner=bench_runner, runs=benchmark_runs)
             progress.advance()
 
             # Step 2: Plan
@@ -182,6 +203,9 @@ def main(
             plan["backend"] = effective_backend
             plan["shots"] = shots or 1024
             plan["objective"] = objective
+            plan["benchmark"] = benchmark
+            plan["benchmark_runs"] = benchmark_runs
+            plan["benchmark_backend"] = effective_backend
             if timeout is not None:
                 plan["timeout_seconds"] = timeout
             progress.advance()
@@ -218,6 +242,20 @@ def main(
                 "result": result,
             }
 
+            benchmark_summary: dict[str, Any] | None = None
+            if benchmark and hasattr(result, "metadata"):
+                bench_payload = result.metadata.get("benchmark") if isinstance(result.metadata, dict) else None
+                if isinstance(bench_payload, dict):
+                    stats = bench_payload.get("metadata", {}).get("statistics", {})
+                    benchmark_summary = {
+                        "backend": bench_payload.get("metrics", {}).get("backend_name"),
+                        "avg": stats.get("avg_time_ms", bench_payload.get("metrics", {}).get("execution_time_ms")),
+                        "min": stats.get("min_time_ms"),
+                        "max": stats.get("max_time_ms"),
+                        "runs": len(bench_payload.get("metadata", {}).get("individual_runs", [])),
+                    }
+                    execution_result["benchmark"] = bench_payload
+
             # Save to history (if enabled)
             if save_results:
                 try:
@@ -248,6 +286,15 @@ def main(
         elif not quiet:
             typer.echo(f"\n✅ State: {fsm.state}")
             typer.echo(f"⚡ Backend: {effective_backend}")
+
+            if benchmark and benchmark_summary:
+                typer.echo("\n🏁 Benchmark summary:")
+                typer.echo(
+                    f"  Avg: {benchmark_summary.get('avg', 0):.2f} ms | "
+                    f"Min: {benchmark_summary.get('min', 0):.2f} ms | "
+                    f"Max: {benchmark_summary.get('max', 0):.2f} ms | "
+                    f"Runs: {benchmark_summary.get('runs', benchmark_runs)}"
+                )
 
             if isinstance(result, dict):
                 if result.get("status") == "success":

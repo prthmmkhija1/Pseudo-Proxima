@@ -2128,9 +2128,13 @@ class QuestAdapter(BaseBackendAdapter):
 # =============================================================================
 # Module Exports
 # =============================================================================
+# Backward compatibility alias
+# =============================================================================
+QuestBackendAdapter = QuestAdapter  # Alias for backward compatibility
 
 __all__ = [
     "QuestAdapter",
+    "QuestBackendAdapter",  # Alias for backward compatibility
     "QuestConfig",
     "QuestPrecision",
     "QuestHardwareInfo",

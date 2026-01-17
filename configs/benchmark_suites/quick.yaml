@@ -1,0 +1,10 @@
+name: quick
+circuits:
+  - "bell_state"
+  - "ghz_3"
+  - "random_4"
+  - "qft_3"
+  - "grover_3"
+backends: []  # use CLI --backends or suite default
+shots: 1024
+runs: 3

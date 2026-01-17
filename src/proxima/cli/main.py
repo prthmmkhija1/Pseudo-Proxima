@@ -21,6 +21,7 @@ import typer
 from proxima.cli import utils as cli_utils
 from proxima.cli.commands import (
     agent as agent_commands,
+    benchmark as benchmark_commands,
     backends as backends_commands,
     compare as compare_commands,
     config as config_commands,
@@ -219,6 +220,7 @@ app.add_typer(run_commands.app, name="run")
 app.add_typer(backends_commands.app, name="backends")
 app.add_typer(compare_commands.app, name="compare")
 app.add_typer(history_commands.app, name="history")
+app.add_typer(benchmark_commands.app, name="benchmark")
 app.add_typer(session_commands.app, name="session")
 app.add_typer(agent_commands.app, name="agent")
 app.add_typer(ui_commands.app, name="ui")

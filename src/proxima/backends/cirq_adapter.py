@@ -826,6 +826,26 @@ class CirqBackendAdapter(BaseBackendAdapter):
         self._performance_monitor: PerformanceMonitor = PerformanceMonitor()
         self._performance_config: PerformanceConfig = PerformanceConfig()
 
+    # ------------------------------------------------------------------
+    # Benchmarking hooks
+    # ------------------------------------------------------------------
+    def prepare_for_benchmark(self, circuit: Any | None = None, shots: int | None = None) -> None:
+        """Warm up simulator and clear cached analysis for clean timing."""
+        # Drop any cached optimizer or verifier state that could carry over
+        self._circuit_optimizer = None
+        self._dm_tester = None
+        self._noise_verifier = None
+        # Reset performance monitor counters between runs
+        if hasattr(self._performance_monitor, "reset"):
+            try:
+                self._performance_monitor.reset()
+            except Exception:
+                pass
+
+    def cleanup_after_benchmark(self) -> None:
+        """No-op cleanup hook; placeholder for future resource release."""
+        return
+
     def get_name(self) -> str:
         return "cirq"
 
