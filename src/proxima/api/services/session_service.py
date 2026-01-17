@@ -372,3 +372,120 @@ class SessionService:
                 handler(data)
             except Exception as e:
                 logger.error(f"Error in event handler: {e}")
+
+    def _get_current_time(self) -> datetime:
+        """Get current time (can be mocked in tests).
+        
+        Returns:
+            Current datetime in UTC.
+        """
+        return datetime.now(timezone.utc)
+
+    def cleanup_expired_sessions(self) -> int:
+        """Public method to clean up expired sessions.
+        
+        Returns:
+            Number of sessions cleaned up.
+        """
+        return self._cleanup_expired()
+
+    def pause_session(self, session_id: str) -> dict[str, Any] | None:
+        """Pause a session.
+        
+        Args:
+            session_id: The session identifier.
+        
+        Returns:
+            Updated session or None if not found.
+        """
+        session = self._sessions.get(session_id)
+        if not session:
+            return None
+        
+        if session["status"] == "paused":
+            return session  # Already paused
+        
+        session["status"] = "paused"
+        session["last_activity"] = self._get_current_time().isoformat()
+        self.add_history_entry(session_id, "paused")
+        
+        return session
+
+    def resume_session(self, session_id: str) -> dict[str, Any] | None:
+        """Resume a paused session.
+        
+        Args:
+            session_id: The session identifier.
+        
+        Returns:
+            Updated session or None if not found.
+        """
+        session = self._sessions.get(session_id)
+        if not session:
+            return None
+        
+        if session["status"] == "active":
+            return session  # Already active
+        
+        session["status"] = "active"
+        session["last_activity"] = self._get_current_time().isoformat()
+        self.add_history_entry(session_id, "resumed")
+        
+        return session
+
+    def submit_job(
+        self,
+        session_id: str,
+        circuit: Any,
+        backend: str | None = None,
+        shots: int = 1024,
+    ) -> dict[str, Any] | None:
+        """Submit a job to a session.
+        
+        Args:
+            session_id: The session identifier.
+            circuit: The circuit to execute.
+            backend: Optional backend override.
+            shots: Number of shots.
+        
+        Returns:
+            Job data or None if session not found/inactive.
+        """
+        session = self._sessions.get(session_id)
+        if not session:
+            return None
+        
+        if session["status"] != "active":
+            return None
+        
+        job_id = str(uuid.uuid4())
+        now = self._get_current_time()
+        
+        job = {
+            "job_id": job_id,
+            "session_id": session_id,
+            "status": "pending",
+            "backend": backend or session["backend"],
+            "shots": shots,
+            "submitted_at": now.isoformat(),
+            "circuit": str(circuit),
+        }
+        
+        self.add_job_to_session(session_id, job_id)
+        self.touch_session(session_id)
+        
+        return job
+
+    def get_session_history(self, session_id: str) -> list[dict[str, Any]]:
+        """Get session history.
+        
+        Args:
+            session_id: The session identifier.
+        
+        Returns:
+            List of history entries.
+        """
+        session = self._sessions.get(session_id)
+        if not session:
+            return []
+        return session.get("history", [])
