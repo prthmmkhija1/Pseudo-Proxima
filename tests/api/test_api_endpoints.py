@@ -8,6 +8,15 @@ import pytest
 from unittest.mock import Mock, patch, MagicMock
 from datetime import datetime, timezone
 
+# Check if fastapi is available
+try:
+    import fastapi
+    HAS_FASTAPI = True
+except ImportError:
+    HAS_FASTAPI = False
+
+pytestmark = pytest.mark.skipif(not HAS_FASTAPI, reason="fastapi not installed")
+
 
 # =============================================================================
 # Fixtures

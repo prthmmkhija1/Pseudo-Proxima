@@ -12,6 +12,15 @@ from unittest.mock import Mock, patch, AsyncMock
 from datetime import datetime, timezone, timedelta
 from typing import Dict, Any
 
+# Check if fastapi is available
+try:
+    import fastapi
+    HAS_FASTAPI = True
+except ImportError:
+    HAS_FASTAPI = False
+
+pytestmark = pytest.mark.skipif(not HAS_FASTAPI, reason="fastapi not installed")
+
 
 # =============================================================================
 # Fixtures
