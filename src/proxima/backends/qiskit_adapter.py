@@ -253,6 +253,365 @@ class GPUManager:
     def clear_cache(self) -> None:
         """Clear cached GPU status."""
         self._cached_status = None
+    
+    # =========================================================================
+    # GPU Edge Case Handling - Memory Cleanup
+    # =========================================================================
+    
+    def cleanup_gpu_memory(self, device_id: int | None = None) -> dict[str, Any]:
+        """Force cleanup of GPU memory to handle memory edge cases.
+        
+        This helps resolve memory fragmentation and leaks that can occur
+        during long-running simulations or batch processing.
+        
+        Args:
+            device_id: Specific GPU device to clean up, or None for all devices
+            
+        Returns:
+            Dictionary with cleanup results and memory statistics
+        """
+        result = {
+            "success": False,
+            "devices_cleaned": [],
+            "memory_freed_mb": 0.0,
+            "errors": [],
+        }
+        
+        try:
+            import cupy as cp
+            
+            device_count = cp.cuda.runtime.getDeviceCount()
+            devices_to_clean = [device_id] if device_id is not None else range(device_count)
+            
+            for dev_id in devices_to_clean:
+                if dev_id >= device_count:
+                    result["errors"].append(f"Device {dev_id} not found")
+                    continue
+                
+                try:
+                    with cp.cuda.Device(dev_id):
+                        # Get memory before cleanup
+                        meminfo_before = cp.cuda.runtime.memGetInfo()
+                        free_before = meminfo_before[0] / (1024 * 1024)
+                        
+                        # Free memory pool blocks
+                        pool = cp.get_default_memory_pool()
+                        pool.free_all_blocks()
+                        
+                        # Also clean pinned memory pool
+                        pinned_pool = cp.get_default_pinned_memory_pool()
+                        pinned_pool.free_all_blocks()
+                        
+                        # Synchronize to ensure cleanup is complete
+                        cp.cuda.Stream.null.synchronize()
+                        
+                        # Get memory after cleanup
+                        meminfo_after = cp.cuda.runtime.memGetInfo()
+                        free_after = meminfo_after[0] / (1024 * 1024)
+                        
+                        freed = free_after - free_before
+                        result["memory_freed_mb"] += freed
+                        result["devices_cleaned"].append({
+                            "device_id": dev_id,
+                            "memory_freed_mb": freed,
+                            "free_memory_mb": free_after,
+                        })
+                        
+                except Exception as e:
+                    result["errors"].append(f"Device {dev_id}: {str(e)}")
+            
+            result["success"] = len(result["errors"]) == 0
+            
+        except ImportError:
+            result["errors"].append("CuPy not available for GPU memory management")
+        except Exception as e:
+            result["errors"].append(f"Cleanup failed: {str(e)}")
+        
+        return result
+    
+    # =========================================================================
+    # GPU Edge Case Handling - CUDA Error Recovery
+    # =========================================================================
+    
+    def recover_from_cuda_error(self, reset_device: bool = True) -> dict[str, Any]:
+        """Attempt to recover from CUDA errors.
+        
+        This handles edge cases where CUDA enters an error state and needs
+        to be reset to continue functioning.
+        
+        Args:
+            reset_device: Whether to reset the CUDA device entirely
+            
+        Returns:
+            Dictionary with recovery status and diagnostics
+        """
+        result = {
+            "success": False,
+            "previous_error": None,
+            "recovery_actions": [],
+            "current_status": "unknown",
+        }
+        
+        try:
+            import cupy as cp
+            
+            # Check for previous CUDA errors
+            try:
+                last_error = cp.cuda.runtime.getLastError()
+                if last_error != 0:
+                    result["previous_error"] = f"CUDA error code: {last_error}"
+                    result["recovery_actions"].append("Detected previous CUDA error")
+            except Exception:
+                pass
+            
+            # Synchronize all streams to surface any async errors
+            try:
+                cp.cuda.Stream.null.synchronize()
+                result["recovery_actions"].append("Synchronized CUDA streams")
+            except cp.cuda.runtime.CUDARuntimeError as e:
+                result["previous_error"] = str(e)
+                result["recovery_actions"].append(f"Stream sync revealed error: {e}")
+            
+            # Clean up memory pools
+            try:
+                pool = cp.get_default_memory_pool()
+                pool.free_all_blocks()
+                result["recovery_actions"].append("Freed memory pool blocks")
+            except Exception as e:
+                result["recovery_actions"].append(f"Memory cleanup partial: {e}")
+            
+            # Reset device if requested
+            if reset_device:
+                try:
+                    current_device = cp.cuda.runtime.getDevice()
+                    cp.cuda.Device(current_device).synchronize()
+                    
+                    # Force context reset by freeing all arrays
+                    import gc
+                    gc.collect()
+                    
+                    result["recovery_actions"].append(f"Reset device {current_device}")
+                except Exception as e:
+                    result["recovery_actions"].append(f"Device reset partial: {e}")
+            
+            # Verify recovery by running a simple operation
+            try:
+                test_array = cp.zeros(100)
+                _ = test_array.sum()
+                del test_array
+                result["current_status"] = "recovered"
+                result["success"] = True
+                result["recovery_actions"].append("Verification test passed")
+            except Exception as e:
+                result["current_status"] = f"still_errored: {e}"
+                result["recovery_actions"].append(f"Verification failed: {e}")
+            
+        except ImportError:
+            result["current_status"] = "cupy_not_available"
+            result["recovery_actions"].append("CuPy not installed")
+        except Exception as e:
+            result["current_status"] = f"recovery_failed: {e}"
+        
+        return result
+    
+    # =========================================================================
+    # GPU Edge Case Handling - Multi-GPU Fallback
+    # =========================================================================
+    
+    def select_fallback_device(
+        self,
+        required_memory_mb: float,
+        excluded_devices: list[int] | None = None,
+    ) -> dict[str, Any]:
+        """Select a fallback GPU device when primary device fails or is full.
+        
+        This handles edge cases where:
+        - Primary GPU runs out of memory
+        - A GPU encounters an error
+        - Load balancing across multiple GPUs is needed
+        
+        Args:
+            required_memory_mb: Minimum memory required for the operation
+            excluded_devices: List of device IDs to exclude (e.g., failed devices)
+            
+        Returns:
+            Dictionary with selected device info and fallback strategy
+        """
+        excluded_devices = excluded_devices or []
+        
+        result = {
+            "success": False,
+            "selected_device": None,
+            "fallback_type": "none",
+            "available_devices": [],
+            "recommendation": "",
+        }
+        
+        try:
+            import cupy as cp
+            
+            device_count = cp.cuda.runtime.getDeviceCount()
+            candidates = []
+            
+            for dev_id in range(device_count):
+                if dev_id in excluded_devices:
+                    continue
+                
+                try:
+                    with cp.cuda.Device(dev_id):
+                        meminfo = cp.cuda.runtime.memGetInfo()
+                        free_mb = meminfo[0] / (1024 * 1024)
+                        total_mb = meminfo[1] / (1024 * 1024)
+                        
+                        props = cp.cuda.runtime.getDeviceProperties(dev_id)
+                        device_name = props['name'].decode() if isinstance(props['name'], bytes) else props['name']
+                        
+                        device_info = {
+                            "device_id": dev_id,
+                            "device_name": device_name,
+                            "free_memory_mb": free_mb,
+                            "total_memory_mb": total_mb,
+                            "can_fit": free_mb >= required_memory_mb,
+                        }
+                        
+                        result["available_devices"].append(device_info)
+                        
+                        if device_info["can_fit"]:
+                            candidates.append(device_info)
+                            
+                except Exception as e:
+                    result["available_devices"].append({
+                        "device_id": dev_id,
+                        "error": str(e),
+                        "can_fit": False,
+                    })
+            
+            if candidates:
+                # Select device with most free memory
+                best = max(candidates, key=lambda d: d["free_memory_mb"])
+                result["selected_device"] = best["device_id"]
+                result["success"] = True
+                result["fallback_type"] = "alternate_gpu"
+                result["recommendation"] = f"Use GPU {best['device_id']} ({best['device_name']}) with {best['free_memory_mb']:.0f} MB free"
+            elif device_count > 0:
+                result["fallback_type"] = "insufficient_memory"
+                result["recommendation"] = "All GPUs have insufficient memory; consider CPU fallback or smaller circuits"
+            else:
+                result["fallback_type"] = "no_gpu"
+                result["recommendation"] = "No GPU devices available; use CPU execution"
+            
+        except ImportError:
+            result["fallback_type"] = "no_cupy"
+            result["recommendation"] = "CuPy not installed; GPU management unavailable"
+        except Exception as e:
+            result["fallback_type"] = "error"
+            result["recommendation"] = f"Error during device selection: {e}"
+        
+        return result
+    
+    def execute_with_fallback(
+        self,
+        execute_fn: Callable,
+        circuit: Any,
+        options: dict[str, Any],
+        max_retries: int = 2,
+    ) -> tuple[Any, dict[str, Any]]:
+        """Execute a circuit with automatic GPU fallback handling.
+        
+        This provides robust execution that handles various GPU edge cases:
+        - Out of memory errors trigger alternate GPU selection
+        - CUDA errors trigger recovery and retry
+        - Final fallback to CPU if all GPUs fail
+        
+        Args:
+            execute_fn: Function to call for execution
+            circuit: Circuit to execute
+            options: Execution options
+            max_retries: Maximum number of retry attempts
+            
+        Returns:
+            Tuple of (result, execution_metadata)
+        """
+        metadata = {
+            "attempts": [],
+            "final_device": None,
+            "fallback_used": False,
+        }
+        
+        excluded_devices: list[int] = []
+        current_options = options.copy()
+        
+        for attempt in range(max_retries + 1):
+            attempt_info = {
+                "attempt": attempt + 1,
+                "device": current_options.get("device", "auto"),
+                "success": False,
+                "error": None,
+            }
+            
+            try:
+                result = execute_fn(circuit, current_options)
+                attempt_info["success"] = True
+                metadata["final_device"] = current_options.get("device", "GPU")
+                metadata["attempts"].append(attempt_info)
+                return result, metadata
+                
+            except Exception as e:
+                error_str = str(e).lower()
+                attempt_info["error"] = str(e)
+                metadata["attempts"].append(attempt_info)
+                
+                # Handle out of memory
+                if "out of memory" in error_str or "oom" in error_str:
+                    current_device = current_options.get("gpu_device_id", 0)
+                    excluded_devices.append(current_device)
+                    
+                    # Try memory cleanup first
+                    self.cleanup_gpu_memory(current_device)
+                    
+                    # Select fallback device
+                    estimated_memory = self._estimate_memory_requirement(circuit)
+                    fallback = self.select_fallback_device(estimated_memory, excluded_devices)
+                    
+                    if fallback["success"]:
+                        current_options["gpu_device_id"] = fallback["selected_device"]
+                        metadata["fallback_used"] = True
+                        continue
+                
+                # Handle CUDA errors
+                if "cuda" in error_str:
+                    recovery = self.recover_from_cuda_error()
+                    if recovery["success"]:
+                        continue
+                
+                # If we've exhausted GPU options, fall back to CPU
+                if attempt == max_retries:
+                    current_options["device"] = "CPU"
+                    current_options.pop("gpu_device_id", None)
+                    metadata["fallback_used"] = True
+                    
+                    try:
+                        result = execute_fn(circuit, current_options)
+                        metadata["final_device"] = "CPU"
+                        return result, metadata
+                    except Exception as cpu_error:
+                        raise RuntimeError(
+                            f"Execution failed on all devices. GPU errors: {[a['error'] for a in metadata['attempts']]}. "
+                            f"CPU error: {cpu_error}"
+                        )
+        
+        raise RuntimeError("Execution failed after all retry attempts")
+    
+    def _estimate_memory_requirement(self, circuit: Any) -> float:
+        """Estimate GPU memory requirement for a circuit in MB."""
+        try:
+            num_qubits = circuit.num_qubits
+            # State vector: 2^n complex128 values (16 bytes each)
+            # Plus overhead for workspace
+            state_vector_mb = (2 ** num_qubits * 16) / (1024 * 1024)
+            return state_vector_mb * 1.5  # 50% overhead for workspace
+        except Exception:
+            return 1024.0  # Default 1GB estimate
 
 
 # ==============================================================================

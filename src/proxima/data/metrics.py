@@ -208,17 +208,6 @@ class BenchmarkComparison:
         return "\n".join(lines)
 
 
-__all__ = [
-    "BenchmarkStatus",
-    "BenchmarkMetrics",
-    "BenchmarkResult",
-    "BenchmarkComparison",
-    "MetricsAggregator",
-    "PerformanceProfiler",
-    "MetricsExporter",
-]
-
-
 # =============================================================================
 # Metrics Aggregator - Statistical Analysis
 # =============================================================================
@@ -777,3 +766,1017 @@ class MetricsExporter:
             records.append(record)
 
         return pd.DataFrame(records)
+
+
+# =============================================================================
+# Custom Metrics - User-Defined Metrics System
+# =============================================================================
+
+
+class MetricType(str, Enum):
+    """Types of custom metric values."""
+
+    COUNTER = "counter"  # Monotonically increasing value
+    GAUGE = "gauge"  # Value that can go up or down
+    HISTOGRAM = "histogram"  # Distribution of values
+    TIMER = "timer"  # Duration measurements
+    RATE = "rate"  # Value per time unit
+    PERCENTAGE = "percentage"  # 0-100 value
+
+
+class MetricUnit(str, Enum):
+    """Units for custom metrics."""
+
+    NONE = ""
+    MILLISECONDS = "ms"
+    SECONDS = "s"
+    BYTES = "bytes"
+    KILOBYTES = "KB"
+    MEGABYTES = "MB"
+    GIGABYTES = "GB"
+    PERCENT = "%"
+    COUNT = "count"
+    OPERATIONS_PER_SEC = "ops/s"
+    BITS = "bits"
+    QUBITS = "qubits"
+    SHOTS = "shots"
+
+
+@dataclass
+class MetricDefinition:
+    """Definition of a custom metric.
+
+    Allows users to define their own metrics with custom
+    names, types, units, and computation logic.
+
+    Attributes:
+        name: Unique metric name.
+        display_name: Human-readable name for display.
+        description: Detailed description of the metric.
+        metric_type: Type of metric (counter, gauge, etc.).
+        unit: Unit of measurement.
+        tags: Categorization tags.
+        aggregations: Supported aggregation methods.
+        thresholds: Warning/critical thresholds.
+        formula: Optional formula string for derived metrics.
+        dependencies: Other metrics this depends on.
+
+    Example:
+        >>> metric_def = MetricDefinition(
+        ...     name="quantum_fidelity",
+        ...     display_name="Quantum Fidelity",
+        ...     description="Measure of circuit execution accuracy",
+        ...     metric_type=MetricType.GAUGE,
+        ...     unit=MetricUnit.PERCENT,
+        ...     thresholds={"warning": 95.0, "critical": 90.0}
+        ... )
+    """
+
+    name: str
+    display_name: str
+    description: str
+    metric_type: MetricType
+    unit: MetricUnit = MetricUnit.NONE
+    tags: List[str] = field(default_factory=list)
+    aggregations: List[str] = field(
+        default_factory=lambda: ["min", "max", "mean", "sum"]
+    )
+    thresholds: Dict[str, float] = field(default_factory=dict)
+    formula: Optional[str] = None
+    dependencies: List[str] = field(default_factory=list)
+    created_at: datetime = field(default_factory=datetime.utcnow)
+    version: str = "1.0"
+
+    def __post_init__(self) -> None:
+        """Validate metric definition."""
+        if not self.name:
+            raise ValueError("Metric name cannot be empty")
+        if not self.name.replace("_", "").isalnum():
+            raise ValueError(
+                f"Invalid metric name '{self.name}': use alphanumeric and underscores"
+            )
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize to dictionary."""
+        return {
+            "name": self.name,
+            "display_name": self.display_name,
+            "description": self.description,
+            "metric_type": self.metric_type.value,
+            "unit": self.unit.value,
+            "tags": self.tags,
+            "aggregations": self.aggregations,
+            "thresholds": self.thresholds,
+            "formula": self.formula,
+            "dependencies": self.dependencies,
+            "created_at": self.created_at.isoformat(),
+            "version": self.version,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "MetricDefinition":
+        """Create from dictionary."""
+        created_at = data.get("created_at")
+        if isinstance(created_at, str):
+            created_at = datetime.fromisoformat(created_at)
+        elif not isinstance(created_at, datetime):
+            created_at = datetime.utcnow()
+
+        return cls(
+            name=data["name"],
+            display_name=data.get("display_name", data["name"]),
+            description=data.get("description", ""),
+            metric_type=MetricType(data.get("metric_type", "gauge")),
+            unit=MetricUnit(data.get("unit", "")),
+            tags=data.get("tags", []),
+            aggregations=data.get("aggregations", ["min", "max", "mean", "sum"]),
+            thresholds=data.get("thresholds", {}),
+            formula=data.get("formula"),
+            dependencies=data.get("dependencies", []),
+            created_at=created_at,
+            version=data.get("version", "1.0"),
+        )
+
+
+@dataclass
+class CustomMetricValue:
+    """A single custom metric measurement.
+
+    Attributes:
+        metric_name: Name of the metric.
+        value: The measured value.
+        timestamp: When the measurement was taken.
+        labels: Key-value labels for filtering.
+        metadata: Additional context.
+    """
+
+    metric_name: str
+    value: float
+    timestamp: datetime = field(default_factory=datetime.utcnow)
+    labels: Dict[str, str] = field(default_factory=dict)
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize to dictionary."""
+        return {
+            "metric_name": self.metric_name,
+            "value": self.value,
+            "timestamp": self.timestamp.isoformat(),
+            "labels": self.labels,
+            "metadata": self.metadata,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "CustomMetricValue":
+        """Create from dictionary."""
+        ts = data.get("timestamp")
+        if isinstance(ts, str):
+            ts = datetime.fromisoformat(ts)
+        elif not isinstance(ts, datetime):
+            ts = datetime.utcnow()
+
+        return cls(
+            metric_name=data["metric_name"],
+            value=float(data["value"]),
+            timestamp=ts,
+            labels=data.get("labels", {}),
+            metadata=data.get("metadata", {}),
+        )
+
+
+class MetricCalculator:
+    """Base class for custom metric calculators.
+
+    Override the `compute` method to implement custom
+    metric computation logic.
+
+    Example:
+        >>> class FidelityCalculator(MetricCalculator):
+        ...     def compute(self, result: BenchmarkResult) -> float:
+        ...         # Custom fidelity calculation
+        ...         return result.metrics.success_rate_percent / 100
+    """
+
+    def __init__(
+        self,
+        definition: MetricDefinition,
+        config: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Initialize calculator.
+
+        Args:
+            definition: Metric definition.
+            config: Optional configuration.
+        """
+        self.definition = definition
+        self.config = config or {}
+
+    def compute(self, result: BenchmarkResult) -> Optional[float]:
+        """Compute metric value from benchmark result.
+
+        Override this method in subclasses.
+
+        Args:
+            result: Benchmark result to compute metric from.
+
+        Returns:
+            Computed metric value or None if not computable.
+        """
+        raise NotImplementedError("Subclasses must implement compute()")
+
+    def compute_batch(
+        self,
+        results: List[BenchmarkResult],
+    ) -> List[CustomMetricValue]:
+        """Compute metric for multiple results.
+
+        Args:
+            results: List of benchmark results.
+
+        Returns:
+            List of metric values.
+        """
+        values = []
+        for result in results:
+            try:
+                value = self.compute(result)
+                if value is not None:
+                    labels = {}
+                    if result.metrics:
+                        labels["backend"] = result.metrics.backend_name
+                        labels["timestamp"] = result.metrics.timestamp.isoformat()
+                    
+                    values.append(
+                        CustomMetricValue(
+                            metric_name=self.definition.name,
+                            value=value,
+                            labels=labels,
+                            metadata={"benchmark_id": result.benchmark_id},
+                        )
+                    )
+            except Exception:
+                continue
+        return values
+
+    def check_thresholds(
+        self,
+        value: float,
+    ) -> tuple[str, Optional[str]]:
+        """Check value against thresholds.
+
+        Args:
+            value: Metric value.
+
+        Returns:
+            Tuple of (status, message).
+            Status is "ok", "warning", or "critical".
+        """
+        thresholds = self.definition.thresholds
+        
+        critical = thresholds.get("critical")
+        warning = thresholds.get("warning")
+
+        if critical is not None and value <= critical:
+            return "critical", f"{self.definition.display_name} is critically low: {value}"
+        if warning is not None and value <= warning:
+            return "warning", f"{self.definition.display_name} is below threshold: {value}"
+        
+        return "ok", None
+
+
+class FormulaMetricCalculator(MetricCalculator):
+    """Calculator that uses a formula string.
+
+    Supports basic arithmetic on result fields.
+
+    Example:
+        >>> calc = FormulaMetricCalculator(
+        ...     definition=MetricDefinition(
+        ...         name="efficiency",
+        ...         display_name="Efficiency",
+        ...         description="Shots per MB",
+        ...         metric_type=MetricType.GAUGE,
+        ...         formula="throughput_shots_per_sec / memory_peak_mb"
+        ...     )
+        ... )
+    """
+
+    def compute(self, result: BenchmarkResult) -> Optional[float]:
+        """Compute metric using formula."""
+        if not self.definition.formula:
+            return None
+        if not result.metrics:
+            return None
+
+        # Build context from metrics
+        context: Dict[str, float] = {
+            "execution_time_ms": result.metrics.execution_time_ms,
+            "memory_peak_mb": result.metrics.memory_peak_mb,
+            "memory_baseline_mb": result.metrics.memory_baseline_mb,
+            "throughput_shots_per_sec": result.metrics.throughput_shots_per_sec,
+            "success_rate_percent": result.metrics.success_rate_percent,
+            "cpu_usage_percent": result.metrics.cpu_usage_percent,
+            "gpu_usage_percent": result.metrics.gpu_usage_percent or 0.0,
+        }
+
+        # Add circuit info
+        for key, val in result.metrics.circuit_info.items():
+            if isinstance(val, (int, float)):
+                context[key] = float(val)
+
+        try:
+            # Safe eval with only math operations
+            # Note: In production, use a proper expression parser
+            import math
+            safe_context = {
+                **context,
+                "abs": abs,
+                "min": min,
+                "max": max,
+                "sum": sum,
+                "sqrt": math.sqrt,
+                "log": math.log,
+                "log10": math.log10,
+                "pow": pow,
+            }
+            return float(eval(self.definition.formula, {"__builtins__": {}}, safe_context))
+        except Exception:
+            return None
+
+
+class CustomMetricsRegistry:
+    """Registry for custom metric definitions.
+
+    Manages registration, lookup, and persistence of
+    custom metric definitions.
+
+    Example:
+        >>> registry = CustomMetricsRegistry()
+        >>> registry.register(MetricDefinition(
+        ...     name="custom_metric",
+        ...     display_name="Custom Metric",
+        ...     description="My custom metric",
+        ...     metric_type=MetricType.GAUGE
+        ... ))
+        >>> metric = registry.get("custom_metric")
+    """
+
+    def __init__(self) -> None:
+        """Initialize the registry."""
+        self._definitions: Dict[str, MetricDefinition] = {}
+        self._calculators: Dict[str, MetricCalculator] = {}
+        self._load_builtins()
+
+    def _load_builtins(self) -> None:
+        """Load built-in metric definitions."""
+        builtins = [
+            MetricDefinition(
+                name="memory_efficiency",
+                display_name="Memory Efficiency",
+                description="Shots processed per MB of memory",
+                metric_type=MetricType.GAUGE,
+                unit=MetricUnit.OPERATIONS_PER_SEC,
+                formula="throughput_shots_per_sec / memory_peak_mb",
+                tags=["performance", "memory"],
+            ),
+            MetricDefinition(
+                name="cpu_memory_ratio",
+                display_name="CPU/Memory Ratio",
+                description="CPU usage relative to memory usage",
+                metric_type=MetricType.GAUGE,
+                formula="cpu_usage_percent / memory_peak_mb",
+                tags=["resource", "balance"],
+            ),
+            MetricDefinition(
+                name="execution_score",
+                display_name="Execution Score",
+                description="Combined performance score",
+                metric_type=MetricType.GAUGE,
+                unit=MetricUnit.NONE,
+                formula="success_rate_percent * (1000 / (execution_time_ms + 1))",
+                tags=["overall", "score"],
+                thresholds={"warning": 50.0, "critical": 25.0},
+            ),
+            MetricDefinition(
+                name="memory_delta",
+                display_name="Memory Delta",
+                description="Memory increase during execution",
+                metric_type=MetricType.GAUGE,
+                unit=MetricUnit.MEGABYTES,
+                formula="memory_peak_mb - memory_baseline_mb",
+                tags=["memory", "delta"],
+            ),
+            MetricDefinition(
+                name="throughput_per_cpu",
+                display_name="Throughput per CPU%",
+                description="Shots per second normalized by CPU usage",
+                metric_type=MetricType.GAUGE,
+                formula="throughput_shots_per_sec / max(cpu_usage_percent, 1)",
+                tags=["efficiency", "cpu"],
+            ),
+        ]
+
+        for defn in builtins:
+            self._definitions[defn.name] = defn
+            self._calculators[defn.name] = FormulaMetricCalculator(defn)
+
+    def register(
+        self,
+        definition: MetricDefinition,
+        calculator: Optional[MetricCalculator] = None,
+        overwrite: bool = False,
+    ) -> None:
+        """Register a custom metric.
+
+        Args:
+            definition: Metric definition.
+            calculator: Optional custom calculator.
+            overwrite: Whether to overwrite existing.
+
+        Raises:
+            ValueError: If metric exists and overwrite is False.
+        """
+        if definition.name in self._definitions and not overwrite:
+            raise ValueError(f"Metric '{definition.name}' already registered")
+
+        self._definitions[definition.name] = definition
+        
+        if calculator:
+            self._calculators[definition.name] = calculator
+        elif definition.formula:
+            self._calculators[definition.name] = FormulaMetricCalculator(definition)
+
+    def unregister(self, name: str) -> bool:
+        """Unregister a metric.
+
+        Args:
+            name: Metric name.
+
+        Returns:
+            True if metric was removed.
+        """
+        if name in self._definitions:
+            del self._definitions[name]
+            self._calculators.pop(name, None)
+            return True
+        return False
+
+    def get(self, name: str) -> Optional[MetricDefinition]:
+        """Get metric definition by name."""
+        return self._definitions.get(name)
+
+    def get_calculator(self, name: str) -> Optional[MetricCalculator]:
+        """Get calculator for metric."""
+        return self._calculators.get(name)
+
+    def list_metrics(
+        self,
+        tag: Optional[str] = None,
+        metric_type: Optional[MetricType] = None,
+    ) -> List[MetricDefinition]:
+        """List all registered metrics.
+
+        Args:
+            tag: Filter by tag.
+            metric_type: Filter by type.
+
+        Returns:
+            List of matching metric definitions.
+        """
+        metrics = list(self._definitions.values())
+
+        if tag:
+            metrics = [m for m in metrics if tag in m.tags]
+        if metric_type:
+            metrics = [m for m in metrics if m.metric_type == metric_type]
+
+        return sorted(metrics, key=lambda m: m.name)
+
+    def export_definitions(self, path: str) -> None:
+        """Export all definitions to JSON file.
+
+        Args:
+            path: Output file path.
+        """
+        data = {
+            "version": "1.0",
+            "exported_at": datetime.utcnow().isoformat(),
+            "metrics": [m.to_dict() for m in self._definitions.values()],
+        }
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+
+    def import_definitions(
+        self,
+        path: str,
+        overwrite: bool = False,
+    ) -> int:
+        """Import definitions from JSON file.
+
+        Args:
+            path: Input file path.
+            overwrite: Whether to overwrite existing.
+
+        Returns:
+            Number of metrics imported.
+        """
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        count = 0
+        for metric_data in data.get("metrics", []):
+            try:
+                definition = MetricDefinition.from_dict(metric_data)
+                self.register(definition, overwrite=overwrite)
+                count += 1
+            except (ValueError, KeyError):
+                continue
+
+        return count
+
+
+class MetricsCollector:
+    """Collector for aggregating custom metric values.
+
+    Collects metric values and provides aggregation,
+    time-series, and export capabilities.
+
+    Example:
+        >>> collector = MetricsCollector()
+        >>> collector.record("my_metric", 42.0, labels={"backend": "lret"})
+        >>> collector.record("my_metric", 45.0, labels={"backend": "lret"})
+        >>> stats = collector.aggregate("my_metric")
+    """
+
+    def __init__(
+        self,
+        registry: Optional[CustomMetricsRegistry] = None,
+        max_values_per_metric: int = 10000,
+    ) -> None:
+        """Initialize the collector.
+
+        Args:
+            registry: Optional metric registry.
+            max_values_per_metric: Maximum values to keep per metric.
+        """
+        self._registry = registry or CustomMetricsRegistry()
+        self._values: Dict[str, List[CustomMetricValue]] = {}
+        self._max_values = max_values_per_metric
+
+    @property
+    def registry(self) -> CustomMetricsRegistry:
+        """Get the metric registry."""
+        return self._registry
+
+    def record(
+        self,
+        metric_name: str,
+        value: float,
+        labels: Optional[Dict[str, str]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> CustomMetricValue:
+        """Record a metric value.
+
+        Args:
+            metric_name: Name of the metric.
+            value: Value to record.
+            labels: Optional labels.
+            metadata: Optional metadata.
+
+        Returns:
+            The recorded metric value.
+        """
+        metric_value = CustomMetricValue(
+            metric_name=metric_name,
+            value=value,
+            labels=labels or {},
+            metadata=metadata or {},
+        )
+
+        if metric_name not in self._values:
+            self._values[metric_name] = []
+
+        self._values[metric_name].append(metric_value)
+
+        # Trim if over limit
+        if len(self._values[metric_name]) > self._max_values:
+            self._values[metric_name] = self._values[metric_name][-self._max_values:]
+
+        return metric_value
+
+    def record_from_result(
+        self,
+        result: BenchmarkResult,
+        metric_names: Optional[List[str]] = None,
+    ) -> List[CustomMetricValue]:
+        """Record metrics from a benchmark result.
+
+        Uses calculators from the registry to compute values.
+
+        Args:
+            result: Benchmark result.
+            metric_names: Specific metrics to compute (all if None).
+
+        Returns:
+            List of recorded values.
+        """
+        recorded = []
+        names = metric_names or list(self._registry._calculators.keys())
+
+        for name in names:
+            calculator = self._registry.get_calculator(name)
+            if calculator:
+                try:
+                    value = calculator.compute(result)
+                    if value is not None:
+                        labels = {}
+                        if result.metrics:
+                            labels["backend"] = result.metrics.backend_name
+                        
+                        metric_value = self.record(
+                            name,
+                            value,
+                            labels=labels,
+                            metadata={"benchmark_id": result.benchmark_id},
+                        )
+                        recorded.append(metric_value)
+                except Exception:
+                    continue
+
+        return recorded
+
+    def get_values(
+        self,
+        metric_name: str,
+        labels: Optional[Dict[str, str]] = None,
+        since: Optional[datetime] = None,
+        until: Optional[datetime] = None,
+    ) -> List[CustomMetricValue]:
+        """Get recorded values for a metric.
+
+        Args:
+            metric_name: Metric name.
+            labels: Filter by labels.
+            since: Filter by start time.
+            until: Filter by end time.
+
+        Returns:
+            List of matching values.
+        """
+        values = self._values.get(metric_name, [])
+
+        if labels:
+            values = [
+                v for v in values
+                if all(v.labels.get(k) == lv for k, lv in labels.items())
+            ]
+
+        if since:
+            values = [v for v in values if v.timestamp >= since]
+
+        if until:
+            values = [v for v in values if v.timestamp <= until]
+
+        return values
+
+    def aggregate(
+        self,
+        metric_name: str,
+        labels: Optional[Dict[str, str]] = None,
+    ) -> Dict[str, float]:
+        """Aggregate metric values.
+
+        Args:
+            metric_name: Metric name.
+            labels: Optional label filter.
+
+        Returns:
+            Dictionary of aggregated statistics.
+        """
+        import statistics
+
+        values = self.get_values(metric_name, labels=labels)
+        nums = [v.value for v in values]
+
+        if not nums:
+            return {
+                "count": 0,
+                "sum": 0.0,
+                "min": 0.0,
+                "max": 0.0,
+                "mean": 0.0,
+                "median": 0.0,
+                "stdev": 0.0,
+            }
+
+        return {
+            "count": len(nums),
+            "sum": sum(nums),
+            "min": min(nums),
+            "max": max(nums),
+            "mean": statistics.mean(nums),
+            "median": statistics.median(nums),
+            "stdev": statistics.stdev(nums) if len(nums) > 1 else 0.0,
+        }
+
+    def time_series(
+        self,
+        metric_name: str,
+        labels: Optional[Dict[str, str]] = None,
+        bucket_seconds: int = 60,
+    ) -> List[Dict[str, Any]]:
+        """Get time series of metric values.
+
+        Args:
+            metric_name: Metric name.
+            labels: Optional label filter.
+            bucket_seconds: Time bucket size in seconds.
+
+        Returns:
+            List of time buckets with aggregated values.
+        """
+        values = self.get_values(metric_name, labels=labels)
+        
+        if not values:
+            return []
+
+        # Sort by timestamp
+        values = sorted(values, key=lambda v: v.timestamp)
+
+        # Bucket values
+        buckets: Dict[int, List[float]] = {}
+        for v in values:
+            bucket_ts = int(v.timestamp.timestamp()) // bucket_seconds * bucket_seconds
+            if bucket_ts not in buckets:
+                buckets[bucket_ts] = []
+            buckets[bucket_ts].append(v.value)
+
+        # Aggregate buckets
+        series = []
+        for ts, nums in sorted(buckets.items()):
+            series.append({
+                "timestamp": datetime.utcfromtimestamp(ts).isoformat(),
+                "count": len(nums),
+                "mean": sum(nums) / len(nums),
+                "min": min(nums),
+                "max": max(nums),
+            })
+
+        return series
+
+    def check_all_thresholds(self) -> List[Dict[str, Any]]:
+        """Check all metrics against their thresholds.
+
+        Returns:
+            List of threshold violations.
+        """
+        violations = []
+
+        for metric_name in self._values:
+            definition = self._registry.get(metric_name)
+            if not definition or not definition.thresholds:
+                continue
+
+            calculator = self._registry.get_calculator(metric_name)
+            if not calculator:
+                continue
+
+            values = self.get_values(metric_name)
+            if not values:
+                continue
+
+            # Check latest value
+            latest = values[-1]
+            status, message = calculator.check_thresholds(latest.value)
+
+            if status != "ok":
+                violations.append({
+                    "metric": metric_name,
+                    "status": status,
+                    "value": latest.value,
+                    "message": message,
+                    "timestamp": latest.timestamp.isoformat(),
+                    "labels": latest.labels,
+                })
+
+        return violations
+
+    def clear(self, metric_name: Optional[str] = None) -> None:
+        """Clear recorded values.
+
+        Args:
+            metric_name: Specific metric to clear (all if None).
+        """
+        if metric_name:
+            self._values.pop(metric_name, None)
+        else:
+            self._values.clear()
+
+    def export_values(
+        self,
+        path: str,
+        metric_names: Optional[List[str]] = None,
+    ) -> None:
+        """Export metric values to JSON.
+
+        Args:
+            path: Output file path.
+            metric_names: Specific metrics to export (all if None).
+        """
+        names = metric_names or list(self._values.keys())
+        
+        data = {
+            "exported_at": datetime.utcnow().isoformat(),
+            "metrics": {},
+        }
+
+        for name in names:
+            if name in self._values:
+                data["metrics"][name] = {
+                    "count": len(self._values[name]),
+                    "values": [v.to_dict() for v in self._values[name]],
+                    "aggregated": self.aggregate(name),
+                }
+
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+
+    def summary_report(self) -> str:
+        """Generate summary report of all metrics."""
+        lines = [
+            "=" * 60,
+            "CUSTOM METRICS SUMMARY",
+            "=" * 60,
+        ]
+
+        for metric_name in sorted(self._values.keys()):
+            definition = self._registry.get(metric_name)
+            display = definition.display_name if definition else metric_name
+            stats = self.aggregate(metric_name)
+
+            lines.extend([
+                "",
+                f"{display}:",
+                f"  Count: {stats['count']}",
+                f"  Mean: {stats['mean']:.4f}",
+                f"  Min: {stats['min']:.4f}",
+                f"  Max: {stats['max']:.4f}",
+                f"  Std Dev: {stats['stdev']:.4f}",
+            ])
+
+        # Check thresholds
+        violations = self.check_all_thresholds()
+        if violations:
+            lines.extend(["", "THRESHOLD VIOLATIONS:"])
+            for v in violations:
+                lines.append(f"  [{v['status'].upper()}] {v['message']}")
+
+        lines.append("=" * 60)
+        return "\n".join(lines)
+
+
+class CompositeMetric(MetricCalculator):
+    """Metric that combines multiple other metrics.
+
+    Useful for creating complex derived metrics.
+
+    Example:
+        >>> composite = CompositeMetric(
+        ...     definition=MetricDefinition(
+        ...         name="performance_index",
+        ...         display_name="Performance Index",
+        ...         description="Combined performance metric",
+        ...         metric_type=MetricType.GAUGE,
+        ...     ),
+        ...     components=["execution_score", "memory_efficiency"],
+        ...     weights=[0.7, 0.3],
+        ...     combiner=lambda vals: sum(v * w for v, w in zip(vals, [0.7, 0.3]))
+        ... )
+    """
+
+    def __init__(
+        self,
+        definition: MetricDefinition,
+        components: List[str],
+        weights: Optional[List[float]] = None,
+        combiner: Optional[callable] = None,
+        registry: Optional[CustomMetricsRegistry] = None,
+    ) -> None:
+        """Initialize composite metric.
+
+        Args:
+            definition: Metric definition.
+            components: List of component metric names.
+            weights: Optional weights for weighted average.
+            combiner: Optional custom combining function.
+            registry: Optional registry for component lookup.
+        """
+        super().__init__(definition)
+        self.components = components
+        self.weights = weights or [1.0] * len(components)
+        self.combiner = combiner
+        self._registry = registry or CustomMetricsRegistry()
+
+    def compute(self, result: BenchmarkResult) -> Optional[float]:
+        """Compute composite metric."""
+        values = []
+
+        for component_name in self.components:
+            calculator = self._registry.get_calculator(component_name)
+            if calculator:
+                try:
+                    value = calculator.compute(result)
+                    if value is not None:
+                        values.append(value)
+                except Exception:
+                    return None
+            else:
+                return None
+
+        if len(values) != len(self.components):
+            return None
+
+        if self.combiner:
+            return self.combiner(values)
+
+        # Default: weighted average
+        return sum(v * w for v, w in zip(values, self.weights)) / sum(self.weights)
+
+
+# Built-in custom metric calculators
+class EfficiencyScoreCalculator(MetricCalculator):
+    """Calculates an efficiency score based on multiple factors."""
+
+    def compute(self, result: BenchmarkResult) -> Optional[float]:
+        """Compute efficiency score."""
+        if not result.metrics or result.status != BenchmarkStatus.SUCCESS:
+            return None
+
+        m = result.metrics
+
+        # Normalize factors (higher is better)
+        time_factor = 1000 / (m.execution_time_ms + 1)  # Fast = high
+        memory_factor = 100 / (m.memory_peak_mb + 1)  # Low memory = high
+        success_factor = m.success_rate_percent / 100  # High success = high
+        throughput_factor = min(m.throughput_shots_per_sec / 100000, 1.0)  # Normalized
+
+        # Weighted combination
+        score = (
+            time_factor * 0.35 +
+            memory_factor * 0.20 +
+            success_factor * 0.25 +
+            throughput_factor * 0.20
+        ) * 100
+
+        return min(score, 100.0)
+
+
+class ResourceUtilizationCalculator(MetricCalculator):
+    """Calculates resource utilization efficiency."""
+
+    def compute(self, result: BenchmarkResult) -> Optional[float]:
+        """Compute resource utilization."""
+        if not result.metrics:
+            return None
+
+        m = result.metrics
+
+        # Calculate how efficiently resources are used
+        cpu_efficiency = min(m.cpu_usage_percent / 100, 1.0)
+        gpu_efficiency = (m.gpu_usage_percent or 0) / 100
+
+        # Memory efficiency: closer to baseline is better
+        if m.memory_peak_mb > 0:
+            memory_overhead = (m.memory_peak_mb - m.memory_baseline_mb) / m.memory_peak_mb
+            memory_efficiency = 1 - min(memory_overhead, 1.0)
+        else:
+            memory_efficiency = 0.5
+
+        # Combined utilization score
+        if m.gpu_usage_percent:
+            return (cpu_efficiency * 0.3 + gpu_efficiency * 0.4 + memory_efficiency * 0.3) * 100
+        else:
+            return (cpu_efficiency * 0.5 + memory_efficiency * 0.5) * 100
+
+
+# Update __all__ to include new exports
+__all__ = [
+    "BenchmarkStatus",
+    "BenchmarkMetrics",
+    "BenchmarkResult",
+    "BenchmarkComparison",
+    "MetricsAggregator",
+    "PerformanceProfiler",
+    "MetricsExporter",
+    "MetricType",
+    "MetricUnit",
+    "MetricDefinition",
+    "CustomMetricValue",
+    "MetricCalculator",
+    "FormulaMetricCalculator",
+    "CustomMetricsRegistry",
+    "MetricsCollector",
+    "CompositeMetric",
+    "EfficiencyScoreCalculator",
+    "ResourceUtilizationCalculator",
+]

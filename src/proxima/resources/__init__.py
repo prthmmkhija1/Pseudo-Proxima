@@ -44,6 +44,13 @@ from .consent import (
     ForceExecuteManager,
     # New: Enhanced Consent Manager
     EnhancedConsentManager,
+    # Edge case consent (3% gap)
+    ConsentConflictType,
+    ConsentEdgeCaseType,
+    ConsentConflict,
+    EdgeCaseResolution,
+    ConsentConflictResolver,
+    EdgeCaseConsentHandler,
 )
 from .control import (
     AbortException,
@@ -54,6 +61,13 @@ from .control import (
     ControlState,
     ExecutionController,
     PauseException,
+    # Distributed rollback (2% gap)
+    DistributedNodeState,
+    DistributedNode,
+    DistributedRollbackResult,
+    TwoPhaseCommitProtocol,
+    DistributedTransaction,
+    DistributedRollbackCoordinator,
 )
 from .hooks import (
     BaseConsentHandler,
@@ -121,6 +135,11 @@ from .timer import (
     ProgressTracker,
     StageInfo,
     UpdateReason,
+    # Display polish (2% gap)
+    DisplayTheme,
+    DisplayConfig,
+    DisplayFormatter,
+    LiveDisplayController,
 )
 
 __all__ = [
@@ -132,6 +151,11 @@ __all__ = [
     "DisplayController",
     "DisplayUpdate",
     "UpdateReason",
+    # Display polish (2% gap)
+    "DisplayTheme",
+    "DisplayConfig",
+    "DisplayFormatter",
+    "LiveDisplayController",
     # Monitor (Step 4.1)
     "ResourceMonitor",
     "MemoryMonitor",
@@ -183,6 +207,13 @@ __all__ = [
     "CheckpointManager",
     "AbortException",
     "PauseException",
+    # Control - Distributed Rollback (2% gap)
+    "DistributedNodeState",
+    "DistributedNode",
+    "DistributedRollbackResult",
+    "TwoPhaseCommitProtocol",
+    "DistributedTransaction",
+    "DistributedRollbackCoordinator",
     # Consent (Step 4.4)
     "ConsentManager",
     "ConsentLevel",
@@ -213,6 +244,13 @@ __all__ = [
     "ForceExecuteManager",
     # Consent - Enhanced Manager (100% Complete)
     "EnhancedConsentManager",
+    # Consent - Edge Case Handling (3% gap)
+    "ConsentConflictType",
+    "ConsentEdgeCaseType",
+    "ConsentConflict",
+    "EdgeCaseResolution",
+    "ConsentConflictResolver",
+    "EdgeCaseConsentHandler",
     # Audit Logging
     "AuditEvent",
     "AuditEventType",

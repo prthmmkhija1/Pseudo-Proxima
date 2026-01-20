@@ -828,13 +828,596 @@ class DetailedHelp:
 
 
 # =============================================================================
+# Enhanced Tab Completion with Edge Case Handling
+# =============================================================================
+
+
+@dataclass
+class CompletionContext:
+    """Context for tab completion.
+
+    Attributes:
+        line: Full input line.
+        text: Current word being completed.
+        begin_idx: Start index of current word.
+        end_idx: End index of current word.
+        words: All words in line.
+        word_idx: Index of current word.
+        in_quotes: Whether currently in quoted string.
+        quote_char: Quote character if in quotes.
+    """
+
+    line: str
+    text: str
+    begin_idx: int
+    end_idx: int
+    words: list[str] = field(default_factory=list)
+    word_idx: int = 0
+    in_quotes: bool = False
+    quote_char: str = ""
+
+
+@dataclass
+class CompletionItem:
+    """A completion suggestion.
+
+    Attributes:
+        text: Completion text.
+        display: Display text (may differ from text).
+        description: Optional description.
+        type_hint: Type hint (command, option, file, etc.).
+    """
+
+    text: str
+    display: str = ""
+    description: str = ""
+    type_hint: str = "text"
+
+    def __post_init__(self):
+        if not self.display:
+            self.display = self.text
+
+
+class CompletionCache:
+    """Cache for completion results.
+
+    Avoids repeated computation for the same prefix.
+    """
+
+    def __init__(self, max_size: int = 100, ttl_seconds: float = 30.0):
+        """Initialize cache.
+
+        Args:
+            max_size: Maximum cache entries.
+            ttl_seconds: Time-to-live for entries.
+        """
+        import time
+        self._cache: dict[str, tuple[list[str], float]] = {}
+        self._max_size = max_size
+        self._ttl = ttl_seconds
+
+    def get(self, key: str) -> list[str] | None:
+        """Get cached completions."""
+        import time
+        entry = self._cache.get(key)
+        if entry is None:
+            return None
+        completions, timestamp = entry
+        if time.time() - timestamp > self._ttl:
+            del self._cache[key]
+            return None
+        return completions
+
+    def set(self, key: str, completions: list[str]) -> None:
+        """Cache completions."""
+        import time
+        # Evict oldest if at capacity
+        if len(self._cache) >= self._max_size:
+            oldest_key = min(self._cache.keys(), key=lambda k: self._cache[k][1])
+            del self._cache[oldest_key]
+        self._cache[key] = (completions, time.time())
+
+    def clear(self) -> None:
+        """Clear the cache."""
+        self._cache.clear()
+
+
+class EnhancedCompleter:
+    """Enhanced tab completion with edge case handling.
+
+    Features:
+    - Special character escaping
+    - Quoted string handling
+    - Nested command completion
+    - Context-aware suggestions
+    - File path completion
+    - Option completion
+    - Completion caching
+    """
+
+    # Command definitions with subcommands and options
+    COMMAND_DEFS: dict[str, dict[str, Any]] = {
+        "run": {
+            "options": [
+                "--backend", "-b", "--shots", "-s", "--qubits", "-q",
+                "--timeout", "-t", "--validate", "-v", "--no-progress",
+                "--save", "--no-save", "--benchmark", "--benchmark-runs",
+            ],
+            "option_values": {
+                "--backend": ["lret", "cirq", "qiskit", "quest", "cuquantum", "qsim", "auto"],
+                "-b": ["lret", "cirq", "qiskit", "quest", "cuquantum", "qsim", "auto"],
+            },
+        },
+        "compare": {
+            "options": [
+                "--all", "--backends", "--shots", "-s", "--format", "-f",
+                "--runs", "-n", "--save", "-o",
+            ],
+            "option_values": {
+                "--backends": ["lret", "cirq", "qiskit", "quest", "cuquantum", "qsim"],
+                "--format": ["text", "json", "csv", "table"],
+                "-f": ["text", "json", "csv", "table"],
+            },
+        },
+        "backends": {
+            "subcommands": ["list", "info", "status", "select", "benchmark", "test"],
+            "options": ["--available", "--json", "--verbose"],
+        },
+        "config": {
+            "subcommands": ["show", "set", "get", "reset", "edit", "path"],
+            "options": ["--format", "-f", "--scope", "-s"],
+            "option_values": {
+                "--format": ["yaml", "json", "text"],
+                "-f": ["yaml", "json", "text"],
+                "--scope": ["user", "project", "default"],
+                "-s": ["user", "project", "default"],
+            },
+        },
+        "history": {
+            "subcommands": ["list", "show", "export", "clear", "last", "stats"],
+            "options": ["--limit", "-n", "--format", "-f", "--before", "--after"],
+        },
+        "session": {
+            "subcommands": ["list", "new", "switch", "delete", "export", "info", "close"],
+            "options": ["--name", "-n", "--format", "-f"],
+        },
+        "agent": {
+            "subcommands": ["run", "validate", "list"],
+            "options": ["--dry-run", "--verbose", "-v"],
+            "file_patterns": ["*.md"],
+        },
+        "benchmark": {
+            "subcommands": ["run", "compare", "report", "history"],
+            "options": ["--suite", "--runs", "-n", "--backends", "--format"],
+            "option_values": {
+                "--suite": ["quick", "standard", "comprehensive", "gpu"],
+            },
+        },
+        "ui": {
+            "options": ["--theme", "--session"],
+            "option_values": {
+                "--theme": ["dark", "light", "auto"],
+            },
+        },
+    }
+
+    # Special characters that need escaping
+    SPECIAL_CHARS = set(' \t\n"\'\\$`!*?[]{}|&;<>()')
+
+    def __init__(
+        self,
+        aliases: CommandAliases | None = None,
+        enable_cache: bool = True,
+    ) -> None:
+        """Initialize completer.
+
+        Args:
+            aliases: Command aliases instance.
+            enable_cache: Whether to enable completion caching.
+        """
+        self._aliases = aliases or command_aliases
+        self._cache = CompletionCache() if enable_cache else None
+        self._last_completions: list[str] = []
+        self._completion_state: int = 0
+
+    def complete(self, text: str, state: int) -> str | None:
+        """Readline completion function.
+
+        Args:
+            text: Current text being completed.
+            state: Completion state (0 for first call).
+
+        Returns:
+            Completion suggestion or None.
+        """
+        if state == 0:
+            # First call - compute completions
+            try:
+                line = ""
+                if HAS_READLINE and readline is not None:
+                    line = readline.get_line_buffer()
+                else:
+                    line = text
+
+                context = self._parse_context(line, text)
+                self._last_completions = self._get_completions(context)
+            except Exception:
+                self._last_completions = []
+
+        if state < len(self._last_completions):
+            return self._last_completions[state]
+        return None
+
+    def _parse_context(self, line: str, text: str) -> CompletionContext:
+        """Parse completion context from input line.
+
+        Args:
+            line: Full input line.
+            text: Current word being completed.
+
+        Returns:
+            CompletionContext object.
+        """
+        # Determine cursor position
+        if HAS_READLINE and readline is not None:
+            try:
+                begin_idx = readline.get_begidx()
+                end_idx = readline.get_endidx()
+            except Exception:
+                begin_idx = len(line) - len(text)
+                end_idx = len(line)
+        else:
+            begin_idx = len(line) - len(text)
+            end_idx = len(line)
+
+        # Parse words handling quotes
+        words, in_quotes, quote_char = self._tokenize_line(line[:begin_idx])
+
+        # Determine word index
+        word_idx = len(words)
+
+        return CompletionContext(
+            line=line,
+            text=text,
+            begin_idx=begin_idx,
+            end_idx=end_idx,
+            words=words,
+            word_idx=word_idx,
+            in_quotes=in_quotes,
+            quote_char=quote_char,
+        )
+
+    def _tokenize_line(
+        self, line: str
+    ) -> tuple[list[str], bool, str]:
+        """Tokenize input line handling quotes and escapes.
+
+        Args:
+            line: Input line to tokenize.
+
+        Returns:
+            Tuple of (words, in_quotes, quote_char).
+        """
+        words: list[str] = []
+        current_word = []
+        in_quotes = False
+        quote_char = ""
+        escape_next = False
+
+        for char in line:
+            if escape_next:
+                current_word.append(char)
+                escape_next = False
+                continue
+
+            if char == "\\":
+                escape_next = True
+                current_word.append(char)
+                continue
+
+            if in_quotes:
+                if char == quote_char:
+                    in_quotes = False
+                    quote_char = ""
+                else:
+                    current_word.append(char)
+            elif char in "\"'":
+                in_quotes = True
+                quote_char = char
+            elif char in " \t":
+                if current_word:
+                    words.append("".join(current_word))
+                    current_word = []
+            else:
+                current_word.append(char)
+
+        if current_word:
+            words.append("".join(current_word))
+
+        return words, in_quotes, quote_char
+
+    def _get_completions(self, context: CompletionContext) -> list[str]:
+        """Get completions for context.
+
+        Args:
+            context: Completion context.
+
+        Returns:
+            List of completion strings.
+        """
+        # Check cache
+        cache_key = f"{':'.join(context.words)}:{context.text}"
+        if self._cache:
+            cached = self._cache.get(cache_key)
+            if cached is not None:
+                return cached
+
+        completions: list[str] = []
+
+        if context.in_quotes:
+            # Inside quotes - complete file paths or values
+            completions = self._complete_in_quotes(context)
+        elif context.word_idx == 0:
+            # First word - complete commands and aliases
+            completions = self._complete_command(context.text)
+        elif context.words:
+            # Subsequent words - context-aware completion
+            completions = self._complete_argument(context)
+
+        # Filter and sort
+        completions = sorted(set(completions))
+
+        # Cache results
+        if self._cache:
+            self._cache.set(cache_key, completions)
+
+        return completions
+
+    def _complete_command(self, text: str) -> list[str]:
+        """Complete command names.
+
+        Args:
+            text: Current text.
+
+        Returns:
+            List of matching commands.
+        """
+        commands = list(self.COMMAND_DEFS.keys()) + [
+            "help", "aliases", "exit", "quit", "clear", "version", "init",
+            "status", "export", "doctor", "alias", "expand", "examples",
+        ]
+        aliases = list(self._aliases._aliases.keys())
+        all_commands = commands + aliases
+
+        text_lower = text.lower()
+        return [c for c in all_commands if c.lower().startswith(text_lower)]
+
+    def _complete_argument(self, context: CompletionContext) -> list[str]:
+        """Complete command arguments.
+
+        Args:
+            context: Completion context.
+
+        Returns:
+            List of completions.
+        """
+        if not context.words:
+            return []
+
+        # Resolve alias to actual command
+        command = context.words[0].lower()
+        alias_def = self._aliases.get(command)
+        if alias_def:
+            command = alias_def.command.split()[0]
+
+        cmd_def = self.COMMAND_DEFS.get(command, {})
+        text = context.text
+
+        # Check if completing option value
+        if len(context.words) >= 2:
+            prev_word = context.words[-1]
+            option_values = cmd_def.get("option_values", {})
+            if prev_word in option_values:
+                values = option_values[prev_word]
+                return [v for v in values if v.startswith(text)]
+
+        # Check if completing option
+        if text.startswith("-"):
+            options = cmd_def.get("options", [])
+            return [o for o in options if o.startswith(text)]
+
+        # Check if completing subcommand
+        subcommands = cmd_def.get("subcommands", [])
+        if subcommands and context.word_idx == 1:
+            return [s for s in subcommands if s.startswith(text)]
+
+        # Check if completing file
+        file_patterns = cmd_def.get("file_patterns", [])
+        if file_patterns:
+            return self._complete_files(text, file_patterns)
+
+        return []
+
+    def _complete_in_quotes(self, context: CompletionContext) -> list[str]:
+        """Complete inside quoted string.
+
+        Args:
+            context: Completion context.
+
+        Returns:
+            List of completions.
+        """
+        # Inside quotes, treat as potential file path or task description
+        text = context.text
+
+        # Try file completion
+        files = self._complete_files(text)
+        if files:
+            return files
+
+        # Suggest common circuit names
+        circuit_names = [
+            "bell state", "ghz state", "quantum teleportation",
+            "quantum fourier transform", "grover search",
+            "variational quantum eigensolver", "qaoa",
+            "random circuit", "bernstein vazirani",
+        ]
+        return [c for c in circuit_names if c.startswith(text.lower())]
+
+    def _complete_files(
+        self,
+        text: str,
+        patterns: list[str] | None = None,
+    ) -> list[str]:
+        """Complete file paths.
+
+        Args:
+            text: Current path text.
+            patterns: Optional glob patterns to filter.
+
+        Returns:
+            List of matching paths.
+        """
+        import glob
+        from pathlib import Path
+
+        # Expand ~ to home directory
+        if text.startswith("~"):
+            text = str(Path.home()) + text[1:]
+
+        # Get directory and prefix
+        path = Path(text)
+        if text.endswith(os.sep) or text.endswith("/"):
+            directory = path
+            prefix = ""
+        else:
+            directory = path.parent
+            prefix = path.name
+
+        # List matching files
+        completions = []
+        try:
+            if directory.exists():
+                for item in directory.iterdir():
+                    name = item.name
+                    if not prefix or name.startswith(prefix):
+                        # Check pattern match
+                        if patterns:
+                            import fnmatch
+                            if not any(
+                                fnmatch.fnmatch(name, p) for p in patterns
+                            ) and not item.is_dir():
+                                continue
+
+                        # Escape special characters
+                        escaped = self._escape_path(name)
+                        full_path = str(directory / escaped)
+
+                        if item.is_dir():
+                            full_path += os.sep
+
+                        completions.append(full_path)
+        except PermissionError:
+            pass
+
+        return completions
+
+    def _escape_path(self, path: str) -> str:
+        """Escape special characters in path.
+
+        Args:
+            path: Path to escape.
+
+        Returns:
+            Escaped path.
+        """
+        result = []
+        for char in path:
+            if char in self.SPECIAL_CHARS:
+                result.append("\\" + char)
+            else:
+                result.append(char)
+        return "".join(result)
+
+    def _unescape_path(self, path: str) -> str:
+        """Unescape special characters in path.
+
+        Args:
+            path: Escaped path.
+
+        Returns:
+            Unescaped path.
+        """
+        result = []
+        escape_next = False
+        for char in path:
+            if escape_next:
+                result.append(char)
+                escape_next = False
+            elif char == "\\":
+                escape_next = True
+            else:
+                result.append(char)
+        return "".join(result)
+
+    def get_display_matches(
+        self,
+        substitution: str,
+        matches: list[str],
+        longest_match_length: int,
+    ) -> None:
+        """Display matches for readline.
+
+        Called by readline to display completion options.
+
+        Args:
+            substitution: Current substitution.
+            matches: List of matches.
+            longest_match_length: Length of longest match.
+        """
+        # Group matches by type
+        commands = []
+        options = []
+        files = []
+        others = []
+
+        for match in matches:
+            if match.startswith("-"):
+                options.append(match)
+            elif os.sep in match or "/" in match:
+                files.append(match)
+            elif match in self.COMMAND_DEFS or match in self._aliases._aliases:
+                commands.append(match)
+            else:
+                others.append(match)
+
+        # Print grouped
+        console.print()
+
+        if commands:
+            console.print("[bold]Commands:[/bold] " + "  ".join(commands))
+        if options:
+            console.print("[bold]Options:[/bold] " + "  ".join(options))
+        if files:
+            console.print("[bold]Files:[/bold] " + "  ".join(files[:10]))
+            if len(files) > 10:
+                console.print(f"  ... and {len(files) - 10} more")
+        if others:
+            console.print("[bold]Other:[/bold] " + "  ".join(others))
+
+        # Reprint prompt
+        if HAS_READLINE and readline is not None:
+            console.print(f"proxima> {readline.get_line_buffer()}", end="")
+
+
+# =============================================================================
 # Interactive Shell (Feature - CLI)
 # =============================================================================
 
 
 class InteractiveShell:
     """Interactive REPL-style shell for Proxima.
-    
+
     Features:
     - Command history with readline
     - Tab completion for commands
@@ -880,6 +1463,9 @@ class InteractiveShell:
             "history": self._cmd_history,
         }
         
+        # Create enhanced completer
+        self._completer = EnhancedCompleter(aliases=self._aliases)
+        
         # Setup readline
         self._setup_readline()
     
@@ -896,9 +1482,18 @@ class InteractiveShell:
             # Set history length
             readline.set_history_length(1000)
             
-            # Setup tab completion
-            readline.set_completer(self._complete)
+            # Setup tab completion with enhanced completer
+            readline.set_completer(self._completer.complete)
+            readline.set_completer_delims(' \t\n;')  # Fewer delimiters for better path completion
             readline.parse_and_bind("tab: complete")
+            
+            # Enable display of matches hook if available
+            try:
+                readline.set_completion_display_matches_hook(
+                    self._completer.get_display_matches
+                )
+            except AttributeError:
+                pass  # Not all readline implementations support this
             
         except Exception:
             pass  # Readline not available on all platforms
@@ -914,7 +1509,7 @@ class InteractiveShell:
             pass
     
     def _complete(self, text: str, state: int) -> str | None:
-        """Tab completion function for readline.
+        """Tab completion function for readline (fallback).
         
         Args:
             text: Current text being completed
@@ -923,18 +1518,8 @@ class InteractiveShell:
         Returns:
             Completion suggestion or None
         """
-        commands = [
-            "run", "compare", "backends", "config", "history",
-            "session", "agent", "ui", "help", "aliases", "exit", "clear",
-        ]
-        aliases = list(self._aliases._aliases.keys())
-        all_completions = commands + aliases
-        
-        matches = [c for c in all_completions if c.startswith(text)]
-        
-        if state < len(matches):
-            return matches[state]
-        return None
+        # Delegate to enhanced completer
+        return self._completer.complete(text, state)
     
     def run(self) -> None:
         """Run the interactive shell."""

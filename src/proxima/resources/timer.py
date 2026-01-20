@@ -628,6 +628,569 @@ class ETACalculator:
 
 
 # =============================================================================
+# Display Polish (2% completion)
+# =============================================================================
+
+
+class DisplayTheme(Enum):
+    """Display theme options for timer output."""
+
+    MINIMAL = auto()      # Basic text only
+    STANDARD = auto()     # Standard with progress bar
+    DETAILED = auto()     # Detailed with all metrics
+    COMPACT = auto()      # Single line compact
+    RICH = auto()         # Rich formatting with colors
+
+
+@dataclass
+class DisplayConfig:
+    """Configuration for timer display polish."""
+
+    theme: DisplayTheme = DisplayTheme.STANDARD
+    show_stage_details: bool = True
+    show_eta: bool = True
+    show_progress_bar: bool = True
+    show_elapsed: bool = True
+    show_rate: bool = False
+    show_confidence: bool = False
+    progress_bar_width: int = 30
+    use_unicode: bool = True
+    use_colors: bool = True
+    update_rate_ms: float = 100.0
+    decimal_places: int = 1
+    show_memory_usage: bool = False
+    animate_spinner: bool = True
+
+
+class DisplayFormatter:
+    """Format timer output with various styles and polish.
+
+    Features:
+    - Multiple themes (minimal, standard, detailed, compact, rich)
+    - Progress bar with customizable width
+    - Unicode and ASCII mode support
+    - Color support for terminals
+    - Animated spinners
+    - Memory usage display
+    - Rate and confidence metrics
+    """
+
+    # Unicode characters for display
+    PROGRESS_FILLED = "█"
+    PROGRESS_EMPTY = "░"
+    PROGRESS_PARTIAL = ["▏", "▎", "▍", "▌", "▋", "▊", "▉"]
+
+    # ASCII fallbacks
+    PROGRESS_FILLED_ASCII = "#"
+    PROGRESS_EMPTY_ASCII = "-"
+
+    # Spinners
+    SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+    SPINNER_FRAMES_ASCII = ["|", "/", "-", "\\"]
+
+    # Status icons
+    ICONS = {
+        "running": "▶",
+        "paused": "⏸",
+        "completed": "✓",
+        "error": "✗",
+        "idle": "○",
+        "stage": "•",
+    }
+    ICONS_ASCII = {
+        "running": ">",
+        "paused": "||",
+        "completed": "[OK]",
+        "error": "[X]",
+        "idle": "o",
+        "stage": "*",
+    }
+
+    # Colors (ANSI escape codes)
+    COLORS = {
+        "reset": "\033[0m",
+        "bold": "\033[1m",
+        "dim": "\033[2m",
+        "green": "\033[32m",
+        "yellow": "\033[33m",
+        "blue": "\033[34m",
+        "magenta": "\033[35m",
+        "cyan": "\033[36m",
+        "red": "\033[31m",
+        "white": "\033[37m",
+    }
+
+    def __init__(self, config: DisplayConfig | None = None):
+        self.config = config or DisplayConfig()
+        self._spinner_index = 0
+        self._last_spinner_update = 0.0
+
+    def _icon(self, name: str) -> str:
+        """Get icon based on unicode setting."""
+        icons = self.ICONS if self.config.use_unicode else self.ICONS_ASCII
+        return icons.get(name, "")
+
+    def _color(self, name: str) -> str:
+        """Get color code if colors enabled."""
+        if not self.config.use_colors:
+            return ""
+        return self.COLORS.get(name, "")
+
+    def _reset_color(self) -> str:
+        """Get reset code if colors enabled."""
+        if not self.config.use_colors:
+            return ""
+        return self.COLORS["reset"]
+
+    def format_progress_bar(
+        self,
+        percentage: float,
+        width: int | None = None,
+    ) -> str:
+        """Format a progress bar with optional partial fill.
+
+        Args:
+            percentage: Progress percentage (0-100)
+            width: Bar width in characters
+
+        Returns:
+            Formatted progress bar string
+        """
+        width = width or self.config.progress_bar_width
+        percentage = max(0, min(100, percentage))
+
+        if self.config.use_unicode:
+            filled_char = self.PROGRESS_FILLED
+            empty_char = self.PROGRESS_EMPTY
+            partials = self.PROGRESS_PARTIAL
+        else:
+            filled_char = self.PROGRESS_FILLED_ASCII
+            empty_char = self.PROGRESS_EMPTY_ASCII
+            partials = None
+
+        # Calculate filled portion
+        fill_width = (percentage / 100) * width
+        full_blocks = int(fill_width)
+        partial_block = fill_width - full_blocks
+
+        # Build bar
+        bar = filled_char * full_blocks
+
+        # Add partial block if unicode and needed
+        if partials and partial_block > 0 and full_blocks < width:
+            partial_index = int(partial_block * len(partials))
+            bar += partials[min(partial_index, len(partials) - 1)]
+            empty_blocks = width - full_blocks - 1
+        else:
+            empty_blocks = width - full_blocks
+
+        bar += empty_char * max(0, empty_blocks)
+
+        # Add color based on percentage
+        if self.config.use_colors:
+            if percentage >= 100:
+                color = self._color("green")
+            elif percentage >= 75:
+                color = self._color("cyan")
+            elif percentage >= 50:
+                color = self._color("blue")
+            elif percentage >= 25:
+                color = self._color("yellow")
+            else:
+                color = self._color("white")
+            return f"{color}[{bar}]{self._reset_color()}"
+
+        return f"[{bar}]"
+
+    def format_time(self, seconds: float) -> str:
+        """Format time duration with appropriate units.
+
+        Args:
+            seconds: Time in seconds
+
+        Returns:
+            Formatted time string
+        """
+        if seconds < 0:
+            return "0s"
+
+        dp = self.config.decimal_places
+
+        if seconds < 1:
+            return f"{seconds * 1000:.0f}ms"
+        elif seconds < 60:
+            return f"{seconds:.{dp}f}s"
+        elif seconds < 3600:
+            minutes = int(seconds // 60)
+            secs = seconds % 60
+            return f"{minutes}m {secs:.0f}s"
+        else:
+            hours = int(seconds // 3600)
+            minutes = int((seconds % 3600) // 60)
+            return f"{hours}h {minutes}m"
+
+    def format_spinner(self) -> str:
+        """Get current spinner frame and advance.
+
+        Returns:
+            Current spinner character
+        """
+        if not self.config.animate_spinner:
+            return ""
+
+        now = time.perf_counter()
+        if now - self._last_spinner_update > 0.1:  # Update every 100ms
+            self._spinner_index = (self._spinner_index + 1) % len(
+                self.SPINNER_FRAMES if self.config.use_unicode else self.SPINNER_FRAMES_ASCII
+            )
+            self._last_spinner_update = now
+
+        frames = self.SPINNER_FRAMES if self.config.use_unicode else self.SPINNER_FRAMES_ASCII
+        return frames[self._spinner_index]
+
+    def format_rate(self, rate: float) -> str:
+        """Format progress rate.
+
+        Args:
+            rate: Rate in progress per second
+
+        Returns:
+            Formatted rate string
+        """
+        if rate <= 0:
+            return "0/s"
+        elif rate < 0.01:
+            return f"{rate * 3600:.1f}/hr"
+        elif rate < 1:
+            return f"{rate * 60:.1f}/min"
+        else:
+            return f"{rate:.1f}/s"
+
+    def format_memory(self) -> str:
+        """Format current memory usage.
+
+        Returns:
+            Formatted memory string
+        """
+        try:
+            import psutil
+            process = psutil.Process()
+            memory_mb = process.memory_info().rss / (1024 * 1024)
+            return f"Mem: {memory_mb:.0f}MB"
+        except Exception:
+            return ""
+
+    def format_stage_line(
+        self,
+        stage: StageInfo,
+        is_current: bool = False,
+    ) -> str:
+        """Format a single stage line.
+
+        Args:
+            stage: Stage information
+            is_current: Whether this is the current stage
+
+        Returns:
+            Formatted stage line
+        """
+        icon = self._icon("stage")
+        status = "..." if not stage.is_complete else self._icon("completed")
+        elapsed = self.format_time(stage.elapsed_seconds)
+
+        if is_current:
+            prefix = f"{self._color('cyan')}{icon}{self._reset_color()}"
+            name = f"{self._color('bold')}{stage.name}{self._reset_color()}"
+        else:
+            prefix = f"{self._color('dim')}{icon}{self._reset_color()}"
+            name = f"{self._color('dim')}{stage.name}{self._reset_color()}"
+
+        return f"  {prefix} {name}: {elapsed} {status}"
+
+    def format_timer_output(
+        self,
+        timer: "ExecutionTimer",
+        theme: DisplayTheme | None = None,
+    ) -> str:
+        """Format complete timer output based on theme.
+
+        Args:
+            timer: ExecutionTimer instance
+            theme: Override theme
+
+        Returns:
+            Formatted output string
+        """
+        theme = theme or self.config.theme
+
+        if theme == DisplayTheme.MINIMAL:
+            return self._format_minimal(timer)
+        elif theme == DisplayTheme.COMPACT:
+            return self._format_compact(timer)
+        elif theme == DisplayTheme.DETAILED:
+            return self._format_detailed(timer)
+        elif theme == DisplayTheme.RICH:
+            return self._format_rich(timer)
+        else:
+            return self._format_standard(timer)
+
+    def _format_minimal(self, timer: "ExecutionTimer") -> str:
+        """Minimal format: just progress and ETA."""
+        progress = timer.progress_percent
+        eta = timer.eta_display()
+        elapsed = self.format_time(timer.total_elapsed_seconds)
+        return f"{progress:.0f}% | {elapsed} | ETA: {eta}"
+
+    def _format_compact(self, timer: "ExecutionTimer") -> str:
+        """Compact single-line format."""
+        progress = timer.progress_percent
+        stage = timer.current_stage_name or "idle"
+        elapsed = self.format_time(timer.total_elapsed_seconds)
+        eta = timer.eta_display()
+
+        spinner = self.format_spinner() if not timer.is_complete else ""
+        icon = self._icon("completed") if timer.is_complete else spinner
+
+        return f"{icon} [{stage}] {progress:.0f}% | {elapsed} | {eta}"
+
+    def _format_standard(self, timer: "ExecutionTimer") -> str:
+        """Standard format with progress bar."""
+        lines = []
+
+        # Header with spinner
+        if timer.is_complete:
+            header = f"{self._icon('completed')} Execution Complete"
+        else:
+            header = f"{self.format_spinner()} Executing..."
+        lines.append(header)
+
+        # Progress bar
+        progress = timer.progress_percent
+        bar = self.format_progress_bar(progress)
+        lines.append(f"{bar} {progress:.1f}%")
+
+        # Time info
+        elapsed = self.format_time(timer.total_elapsed_seconds)
+        eta = timer.eta_display()
+        lines.append(f"Elapsed: {elapsed} | ETA: {eta}")
+
+        # Current stage
+        if timer.current_stage_name:
+            lines.append(f"Stage: {timer.current_stage_name}")
+
+        return "\n".join(lines)
+
+    def _format_detailed(self, timer: "ExecutionTimer") -> str:
+        """Detailed format with all information."""
+        lines = []
+
+        # Header
+        icon = self._icon("completed") if timer.is_complete else self._icon("running")
+        title = "Execution Complete" if timer.is_complete else "Execution in Progress"
+        lines.append(f"{self._color('bold')}{icon} {title}{self._reset_color()}")
+        lines.append("")
+
+        # Progress bar
+        progress = timer.progress_percent
+        bar = self.format_progress_bar(progress, width=40)
+        lines.append(f"{bar} {progress:.1f}%")
+        lines.append("")
+
+        # Time metrics
+        elapsed = self.format_time(timer.total_elapsed_seconds)
+        eta = timer.eta_display()
+        lines.append(f"Elapsed Time: {elapsed}")
+        lines.append(f"ETA: {eta}")
+
+        # Rate info if enabled
+        if self.config.show_rate:
+            eta_calc = timer._eta
+            stats = eta_calc.get_rate_statistics()
+            rate_str = self.format_rate(stats["current_rate"])
+            lines.append(f"Rate: {rate_str}")
+
+        # Confidence if enabled
+        if self.config.show_confidence:
+            confidence = timer._eta.confidence
+            conf_bar = self.format_progress_bar(confidence * 100, width=10)
+            lines.append(f"ETA Confidence: {conf_bar} {confidence:.0%}")
+
+        # Memory if enabled
+        if self.config.show_memory_usage:
+            mem = self.format_memory()
+            if mem:
+                lines.append(mem)
+
+        lines.append("")
+
+        # Stages
+        if self.config.show_stage_details:
+            lines.append(f"{self._color('bold')}Stages:{self._reset_color()}")
+            for stage in timer.all_stages():
+                is_current = stage.name == timer.current_stage_name
+                lines.append(self.format_stage_line(stage, is_current))
+
+        return "\n".join(lines)
+
+    def _format_rich(self, timer: "ExecutionTimer") -> str:
+        """Rich format with box drawing and colors."""
+        lines = []
+        width = 50
+
+        # Top border
+        if self.config.use_unicode:
+            lines.append("╔" + "═" * width + "╗")
+        else:
+            lines.append("+" + "-" * width + "+")
+
+        # Title
+        if timer.is_complete:
+            title = f" {self._icon('completed')} Execution Complete "
+        else:
+            title = f" {self.format_spinner()} Executing... "
+        title = title.center(width)
+
+        if self.config.use_unicode:
+            lines.append(f"║{self._color('bold')}{title}{self._reset_color()}║")
+        else:
+            lines.append(f"|{self._color('bold')}{title}{self._reset_color()}|")
+
+        # Separator
+        if self.config.use_unicode:
+            lines.append("╠" + "═" * width + "╣")
+        else:
+            lines.append("+" + "-" * width + "+")
+
+        # Progress
+        progress = timer.progress_percent
+        bar = self.format_progress_bar(progress, width=width - 12)
+        progress_line = f" {bar} {progress:5.1f}% "
+
+        if self.config.use_unicode:
+            lines.append(f"║{progress_line:^{width}}║")
+        else:
+            lines.append(f"|{progress_line:^{width}}|")
+
+        # Time info
+        elapsed = self.format_time(timer.total_elapsed_seconds)
+        eta = timer.eta_display()
+        time_line = f" Elapsed: {elapsed} | ETA: {eta} "
+
+        if self.config.use_unicode:
+            lines.append(f"║{time_line:^{width}}║")
+        else:
+            lines.append(f"|{time_line:^{width}}|")
+
+        # Current stage
+        if timer.current_stage_name:
+            stage_line = f" Stage: {timer.current_stage_name} "
+            if self.config.use_unicode:
+                lines.append(f"║{stage_line:^{width}}║")
+            else:
+                lines.append(f"|{stage_line:^{width}}|")
+
+        # Bottom border
+        if self.config.use_unicode:
+            lines.append("╚" + "═" * width + "╝")
+        else:
+            lines.append("+" + "-" * width + "+")
+
+        return "\n".join(lines)
+
+
+class LiveDisplayController:
+    """Control live display updates with anti-flicker and rate limiting.
+
+    Features:
+    - Batched updates to prevent flicker
+    - Rate limiting for smooth display
+    - Terminal clearing and cursor control
+    - Multi-line update support
+    - Thread-safe updates
+    """
+
+    def __init__(
+        self,
+        formatter: DisplayFormatter | None = None,
+        update_rate_ms: float = 100.0,
+        clear_on_update: bool = True,
+    ):
+        self.formatter = formatter or DisplayFormatter()
+        self._update_rate_ms = update_rate_ms
+        self._clear_on_update = clear_on_update
+        self._last_update_time = 0.0
+        self._last_output_lines = 0
+        self._lock = threading.Lock()
+        self._running = False
+        self._update_thread: threading.Thread | None = None
+        self._stop_event = threading.Event()
+
+    def should_update(self) -> bool:
+        """Check if enough time has passed for an update."""
+        now = time.perf_counter()
+        elapsed_ms = (now - self._last_update_time) * 1000
+        return elapsed_ms >= self._update_rate_ms
+
+    def update(self, content: str, force: bool = False) -> None:
+        """Update display with new content.
+
+        Args:
+            content: Content to display
+            force: Force update even if rate limited
+        """
+        if not force and not self.should_update():
+            return
+
+        with self._lock:
+            if self._clear_on_update and self._last_output_lines > 0:
+                # Move cursor up and clear lines
+                for _ in range(self._last_output_lines):
+                    print("\033[A\033[K", end="")
+
+            print(content)
+            self._last_output_lines = content.count("\n") + 1
+            self._last_update_time = time.perf_counter()
+
+    def start_live_display(
+        self,
+        timer: "ExecutionTimer",
+        theme: DisplayTheme | None = None,
+    ) -> None:
+        """Start live display updates for a timer.
+
+        Args:
+            timer: ExecutionTimer to display
+            theme: Display theme to use
+        """
+        if self._running:
+            return
+
+        self._running = True
+        self._stop_event.clear()
+
+        def update_loop():
+            while self._running and not self._stop_event.is_set():
+                output = self.formatter.format_timer_output(timer, theme)
+                self.update(output)
+                self._stop_event.wait(timeout=self._update_rate_ms / 1000)
+
+        self._update_thread = threading.Thread(target=update_loop, daemon=True)
+        self._update_thread.start()
+
+    def stop_live_display(self) -> None:
+        """Stop live display updates."""
+        self._running = False
+        self._stop_event.set()
+        if self._update_thread:
+            self._update_thread.join(timeout=1.0)
+
+    def final_display(self, timer: "ExecutionTimer") -> None:
+        """Show final display state."""
+        output = self.formatter.format_timer_output(timer, DisplayTheme.DETAILED)
+        self.update(output, force=True)
+
+
+# =============================================================================
 # Execution Timer (Main Class - Step 4.2)
 # =============================================================================
 

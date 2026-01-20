@@ -1134,11 +1134,94 @@ class QuestAdapter(BaseBackendAdapter):
     - QuadPrecision mode testing and verification
     """
 
+    # Complete gate mapping from Cirq/Qiskit to QuEST native operations
+    # This comprehensive mapping covers all standard quantum gates
     SUPPORTED_GATES = {
-        "h", "x", "y", "z", "s", "t", "sdg", "tdg",
-        "rx", "ry", "rz", "u1", "u2", "u3",
-        "cx", "cy", "cz", "swap", "iswap",
-        "ccx", "cswap",
+        # Single-qubit Pauli gates
+        "h", "x", "y", "z",
+        # Phase gates
+        "s", "t", "sdg", "tdg",
+        # Rotation gates
+        "rx", "ry", "rz",
+        # U gates (universal single-qubit)
+        "u1", "u2", "u3", "u",
+        # Two-qubit controlled gates
+        "cx", "cy", "cz", "cnot",
+        # Swap gates
+        "swap", "iswap",
+        # Three-qubit gates
+        "ccx", "cswap", "ccz", "toffoli", "fredkin",
+        # Additional rotations
+        "p", "phase", "cp", "cphase", "crx", "cry", "crz",
+        # Square root gates
+        "sx", "sxdg", "sy", "sydg",
+        # Identity and barrier
+        "id", "i", "barrier",
+        # Measurements
+        "measure", "m",
+        # Reset
+        "reset",
+        # Additional controlled gates
+        "ch", "cu1", "cu2", "cu3", "cu",
+        # Multi-controlled gates
+        "mcx", "mcy", "mcz", "mcp",
+        # Special gates
+        "ecr", "dcx", "xx_plus_yy", "xx_minus_yy",
+        "rxx", "ryy", "rzz", "rzx",
+    }
+    
+    # Gate mapping from external frameworks to QuEST primitives
+    GATE_MAPPING: dict[str, str] = {
+        # Direct mappings
+        "h": "hadamard",
+        "x": "pauliX",
+        "y": "pauliY",
+        "z": "pauliZ",
+        "s": "sGate",
+        "t": "tGate",
+        "sdg": "sGate_inv",
+        "tdg": "tGate_inv",
+        "rx": "rotateX",
+        "ry": "rotateY",
+        "rz": "rotateZ",
+        "cx": "controlledNot",
+        "cnot": "controlledNot",
+        "cy": "controlledPauliY",
+        "cz": "controlledPhaseFlip",
+        "swap": "swapGate",
+        "iswap": "iSwap",
+        "ccx": "multiControlledMultiQubitNot",
+        "toffoli": "multiControlledMultiQubitNot",
+        "cswap": "controlledSwap",
+        "fredkin": "controlledSwap",
+        # U gate decompositions
+        "u1": "phaseShift",
+        "u2": "u2_decomposed",
+        "u3": "u3_decomposed",
+        "u": "unitary_decomposed",
+        "p": "phaseShift",
+        "phase": "phaseShift",
+        # Controlled rotations
+        "crx": "controlledRotateX",
+        "cry": "controlledRotateY",
+        "crz": "controlledRotateZ",
+        "cp": "controlledPhaseShift",
+        "cphase": "controlledPhaseShift",
+        # Square root gates (decomposed)
+        "sx": "sqrtX",
+        "sxdg": "sqrtX_inv",
+        # Special operations
+        "id": "identity",
+        "i": "identity",
+        "barrier": "barrier",
+        "measure": "measure",
+        "m": "measure",
+        "reset": "collapseToOutcome",
+        # Two-qubit rotation gates
+        "rxx": "twoQubitRotateXX",
+        "ryy": "twoQubitRotateYY",
+        "rzz": "twoQubitRotateZZ",
+        "rzx": "twoQubitRotateZX",
     }
 
     MAX_QUBITS = 30
@@ -1262,6 +1345,216 @@ class QuestAdapter(BaseBackendAdapter):
             pass
         except Exception:
             pass
+
+    # =========================================================================
+    # pyQuEST API Version Detection & Compatibility
+    # =========================================================================
+    
+    def get_pyquest_api_info(self) -> dict[str, Any]:
+        """Get comprehensive pyQuEST API version and compatibility information.
+        
+        Returns:
+            Dictionary with API version details and available features
+        """
+        info = {
+            "installed": False,
+            "version": "not installed",
+            "api_version": "unknown",
+            "compatible": False,
+            "compatibility_issues": [],
+            "available_functions": [],
+            "missing_functions": [],
+            "features": {},
+        }
+        
+        try:
+            import pyQuEST
+            info["installed"] = True
+            info["version"] = getattr(pyQuEST, "__version__", "unknown")
+            
+            # Determine API version based on available functions
+            api_v1_functions = [
+                "createQureg", "destroyQureg", "hadamard", "pauliX", "pauliY", "pauliZ",
+                "rotateX", "rotateY", "rotateZ", "controlledNot", "initStateZero",
+            ]
+            
+            api_v2_functions = [
+                "create_qureg", "destroy_qureg", "apply_gate", "measure_qubit",
+                "get_statevector", "set_statevector",
+            ]
+            
+            api_v3_functions = [
+                "Qureg", "createDensityQureg", "mixDamping", "mixDephasing",
+                "applyMatrix", "createComplexMatrixN",
+            ]
+            
+            v1_count = sum(1 for f in api_v1_functions if hasattr(pyQuEST, f))
+            v2_count = sum(1 for f in api_v2_functions if hasattr(pyQuEST, f))
+            v3_count = sum(1 for f in api_v3_functions if hasattr(pyQuEST, f))
+            
+            if v3_count >= 4:
+                info["api_version"] = "3.x"
+            elif v2_count >= 4:
+                info["api_version"] = "2.x"
+            elif v1_count >= 4:
+                info["api_version"] = "1.x"
+            else:
+                info["api_version"] = "unknown"
+            
+            # Check for required functions
+            required_functions = [
+                "createQureg", "hadamard", "pauliX", "controlledNot",
+            ]
+            
+            for func in required_functions:
+                if hasattr(pyQuEST, func):
+                    info["available_functions"].append(func)
+                else:
+                    info["missing_functions"].append(func)
+                    info["compatibility_issues"].append(f"Missing required function: {func}")
+            
+            # Check feature availability
+            info["features"] = {
+                "state_vector": hasattr(pyQuEST, "createQureg"),
+                "density_matrix": hasattr(pyQuEST, "createDensityQureg"),
+                "noise_channels": hasattr(pyQuEST, "mixDamping") or hasattr(pyQuEST, "mixDephasing"),
+                "custom_matrices": hasattr(pyQuEST, "applyMatrix") or hasattr(pyQuEST, "createComplexMatrixN"),
+                "measurement": hasattr(pyQuEST, "measure") or hasattr(pyQuEST, "measureWithStats"),
+                "gpu_acceleration": hasattr(pyQuEST, "is_gpu_enabled") and pyQuEST.is_gpu_enabled() if hasattr(pyQuEST, "is_gpu_enabled") else False,
+                "mpi_distributed": hasattr(pyQuEST, "is_mpi_enabled") and pyQuEST.is_mpi_enabled() if hasattr(pyQuEST, "is_mpi_enabled") else False,
+                "openmp_threading": hasattr(pyQuEST, "get_num_threads") or hasattr(pyQuEST, "num_threads"),
+                "quad_precision": self._check_quad_precision_support(pyQuEST),
+            }
+            
+            # Determine compatibility
+            info["compatible"] = len(info["missing_functions"]) == 0
+            
+        except ImportError as e:
+            info["compatibility_issues"].append(f"Import error: {e}")
+        except Exception as e:
+            info["compatibility_issues"].append(f"Detection error: {e}")
+        
+        return info
+    
+    def _check_quad_precision_support(self, pyquest_module: Any) -> bool:
+        """Check if quad precision is supported."""
+        try:
+            if hasattr(pyquest_module, "get_precision"):
+                precision = pyquest_module.get_precision()
+                return "quad" in str(precision).lower()
+            return False
+        except Exception:
+            return False
+    
+    def verify_pyquest_compatibility(self, min_version: str = "1.0.0") -> dict[str, Any]:
+        """Verify pyQuEST is compatible with required version.
+        
+        Args:
+            min_version: Minimum required version (e.g., "1.0.0")
+            
+        Returns:
+            Dictionary with compatibility verification results
+        """
+        result = {
+            "compatible": False,
+            "installed_version": None,
+            "required_version": min_version,
+            "version_ok": False,
+            "api_ok": False,
+            "recommendations": [],
+        }
+        
+        api_info = self.get_pyquest_api_info()
+        result["installed_version"] = api_info["version"]
+        
+        if not api_info["installed"]:
+            result["recommendations"].append("Install pyQuEST: pip install pyquest")
+            return result
+        
+        # Check version compatibility
+        try:
+            from packaging import version
+            if api_info["version"] != "unknown":
+                result["version_ok"] = version.parse(api_info["version"]) >= version.parse(min_version)
+        except ImportError:
+            # Fallback version comparison
+            result["version_ok"] = api_info["version"] != "unknown"
+        except Exception:
+            result["version_ok"] = True  # Assume compatible if can't parse
+        
+        result["api_ok"] = api_info["compatible"]
+        result["compatible"] = result["version_ok"] and result["api_ok"]
+        
+        if not result["version_ok"]:
+            result["recommendations"].append(
+                f"Upgrade pyQuEST to version {min_version} or later"
+            )
+        
+        if not result["api_ok"]:
+            result["recommendations"].append(
+                f"Missing functions: {', '.join(api_info['missing_functions'])}"
+            )
+        
+        return result
+    
+    def get_gate_implementation(self, gate_name: str) -> dict[str, Any]:
+        """Get the QuEST implementation for a specific gate.
+        
+        Args:
+            gate_name: Name of the gate (e.g., 'cx', 'h', 'rz')
+            
+        Returns:
+            Dictionary with implementation details
+        """
+        gate_lower = gate_name.lower()
+        
+        result = {
+            "gate": gate_name,
+            "supported": gate_lower in self.SUPPORTED_GATES,
+            "quest_function": None,
+            "requires_decomposition": False,
+            "decomposition_gates": [],
+            "parameters": [],
+        }
+        
+        if gate_lower in self.GATE_MAPPING:
+            result["quest_function"] = self.GATE_MAPPING[gate_lower]
+            
+            # Check if it needs decomposition
+            if result["quest_function"].endswith("_decomposed"):
+                result["requires_decomposition"] = True
+                
+                # Define decompositions
+                decompositions = {
+                    "u2_decomposed": ["rz", "ry", "rz"],
+                    "u3_decomposed": ["rz", "ry", "rz"],
+                    "unitary_decomposed": ["rz", "ry", "rz"],
+                    "sqrtX": ["rx"],
+                    "sqrtX_inv": ["rx"],
+                }
+                result["decomposition_gates"] = decompositions.get(
+                    result["quest_function"], []
+                )
+        
+        # Parameter information
+        param_info = {
+            "rx": ["theta"],
+            "ry": ["theta"],
+            "rz": ["theta"],
+            "u1": ["lambda"],
+            "u2": ["phi", "lambda"],
+            "u3": ["theta", "phi", "lambda"],
+            "crx": ["theta"],
+            "cry": ["theta"],
+            "crz": ["theta"],
+            "cp": ["theta"],
+            "rxx": ["theta"],
+            "ryy": ["theta"],
+            "rzz": ["theta"],
+        }
+        result["parameters"] = param_info.get(gate_lower, [])
+        
+        return result
 
     # =========================================================================
     # BaseBackendAdapter Implementation

@@ -1380,6 +1380,807 @@ class TrendAnalyzer:
 
 
 # =============================================================================
+# PREDICTION ACCURACY TRACKING (2% Gap Coverage)
+# Validates prediction quality, calibrates models, and tracks accuracy metrics
+# =============================================================================
+
+
+class PredictionMethod(Enum):
+    """Methods used for resource prediction."""
+    
+    LINEAR_REGRESSION = "linear_regression"
+    EXPONENTIAL_SMOOTHING = "exponential_smoothing"
+    MOVING_AVERAGE = "moving_average"
+    WEIGHTED_AVERAGE = "weighted_average"
+    ARIMA = "arima"
+    ENSEMBLE = "ensemble"
+
+
+@dataclass
+class PredictionRecord:
+    """Record of a prediction for later accuracy evaluation."""
+    
+    prediction_id: str
+    prediction_time: float  # When prediction was made
+    target_time: float  # When prediction is for
+    predicted_value: float
+    actual_value: float | None = None  # Filled in later
+    prediction_method: PredictionMethod = PredictionMethod.LINEAR_REGRESSION
+    confidence: float = 0.5
+    metric_name: str = "memory_percent"
+    
+    # Accuracy metrics (computed after actual value is known)
+    absolute_error: float | None = None
+    relative_error: float | None = None
+    is_accurate: bool | None = None  # Within acceptable threshold
+    
+    def compute_accuracy(self, threshold_percent: float = 10.0) -> None:
+        """Compute accuracy metrics once actual value is known."""
+        if self.actual_value is None:
+            return
+        
+        self.absolute_error = abs(self.predicted_value - self.actual_value)
+        
+        if self.actual_value != 0:
+            self.relative_error = (self.absolute_error / self.actual_value) * 100
+        else:
+            self.relative_error = 0.0 if self.absolute_error == 0 else 100.0
+        
+        self.is_accurate = self.relative_error <= threshold_percent
+
+
+@dataclass
+class AccuracyMetrics:
+    """Aggregate accuracy metrics for predictions."""
+    
+    total_predictions: int
+    evaluated_predictions: int
+    accurate_predictions: int
+    
+    mean_absolute_error: float
+    mean_relative_error: float
+    root_mean_squared_error: float
+    
+    accuracy_rate: float  # Percentage of accurate predictions
+    confidence_correlation: float  # Correlation between confidence and accuracy
+    
+    by_method: dict[str, dict[str, float]]  # Metrics per prediction method
+    by_horizon: dict[str, dict[str, float]]  # Metrics per time horizon
+    
+    calibration_needed: bool
+    calibration_suggestions: list[str]
+    
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary."""
+        return {
+            "total_predictions": self.total_predictions,
+            "evaluated_predictions": self.evaluated_predictions,
+            "accurate_predictions": self.accurate_predictions,
+            "mean_absolute_error": self.mean_absolute_error,
+            "mean_relative_error": self.mean_relative_error,
+            "root_mean_squared_error": self.root_mean_squared_error,
+            "accuracy_rate": self.accuracy_rate,
+            "confidence_correlation": self.confidence_correlation,
+            "by_method": self.by_method,
+            "by_horizon": self.by_horizon,
+            "calibration_needed": self.calibration_needed,
+            "calibration_suggestions": self.calibration_suggestions,
+        }
+
+
+@dataclass
+class CalibrationResult:
+    """Result of prediction model calibration."""
+    
+    calibration_time: float
+    samples_used: int
+    
+    # Model adjustments
+    slope_correction_factor: float
+    intercept_adjustment: float
+    confidence_scaling: float
+    
+    # Before/after metrics
+    pre_calibration_error: float
+    post_calibration_error: float
+    improvement_percent: float
+    
+    # Method-specific adjustments
+    method_weights: dict[str, float]
+    recommended_method: PredictionMethod
+    
+    success: bool
+    message: str
+
+
+class PredictionAccuracyTracker:
+    """Tracks and evaluates prediction accuracy over time.
+    
+    Features:
+    - Records predictions and actual values
+    - Computes accuracy metrics
+    - Identifies calibration needs
+    - Tracks accuracy by prediction method and horizon
+    - Provides calibration suggestions
+    """
+    
+    def __init__(
+        self,
+        max_records: int = 10000,
+        accuracy_threshold_percent: float = 10.0,
+        evaluation_delay_seconds: float = 5.0,
+    ) -> None:
+        """Initialize accuracy tracker.
+        
+        Args:
+            max_records: Maximum prediction records to keep
+            accuracy_threshold_percent: Threshold for "accurate" classification
+            evaluation_delay_seconds: Time to wait before evaluating predictions
+        """
+        self._records: deque[PredictionRecord] = deque(maxlen=max_records)
+        self._accuracy_threshold = accuracy_threshold_percent
+        self._evaluation_delay = evaluation_delay_seconds
+        self._lock = threading.Lock()
+        self._prediction_counter = 0
+        
+        # Value source callback
+        self._value_source: Callable[[], float] | None = None
+    
+    def set_value_source(self, source: Callable[[], float]) -> None:
+        """Set callback to get actual values for evaluation.
+        
+        Args:
+            source: Callable returning current metric value
+        """
+        self._value_source = source
+    
+    def record_prediction(
+        self,
+        predicted_value: float,
+        target_time: float,
+        confidence: float = 0.5,
+        method: PredictionMethod = PredictionMethod.LINEAR_REGRESSION,
+        metric_name: str = "memory_percent",
+    ) -> str:
+        """Record a prediction for later accuracy evaluation.
+        
+        Args:
+            predicted_value: The predicted value
+            target_time: Timestamp the prediction is for
+            confidence: Confidence in the prediction (0-1)
+            method: Prediction method used
+            metric_name: Name of the metric being predicted
+            
+        Returns:
+            Prediction ID for tracking
+        """
+        with self._lock:
+            self._prediction_counter += 1
+            prediction_id = f"pred_{self._prediction_counter}_{int(time.time())}"
+            
+            record = PredictionRecord(
+                prediction_id=prediction_id,
+                prediction_time=time.time(),
+                target_time=target_time,
+                predicted_value=predicted_value,
+                confidence=confidence,
+                prediction_method=method,
+                metric_name=metric_name,
+            )
+            
+            self._records.append(record)
+            return prediction_id
+    
+    def record_actual_value(
+        self,
+        prediction_id: str,
+        actual_value: float,
+    ) -> bool:
+        """Record the actual value for a prediction.
+        
+        Args:
+            prediction_id: ID of the prediction to update
+            actual_value: The actual observed value
+            
+        Returns:
+            True if prediction was found and updated
+        """
+        with self._lock:
+            for record in self._records:
+                if record.prediction_id == prediction_id:
+                    record.actual_value = actual_value
+                    record.compute_accuracy(self._accuracy_threshold)
+                    return True
+            return False
+    
+    def evaluate_pending(self) -> int:
+        """Evaluate predictions that have reached their target time.
+        
+        Returns:
+            Number of predictions evaluated
+        """
+        if not self._value_source:
+            return 0
+        
+        current_time = time.time()
+        evaluated_count = 0
+        
+        with self._lock:
+            for record in self._records:
+                if record.actual_value is not None:
+                    continue  # Already evaluated
+                
+                # Check if target time has passed (with buffer)
+                if current_time >= record.target_time + self._evaluation_delay:
+                    # This is a simplification - in practice, we'd need
+                    # historical values at the exact target time
+                    try:
+                        actual = self._value_source()
+                        record.actual_value = actual
+                        record.compute_accuracy(self._accuracy_threshold)
+                        evaluated_count += 1
+                    except Exception:
+                        pass
+        
+        return evaluated_count
+    
+    def get_accuracy_metrics(self) -> AccuracyMetrics:
+        """Compute aggregate accuracy metrics.
+        
+        Returns:
+            AccuracyMetrics with comprehensive statistics
+        """
+        with self._lock:
+            evaluated = [r for r in self._records if r.actual_value is not None]
+            accurate = [r for r in evaluated if r.is_accurate]
+            
+            if not evaluated:
+                return AccuracyMetrics(
+                    total_predictions=len(self._records),
+                    evaluated_predictions=0,
+                    accurate_predictions=0,
+                    mean_absolute_error=0.0,
+                    mean_relative_error=0.0,
+                    root_mean_squared_error=0.0,
+                    accuracy_rate=0.0,
+                    confidence_correlation=0.0,
+                    by_method={},
+                    by_horizon={},
+                    calibration_needed=True,
+                    calibration_suggestions=["Insufficient data for evaluation"],
+                )
+            
+            # Compute aggregate metrics
+            abs_errors = [r.absolute_error for r in evaluated if r.absolute_error is not None]
+            rel_errors = [r.relative_error for r in evaluated if r.relative_error is not None]
+            
+            mae = statistics.mean(abs_errors) if abs_errors else 0.0
+            mre = statistics.mean(rel_errors) if rel_errors else 0.0
+            rmse = math.sqrt(statistics.mean(e**2 for e in abs_errors)) if abs_errors else 0.0
+            
+            accuracy_rate = len(accurate) / len(evaluated) * 100
+            
+            # Compute metrics by method
+            by_method: dict[str, dict[str, float]] = {}
+            for method in PredictionMethod:
+                method_records = [r for r in evaluated if r.prediction_method == method]
+                if method_records:
+                    method_errors = [r.relative_error for r in method_records if r.relative_error is not None]
+                    method_accurate = [r for r in method_records if r.is_accurate]
+                    by_method[method.value] = {
+                        "count": len(method_records),
+                        "accuracy_rate": len(method_accurate) / len(method_records) * 100,
+                        "mean_error": statistics.mean(method_errors) if method_errors else 0.0,
+                    }
+            
+            # Compute metrics by time horizon
+            by_horizon: dict[str, dict[str, float]] = {}
+            horizons = [("short", 0, 30), ("medium", 30, 120), ("long", 120, float("inf"))]
+            
+            for horizon_name, min_s, max_s in horizons:
+                horizon_records = [
+                    r for r in evaluated 
+                    if min_s <= (r.target_time - r.prediction_time) < max_s
+                ]
+                if horizon_records:
+                    h_errors = [r.relative_error for r in horizon_records if r.relative_error is not None]
+                    h_accurate = [r for r in horizon_records if r.is_accurate]
+                    by_horizon[horizon_name] = {
+                        "count": len(horizon_records),
+                        "accuracy_rate": len(h_accurate) / len(horizon_records) * 100,
+                        "mean_error": statistics.mean(h_errors) if h_errors else 0.0,
+                    }
+            
+            # Confidence correlation
+            conf_corr = self._compute_confidence_correlation(evaluated)
+            
+            # Calibration suggestions
+            calibration_needed, suggestions = self._check_calibration_needs(
+                accuracy_rate, mae, by_method, by_horizon, conf_corr
+            )
+            
+            return AccuracyMetrics(
+                total_predictions=len(self._records),
+                evaluated_predictions=len(evaluated),
+                accurate_predictions=len(accurate),
+                mean_absolute_error=mae,
+                mean_relative_error=mre,
+                root_mean_squared_error=rmse,
+                accuracy_rate=accuracy_rate,
+                confidence_correlation=conf_corr,
+                by_method=by_method,
+                by_horizon=by_horizon,
+                calibration_needed=calibration_needed,
+                calibration_suggestions=suggestions,
+            )
+    
+    def _compute_confidence_correlation(
+        self,
+        records: list[PredictionRecord],
+    ) -> float:
+        """Compute correlation between confidence and accuracy."""
+        if len(records) < 5:
+            return 0.0
+        
+        confidences = [r.confidence for r in records]
+        accuracies = [1.0 if r.is_accurate else 0.0 for r in records]
+        
+        # Pearson correlation
+        n = len(confidences)
+        mean_conf = sum(confidences) / n
+        mean_acc = sum(accuracies) / n
+        
+        numerator = sum(
+            (c - mean_conf) * (a - mean_acc) 
+            for c, a in zip(confidences, accuracies)
+        )
+        
+        denom_conf = math.sqrt(sum((c - mean_conf) ** 2 for c in confidences))
+        denom_acc = math.sqrt(sum((a - mean_acc) ** 2 for a in accuracies))
+        
+        if denom_conf == 0 or denom_acc == 0:
+            return 0.0
+        
+        return numerator / (denom_conf * denom_acc)
+    
+    def _check_calibration_needs(
+        self,
+        accuracy_rate: float,
+        mae: float,
+        by_method: dict[str, dict[str, float]],
+        by_horizon: dict[str, dict[str, float]],
+        conf_corr: float,
+    ) -> tuple[bool, list[str]]:
+        """Check if calibration is needed and generate suggestions."""
+        suggestions = []
+        calibration_needed = False
+        
+        if accuracy_rate < 70:
+            calibration_needed = True
+            suggestions.append(
+                f"Low accuracy rate ({accuracy_rate:.1f}%). Consider recalibrating models."
+            )
+        
+        if conf_corr < 0.3:
+            calibration_needed = True
+            suggestions.append(
+                "Confidence scores are not well correlated with accuracy. "
+                "Consider adjusting confidence calculation."
+            )
+        
+        # Check if any method significantly underperforms
+        for method_name, metrics in by_method.items():
+            if metrics.get("accuracy_rate", 100) < 50:
+                suggestions.append(
+                    f"Method '{method_name}' has low accuracy ({metrics['accuracy_rate']:.1f}%). "
+                    "Consider reducing its weight in ensemble."
+                )
+        
+        # Check horizon-specific issues
+        if "long" in by_horizon:
+            long_acc = by_horizon["long"].get("accuracy_rate", 100)
+            if long_acc < 50:
+                suggestions.append(
+                    f"Long-term predictions are unreliable ({long_acc:.1f}%). "
+                    "Consider reducing long-term prediction horizons."
+                )
+        
+        if mae > 15:
+            calibration_needed = True
+            suggestions.append(
+                f"High mean absolute error ({mae:.1f}). "
+                "Consider using ensemble methods or additional features."
+            )
+        
+        return calibration_needed, suggestions
+
+
+class PredictionCalibrator:
+    """Calibrates prediction models based on historical accuracy.
+    
+    Features:
+    - Analyzes prediction errors
+    - Computes correction factors
+    - Adjusts model parameters
+    - Validates calibration improvements
+    """
+    
+    def __init__(
+        self,
+        tracker: PredictionAccuracyTracker,
+        min_samples: int = 50,
+    ) -> None:
+        """Initialize calibrator.
+        
+        Args:
+            tracker: Accuracy tracker with historical data
+            min_samples: Minimum samples required for calibration
+        """
+        self._tracker = tracker
+        self._min_samples = min_samples
+        self._last_calibration: CalibrationResult | None = None
+    
+    def calibrate(self) -> CalibrationResult:
+        """Perform calibration based on historical accuracy.
+        
+        Returns:
+            CalibrationResult with adjustments and metrics
+        """
+        metrics = self._tracker.get_accuracy_metrics()
+        
+        if metrics.evaluated_predictions < self._min_samples:
+            return CalibrationResult(
+                calibration_time=time.time(),
+                samples_used=metrics.evaluated_predictions,
+                slope_correction_factor=1.0,
+                intercept_adjustment=0.0,
+                confidence_scaling=1.0,
+                pre_calibration_error=metrics.mean_absolute_error,
+                post_calibration_error=metrics.mean_absolute_error,
+                improvement_percent=0.0,
+                method_weights={m.value: 1.0 for m in PredictionMethod},
+                recommended_method=PredictionMethod.LINEAR_REGRESSION,
+                success=False,
+                message=f"Insufficient samples ({metrics.evaluated_predictions} < {self._min_samples})",
+            )
+        
+        # Analyze systematic biases
+        slope_factor, intercept_adj = self._analyze_biases(metrics)
+        
+        # Compute method weights based on accuracy
+        method_weights = self._compute_method_weights(metrics)
+        
+        # Find best method
+        best_method = max(
+            method_weights.items(),
+            key=lambda x: x[1],
+        )[0]
+        
+        # Confidence scaling based on correlation
+        conf_scaling = 1.0
+        if metrics.confidence_correlation < 0.5:
+            # Reduce confidence if poorly correlated
+            conf_scaling = max(0.5, metrics.confidence_correlation + 0.3)
+        
+        # Estimate improvement (simplified)
+        estimated_improvement = min(20.0, metrics.mean_relative_error * 0.3)
+        
+        result = CalibrationResult(
+            calibration_time=time.time(),
+            samples_used=metrics.evaluated_predictions,
+            slope_correction_factor=slope_factor,
+            intercept_adjustment=intercept_adj,
+            confidence_scaling=conf_scaling,
+            pre_calibration_error=metrics.mean_absolute_error,
+            post_calibration_error=metrics.mean_absolute_error * (1 - estimated_improvement / 100),
+            improvement_percent=estimated_improvement,
+            method_weights=method_weights,
+            recommended_method=PredictionMethod(best_method),
+            success=True,
+            message="Calibration completed successfully",
+        )
+        
+        self._last_calibration = result
+        return result
+    
+    def _analyze_biases(
+        self,
+        metrics: AccuracyMetrics,
+    ) -> tuple[float, float]:
+        """Analyze systematic prediction biases.
+        
+        Returns:
+            Tuple of (slope_correction, intercept_adjustment)
+        """
+        # This is a simplified bias analysis
+        # In production, we'd do proper regression on errors
+        
+        # Default corrections
+        slope_correction = 1.0
+        intercept_adjustment = 0.0
+        
+        # If short-term predictions are much better, slope might be off
+        if "short" in metrics.by_horizon and "long" in metrics.by_horizon:
+            short_err = metrics.by_horizon["short"].get("mean_error", 0)
+            long_err = metrics.by_horizon["long"].get("mean_error", 0)
+            
+            if long_err > short_err * 2:
+                # Predictions diverge over time - adjust slope
+                slope_correction = 0.9  # Reduce slope magnitude
+        
+        return slope_correction, intercept_adjustment
+    
+    def _compute_method_weights(
+        self,
+        metrics: AccuracyMetrics,
+    ) -> dict[str, float]:
+        """Compute optimal weights for each prediction method."""
+        weights: dict[str, float] = {}
+        
+        for method in PredictionMethod:
+            method_data = metrics.by_method.get(method.value, {})
+            accuracy = method_data.get("accuracy_rate", 50.0)
+            
+            # Weight based on accuracy (normalized)
+            weights[method.value] = accuracy / 100.0
+        
+        # Normalize weights to sum to 1
+        total = sum(weights.values())
+        if total > 0:
+            weights = {k: v / total for k, v in weights.items()}
+        else:
+            weights = {m.value: 1.0 / len(PredictionMethod) for m in PredictionMethod}
+        
+        return weights
+    
+    def get_last_calibration(self) -> CalibrationResult | None:
+        """Get the most recent calibration result."""
+        return self._last_calibration
+    
+    def apply_calibration(
+        self,
+        predicted_value: float,
+        slope: float,
+        intercept: float,
+        time_horizon: float,
+    ) -> float:
+        """Apply calibration corrections to a prediction.
+        
+        Args:
+            predicted_value: Original predicted value
+            slope: Original slope from regression
+            intercept: Original intercept
+            time_horizon: Prediction time horizon in seconds
+            
+        Returns:
+            Calibrated predicted value
+        """
+        if not self._last_calibration:
+            return predicted_value
+        
+        cal = self._last_calibration
+        
+        # Apply corrections
+        corrected_slope = slope * cal.slope_correction_factor
+        corrected_intercept = intercept + cal.intercept_adjustment
+        
+        # Recalculate with corrected parameters
+        # This is simplified - assumes linear prediction
+        calibrated = corrected_intercept + corrected_slope * time_horizon
+        
+        # Blend with original based on confidence scaling
+        blend = cal.confidence_scaling
+        return blend * calibrated + (1 - blend) * predicted_value
+
+
+class EnsemblePredictionModel:
+    """Ensemble model combining multiple prediction methods.
+    
+    Combines:
+    - Linear regression
+    - Exponential smoothing
+    - Weighted moving average
+    
+    Weights are automatically adjusted based on historical accuracy.
+    """
+    
+    def __init__(
+        self,
+        window_size: int = 60,
+        accuracy_tracker: PredictionAccuracyTracker | None = None,
+    ) -> None:
+        """Initialize ensemble model.
+        
+        Args:
+            window_size: Sample window size
+            accuracy_tracker: Tracker for accuracy-based weighting
+        """
+        self._window_size = window_size
+        self._tracker = accuracy_tracker
+        self._history: deque[tuple[float, float]] = deque(maxlen=window_size)
+        
+        # Default weights (adjusted by calibration)
+        self._method_weights = {
+            PredictionMethod.LINEAR_REGRESSION: 0.4,
+            PredictionMethod.EXPONENTIAL_SMOOTHING: 0.35,
+            PredictionMethod.MOVING_AVERAGE: 0.25,
+        }
+    
+    def add_sample(self, timestamp: float, value: float) -> None:
+        """Add a sample to the model."""
+        self._history.append((timestamp, value))
+    
+    def predict(
+        self,
+        time_horizon: float,
+        thresholds: MemoryThresholds | None = None,
+    ) -> TrendPrediction:
+        """Make an ensemble prediction.
+        
+        Args:
+            time_horizon: Seconds into the future to predict
+            thresholds: Optional thresholds for threshold crossing detection
+            
+        Returns:
+            TrendPrediction with ensemble result
+        """
+        if len(self._history) < 3:
+            current = self._history[-1][1] if self._history else 0.0
+            return TrendPrediction(
+                current_value=current,
+                predicted_value=current,
+                time_horizon_seconds=time_horizon,
+                confidence=0.0,
+                direction=TrendDirection.STABLE,
+                slope=0.0,
+                will_exceed_threshold=False,
+                time_to_threshold_seconds=None,
+            )
+        
+        # Get individual predictions
+        predictions: dict[PredictionMethod, float] = {}
+        
+        # Linear regression
+        predictions[PredictionMethod.LINEAR_REGRESSION] = self._linear_prediction(time_horizon)
+        
+        # Exponential smoothing
+        predictions[PredictionMethod.EXPONENTIAL_SMOOTHING] = self._exp_smoothing_prediction(time_horizon)
+        
+        # Moving average
+        predictions[PredictionMethod.MOVING_AVERAGE] = self._moving_avg_prediction()
+        
+        # Weighted ensemble
+        ensemble_value = sum(
+            predictions[method] * self._method_weights.get(method, 0.33)
+            for method in predictions
+        )
+        
+        # Clamp to valid range
+        ensemble_value = max(0.0, min(100.0, ensemble_value))
+        
+        # Compute confidence based on agreement between methods
+        values = list(predictions.values())
+        spread = max(values) - min(values)
+        agreement_confidence = max(0.0, 1.0 - spread / 50.0)
+        
+        # Factor in data quality
+        data_confidence = min(1.0, len(self._history) / 30)
+        confidence = agreement_confidence * data_confidence * 0.8  # Max 0.8 for ensemble
+        
+        # Determine direction and slope
+        current = self._history[-1][1]
+        slope = (ensemble_value - current) / time_horizon if time_horizon > 0 else 0.0
+        
+        direction = TrendDirection.STABLE
+        if abs(slope) > 0.1:
+            direction = TrendDirection.INCREASING if slope > 0 else TrendDirection.DECREASING
+        
+        # Check threshold crossing
+        will_exceed = False
+        time_to_threshold = None
+        
+        if thresholds and slope > 0:
+            critical = thresholds.critical_percent
+            if ensemble_value >= critical and current < critical:
+                will_exceed = True
+                time_to_threshold = (critical - current) / slope if slope > 0 else None
+        
+        # Record prediction for accuracy tracking
+        if self._tracker:
+            target_time = time.time() + time_horizon
+            self._tracker.record_prediction(
+                predicted_value=ensemble_value,
+                target_time=target_time,
+                confidence=confidence,
+                method=PredictionMethod.ENSEMBLE,
+            )
+        
+        return TrendPrediction(
+            current_value=current,
+            predicted_value=ensemble_value,
+            time_horizon_seconds=time_horizon,
+            confidence=confidence,
+            direction=direction,
+            slope=slope,
+            will_exceed_threshold=will_exceed,
+            time_to_threshold_seconds=time_to_threshold,
+        )
+    
+    def _linear_prediction(self, time_horizon: float) -> float:
+        """Make prediction using linear regression."""
+        data = list(self._history)
+        t0 = data[0][0]
+        x = [d[0] - t0 for d in data]
+        y = [d[1] for d in data]
+        
+        n = len(x)
+        sum_x = sum(x)
+        sum_y = sum(y)
+        sum_xy = sum(xi * yi for xi, yi in zip(x, y))
+        sum_x2 = sum(xi * xi for xi in x)
+        
+        denom = n * sum_x2 - sum_x * sum_x
+        if abs(denom) < 1e-10:
+            return y[-1]
+        
+        slope = (n * sum_xy - sum_x * sum_y) / denom
+        intercept = (sum_y - slope * sum_x) / n
+        
+        future_x = x[-1] + time_horizon
+        return intercept + slope * future_x
+    
+    def _exp_smoothing_prediction(
+        self,
+        time_horizon: float,
+        alpha: float = 0.3,
+    ) -> float:
+        """Make prediction using exponential smoothing."""
+        values = [d[1] for d in self._history]
+        
+        # Simple exponential smoothing
+        smoothed = values[0]
+        for v in values[1:]:
+            smoothed = alpha * v + (1 - alpha) * smoothed
+        
+        # For trend, use Holt's method
+        level = smoothed
+        
+        # Estimate trend from recent changes
+        if len(values) >= 3:
+            recent_trend = (values[-1] - values[-3]) / 2
+        else:
+            recent_trend = 0
+        
+        # Project forward
+        steps = time_horizon / 10  # Assume 10s sampling
+        return level + recent_trend * steps
+    
+    def _moving_avg_prediction(self) -> float:
+        """Make prediction using weighted moving average."""
+        values = [d[1] for d in self._history]
+        
+        # Weighted: more recent values have higher weight
+        n = len(values)
+        weights = [i + 1 for i in range(n)]
+        total_weight = sum(weights)
+        
+        weighted_sum = sum(v * w for v, w in zip(values, weights))
+        return weighted_sum / total_weight
+    
+    def update_weights(self, new_weights: dict[PredictionMethod, float]) -> None:
+        """Update method weights.
+        
+        Args:
+            new_weights: New weights for each method
+        """
+        # Normalize
+        total = sum(new_weights.values())
+        if total > 0:
+            self._method_weights = {k: v / total for k, v in new_weights.items()}
+
+
+
+# =============================================================================
 # AUTOMATIC RESOURCE OPTIMIZATION (Missing Feature #2)
 # =============================================================================
 

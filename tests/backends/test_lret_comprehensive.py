@@ -22,6 +22,10 @@ from proxima.backends.lret import (
     NormalizedResult,
     LRETAPIVerifier,
     LRETAPIVerification,
+    LRETPerformanceMetrics,
+    LRETBenchmarkResult,
+    LRETPerformanceMonitor,
+    LRETBenchmarkRunner,
     MockLRETSimulator,
     MockLRETResult,
     get_mock_lret_module,
@@ -772,6 +776,378 @@ class TestIntegration:
         
         assert isinstance(verification, LRETAPIVerification)
         assert verification.verified_at > 0
+
+
+# ==============================================================================
+# PERFORMANCE BENCHMARKING TESTS
+# ==============================================================================
+
+
+class TestLRETPerformanceMetrics:
+    """Tests for LRETPerformanceMetrics data class."""
+
+    def test_metrics_creation(self) -> None:
+        """Test creating performance metrics."""
+        from proxima.backends.lret import LRETPerformanceMetrics
+        
+        metrics = LRETPerformanceMetrics(
+            execution_time_ms=15.5,
+            gate_execution_time_ms=10.0,
+            measurement_time_ms=3.0,
+            normalization_time_ms=2.5,
+            memory_peak_mb=128.0,
+            memory_baseline_mb=64.0,
+            throughput_shots_per_sec=66000.0,
+            gates_per_second=100000.0,
+            qubits=4,
+            gate_count=10,
+            circuit_depth=5,
+            shots=1024,
+        )
+        
+        assert metrics.execution_time_ms == 15.5
+        assert metrics.qubits == 4
+        assert metrics.shots == 1024
+
+    def test_metrics_to_dict(self) -> None:
+        """Test converting metrics to dictionary."""
+        from proxima.backends.lret import LRETPerformanceMetrics
+        
+        metrics = LRETPerformanceMetrics(
+            execution_time_ms=20.0,
+            qubits=3,
+            gate_count=5,
+            shots=500,
+        )
+        
+        data = metrics.to_dict()
+        
+        assert data["execution_time_ms"] == 20.0
+        assert data["qubits"] == 3
+        assert data["gate_count"] == 5
+        assert data["shots"] == 500
+        assert "timestamp" in data
+
+    def test_metrics_from_dict(self) -> None:
+        """Test creating metrics from dictionary."""
+        from proxima.backends.lret import LRETPerformanceMetrics
+        
+        data = {
+            "execution_time_ms": 25.0,
+            "qubits": 5,
+            "gate_count": 15,
+            "shots": 2000,
+            "memory_peak_mb": 256.0,
+        }
+        
+        metrics = LRETPerformanceMetrics.from_dict(data)
+        
+        assert metrics.execution_time_ms == 25.0
+        assert metrics.qubits == 5
+        assert metrics.memory_peak_mb == 256.0
+
+
+class TestLRETBenchmarkResult:
+    """Tests for LRETBenchmarkResult data class."""
+
+    def test_benchmark_result_creation(self) -> None:
+        """Test creating benchmark result."""
+        from proxima.backends.lret import LRETBenchmarkResult, LRETPerformanceMetrics
+        
+        result = LRETBenchmarkResult(
+            circuit_name="test_circuit",
+            num_runs=5,
+        )
+        
+        assert result.circuit_name == "test_circuit"
+        assert result.num_runs == 5
+        assert result.metrics == []
+
+    def test_compute_statistics(self) -> None:
+        """Test computing aggregate statistics."""
+        from proxima.backends.lret import LRETBenchmarkResult, LRETPerformanceMetrics
+        
+        result = LRETBenchmarkResult(
+            circuit_name="test",
+            num_runs=3,
+            metrics=[
+                LRETPerformanceMetrics(execution_time_ms=10.0, throughput_shots_per_sec=1000),
+                LRETPerformanceMetrics(execution_time_ms=12.0, throughput_shots_per_sec=900),
+                LRETPerformanceMetrics(execution_time_ms=11.0, throughput_shots_per_sec=950),
+            ],
+        )
+        
+        result.compute_statistics()
+        
+        assert result.mean_execution_time_ms == 11.0
+        assert result.min_execution_time_ms == 10.0
+        assert result.max_execution_time_ms == 12.0
+        assert result.std_execution_time_ms > 0
+        assert result.mean_throughput > 0
+        assert result.success_rate == 100.0
+
+    def test_to_dict(self) -> None:
+        """Test converting result to dictionary."""
+        from proxima.backends.lret import LRETBenchmarkResult
+        
+        result = LRETBenchmarkResult(
+            circuit_name="test",
+            num_runs=3,
+            mean_execution_time_ms=15.0,
+            success_rate=100.0,
+        )
+        
+        data = result.to_dict()
+        
+        assert data["circuit_name"] == "test"
+        assert data["num_runs"] == 3
+        assert data["mean_execution_time_ms"] == 15.0
+
+
+class TestLRETPerformanceMonitor:
+    """Tests for LRETPerformanceMonitor class."""
+
+    def test_monitor_basic_timing(self) -> None:
+        """Test basic timing functionality."""
+        from proxima.backends.lret import LRETPerformanceMonitor
+        import time
+        
+        monitor = LRETPerformanceMonitor()
+        monitor.start()
+        time.sleep(0.01)  # 10ms
+        elapsed = monitor.stop()
+        
+        assert elapsed >= 9.0  # At least 9ms (allowing for timer variance)
+        assert elapsed < 100.0  # Should not take more than 100ms
+
+    def test_phase_timing(self) -> None:
+        """Test phase timing."""
+        from proxima.backends.lret import LRETPerformanceMonitor
+        import time
+        
+        monitor = LRETPerformanceMonitor()
+        monitor.start()
+        
+        monitor.start_phase("phase1")
+        time.sleep(0.005)
+        duration = monitor.end_phase("phase1")
+        
+        assert duration >= 4.0  # At least 4ms
+        assert monitor.get_phase_time("phase1") == duration
+
+    def test_memory_sampling(self) -> None:
+        """Test memory sampling."""
+        from proxima.backends.lret import LRETPerformanceMonitor
+        
+        monitor = LRETPerformanceMonitor()
+        monitor.start()
+        
+        mem = monitor.sample_memory()
+        peak = monitor.get_peak_memory()
+        
+        # Memory values should be positive (or 0 if psutil not available)
+        assert mem >= 0
+        assert peak >= 0
+
+    def test_get_metrics(self) -> None:
+        """Test getting aggregated metrics."""
+        from proxima.backends.lret import LRETPerformanceMonitor, LRETPerformanceMetrics
+        
+        monitor = LRETPerformanceMonitor()
+        monitor.start()
+        monitor.sample_memory()
+        
+        metrics = monitor.get_metrics(qubits=3, gate_count=10, circuit_depth=5, shots=1000)
+        
+        assert isinstance(metrics, LRETPerformanceMetrics)
+        assert metrics.qubits == 3
+        assert metrics.gate_count == 10
+        assert metrics.shots == 1000
+
+    def test_reset(self) -> None:
+        """Test resetting monitor state."""
+        from proxima.backends.lret import LRETPerformanceMonitor
+        
+        monitor = LRETPerformanceMonitor()
+        monitor.start()
+        monitor.sample_memory()
+        monitor.start_phase("test")
+        
+        monitor.reset()
+        
+        assert monitor._is_running is False
+        assert monitor._start_time == 0.0
+
+
+class TestLRETBenchmarkRunner:
+    """Tests for LRETBenchmarkRunner class."""
+
+    def test_runner_creation(self, lret_adapter: LRETBackendAdapter) -> None:
+        """Test creating benchmark runner."""
+        from proxima.backends.lret import LRETBenchmarkRunner
+        
+        runner = LRETBenchmarkRunner(lret_adapter)
+        assert runner._adapter is lret_adapter
+
+    def test_run_single(self, lret_adapter: LRETBackendAdapter, sample_circuit: dict) -> None:
+        """Test running a single benchmark iteration."""
+        from proxima.backends.lret import LRETBenchmarkRunner, LRETPerformanceMetrics
+        
+        runner = LRETBenchmarkRunner(lret_adapter)
+        metrics = runner.run_single(sample_circuit, shots=100, circuit_name="test")
+        
+        assert isinstance(metrics, LRETPerformanceMetrics)
+        assert metrics.execution_time_ms > 0
+        assert metrics.shots == 100
+
+    def test_run_benchmark(self, lret_adapter: LRETBackendAdapter, sample_circuit: dict) -> None:
+        """Test running full benchmark with multiple runs."""
+        from proxima.backends.lret import LRETBenchmarkRunner, LRETBenchmarkResult
+        
+        runner = LRETBenchmarkRunner(lret_adapter)
+        result = runner.run_benchmark(
+            circuit=sample_circuit,
+            num_runs=3,
+            shots=100,
+            circuit_name="test",
+            warmup_runs=1,
+        )
+        
+        assert isinstance(result, LRETBenchmarkResult)
+        assert result.circuit_name == "test"
+        assert result.num_runs == 3
+        assert len(result.metrics) <= 3
+        assert result.mean_execution_time_ms > 0
+
+    def test_run_scaling_benchmark(self, lret_adapter: LRETBackendAdapter) -> None:
+        """Test scaling benchmark across circuit sizes."""
+        from proxima.backends.lret import LRETBenchmarkRunner
+        
+        def make_circuit(n_qubits: int) -> dict:
+            return {
+                "num_qubits": n_qubits,
+                "gates": [{"name": "H", "qubits": [i]} for i in range(n_qubits)],
+            }
+        
+        runner = LRETBenchmarkRunner(lret_adapter)
+        results = runner.run_scaling_benchmark(
+            circuit_generator=make_circuit,
+            qubit_range=[2, 3, 4],
+            shots=50,
+            num_runs=2,
+        )
+        
+        assert len(results) == 3
+        assert all(r.circuit_name.startswith("circuit_") for r in results)
+
+    def test_run_throughput_benchmark(self, lret_adapter: LRETBackendAdapter, sample_circuit: dict) -> None:
+        """Test throughput benchmark across shot counts."""
+        from proxima.backends.lret import LRETBenchmarkRunner
+        
+        runner = LRETBenchmarkRunner(lret_adapter)
+        results = runner.run_throughput_benchmark(
+            circuit=sample_circuit,
+            shot_counts=[50, 100, 200],
+            num_runs=2,
+            circuit_name="throughput",
+        )
+        
+        assert len(results) == 3
+        assert all(r.mean_throughput >= 0 for r in results)
+
+    def test_generate_report(self, lret_adapter: LRETBackendAdapter, sample_circuit: dict) -> None:
+        """Test generating benchmark report."""
+        from proxima.backends.lret import LRETBenchmarkRunner, LRETBenchmarkResult
+        
+        runner = LRETBenchmarkRunner(lret_adapter)
+        
+        # Run a quick benchmark
+        result = runner.run_benchmark(sample_circuit, num_runs=2, shots=50)
+        
+        report = runner.generate_report([result], include_raw_metrics=False)
+        
+        assert "backend" in report
+        assert report["backend"] == "lret"
+        assert "summary" in report
+        assert "results" in report
+        assert len(report["results"]) == 1
+
+
+class TestLRETAdapterBenchmarkMethods:
+    """Tests for benchmark methods in LRETBackendAdapter."""
+
+    def test_get_benchmark_runner(self, lret_adapter: LRETBackendAdapter) -> None:
+        """Test getting benchmark runner from adapter."""
+        from proxima.backends.lret import LRETBenchmarkRunner
+        
+        runner = lret_adapter.get_benchmark_runner()
+        
+        assert isinstance(runner, LRETBenchmarkRunner)
+        assert runner._adapter is lret_adapter
+
+    def test_run_performance_benchmark(self, lret_adapter: LRETBackendAdapter, sample_circuit: dict) -> None:
+        """Test running performance benchmark via adapter method."""
+        from proxima.backends.lret import LRETBenchmarkResult
+        
+        result = lret_adapter.run_performance_benchmark(
+            circuit=sample_circuit,
+            shots=100,
+            num_runs=3,
+            warmup_runs=1,
+            circuit_name="adapter_test",
+        )
+        
+        assert isinstance(result, LRETBenchmarkResult)
+        assert result.circuit_name == "adapter_test"
+        assert result.num_runs == 3
+
+    def test_run_scaling_benchmark_via_adapter(self, lret_adapter: LRETBackendAdapter) -> None:
+        """Test scaling benchmark via adapter method."""
+        def make_circuit(n: int) -> dict:
+            return {"num_qubits": n, "gates": [{"name": "H", "qubits": [0]}]}
+        
+        results = lret_adapter.run_scaling_benchmark(
+            circuit_generator=make_circuit,
+            qubit_range=[2, 3],
+            shots=50,
+            num_runs=2,
+        )
+        
+        assert len(results) == 2
+
+    def test_run_throughput_benchmark_via_adapter(self, lret_adapter: LRETBackendAdapter, sample_circuit: dict) -> None:
+        """Test throughput benchmark via adapter method."""
+        results = lret_adapter.run_throughput_benchmark(
+            circuit=sample_circuit,
+            shot_counts=[50, 100],
+            num_runs=2,
+        )
+        
+        assert len(results) == 2
+
+    def test_generate_benchmark_report_via_adapter(self, lret_adapter: LRETBackendAdapter, sample_circuit: dict) -> None:
+        """Test generating report via adapter method."""
+        result = lret_adapter.run_performance_benchmark(
+            sample_circuit, shots=50, num_runs=2
+        )
+        
+        report = lret_adapter.generate_benchmark_report([result])
+        
+        assert "backend" in report
+        assert "results" in report
+
+    def test_get_performance_profile(self, lret_adapter: LRETBackendAdapter, sample_circuit: dict) -> None:
+        """Test getting detailed performance profile."""
+        profile = lret_adapter.get_performance_profile(sample_circuit, shots=100)
+        
+        assert "backend" in profile
+        assert profile["backend"] == "lret"
+        assert "circuit_info" in profile
+        assert "execution_time_ms" in profile
+        assert "gate_execution_time_ms" in profile
+        assert "memory_peak_mb" in profile
+        assert "throughput_shots_per_sec" in profile
+        assert profile["shots"] == 100
 
 
 if __name__ == "__main__":

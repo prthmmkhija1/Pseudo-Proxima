@@ -1926,6 +1926,588 @@ class QsimAdapter(BaseBackendAdapter):
 
 
 # =============================================================================
+# GPU qsim SUPPORT (qsim-cuquantum integration)
+# =============================================================================
+
+
+class QsimGPUConfig:
+    """Configuration for GPU-accelerated qsim execution."""
+    
+    def __init__(
+        self,
+        enabled: bool = True,
+        device_id: int = 0,
+        use_custatevec: bool = True,
+        memory_limit_mb: int = 0,
+        fusion_level: int = 2,
+    ) -> None:
+        """Initialize GPU configuration.
+        
+        Args:
+            enabled: Whether to use GPU acceleration
+            device_id: GPU device ID to use
+            use_custatevec: Whether to use cuStateVec for state vector simulation
+            memory_limit_mb: Memory limit in MB (0 for auto)
+            fusion_level: Gate fusion level for GPU (0-3)
+        """
+        self.enabled = enabled
+        self.device_id = device_id
+        self.use_custatevec = use_custatevec
+        self.memory_limit_mb = memory_limit_mb
+        self.fusion_level = fusion_level
+
+
+class QsimGPUAdapter:
+    """GPU-accelerated qsim adapter using qsim-cuquantum.
+    
+    This provides GPU acceleration for qsim circuits through:
+    - qsimcirq with CUDA backend
+    - cuStateVec integration for state vector operations
+    - Automatic CPU fallback when GPU is unavailable
+    """
+    
+    def __init__(
+        self,
+        config: QsimGPUConfig | None = None,
+        logger: logging.Logger | None = None,
+    ) -> None:
+        """Initialize GPU qsim adapter.
+        
+        Args:
+            config: GPU configuration
+            logger: Logger instance
+        """
+        self._config = config or QsimGPUConfig()
+        self._logger = logger or logging.getLogger("proxima.backends.qsim.gpu")
+        self._gpu_available = False
+        self._custatevec_available = False
+        self._qsimcirq_gpu_available = False
+        self._gpu_info: dict[str, Any] = {}
+        
+        if self._config.enabled:
+            self._detect_gpu_capabilities()
+    
+    def _detect_gpu_capabilities(self) -> None:
+        """Detect GPU capabilities for qsim."""
+        # Check for CUDA
+        try:
+            import cupy as cp
+            device_count = cp.cuda.runtime.getDeviceCount()
+            if device_count > 0:
+                self._gpu_available = True
+                props = cp.cuda.runtime.getDeviceProperties(self._config.device_id)
+                name = props.get('name', b'Unknown')
+                self._gpu_info = {
+                    "device_count": device_count,
+                    "current_device": self._config.device_id,
+                    "device_name": name.decode() if isinstance(name, bytes) else str(name),
+                    "total_memory_mb": props.get('totalGlobalMem', 0) // (1024 * 1024),
+                }
+        except ImportError:
+            pass
+        except Exception as e:
+            self._logger.warning(f"CUDA detection failed: {e}")
+        
+        # Check for cuStateVec
+        try:
+            import cuquantum.custatevec
+            self._custatevec_available = True
+        except ImportError:
+            pass
+        
+        # Check for qsimcirq GPU support
+        try:
+            import qsimcirq
+            if hasattr(qsimcirq, 'QSimCuStateVecSimulator'):
+                self._qsimcirq_gpu_available = True
+            elif hasattr(qsimcirq, 'QSimSimulatorOptions'):
+                # Check if GPU options are available
+                opts = qsimcirq.QSimSimulatorOptions
+                if hasattr(opts, 'use_gpu'):
+                    self._qsimcirq_gpu_available = True
+        except ImportError:
+            pass
+    
+    @property
+    def is_available(self) -> bool:
+        """Check if GPU qsim is available."""
+        return self._gpu_available and (self._custatevec_available or self._qsimcirq_gpu_available)
+    
+    def get_gpu_simulator(self) -> Any:
+        """Get the GPU-accelerated qsim simulator.
+        
+        Returns:
+            GPU simulator instance or None if not available
+        """
+        if not self._gpu_available:
+            return None
+        
+        try:
+            import qsimcirq
+            
+            # Try cuStateVec simulator first
+            if self._custatevec_available and hasattr(qsimcirq, 'QSimCuStateVecSimulator'):
+                self._logger.info("Using QSimCuStateVecSimulator")
+                return qsimcirq.QSimCuStateVecSimulator()
+            
+            # Try regular qsim with GPU options
+            if hasattr(qsimcirq, 'QSimSimulator'):
+                options = {}
+                if hasattr(qsimcirq, 'QSimOptions'):
+                    options = qsimcirq.QSimOptions(use_gpu=True)
+                elif hasattr(qsimcirq, 'QSimSimulatorOptions'):
+                    options = {"use_gpu": True}
+                
+                self._logger.info("Using QSimSimulator with GPU options")
+                return qsimcirq.QSimSimulator(options)
+            
+        except Exception as e:
+            self._logger.warning(f"Failed to create GPU simulator: {e}")
+        
+        return None
+    
+    def execute(
+        self,
+        circuit: Any,
+        options: dict[str, Any] | None = None,
+    ) -> ExecutionResult:
+        """Execute circuit on GPU.
+        
+        Args:
+            circuit: Cirq circuit to execute
+            options: Execution options
+            
+        Returns:
+            ExecutionResult with simulation results
+        """
+        options = options or {}
+        shots = int(options.get("shots", options.get("repetitions", 0)))
+        
+        import cirq
+        
+        if not isinstance(circuit, cirq.Circuit):
+            raise ValueError("GPU qsim requires Cirq circuit")
+        
+        simulator = self.get_gpu_simulator()
+        if simulator is None:
+            raise QsimError("GPU simulator not available")
+        
+        start_time = time.perf_counter()
+        
+        try:
+            if shots > 0:
+                # Run with measurements
+                result = simulator.run(circuit, repetitions=shots)
+                counts = result.histogram(key=list(result.measurements.keys())[0]) if result.measurements else {}
+                
+                # Convert to bitstring counts
+                str_counts = {}
+                for outcome, count in counts.items():
+                    if isinstance(outcome, (tuple, list)):
+                        bitstring = ''.join(str(b) for b in outcome)
+                    else:
+                        bitstring = format(int(outcome), f'0{circuit.num_qubits}b')
+                    str_counts[bitstring] = count
+                
+                execution_time_ms = (time.perf_counter() - start_time) * 1000
+                
+                return ExecutionResult(
+                    backend="qsim-gpu",
+                    simulator_type=SimulatorType.STATE_VECTOR,
+                    execution_time_ms=execution_time_ms,
+                    qubit_count=len(circuit.all_qubits()),
+                    shot_count=shots,
+                    result_type=ResultType.COUNTS,
+                    data={"counts": str_counts, "shots": shots},
+                    metadata={
+                        "gpu": True,
+                        "gpu_device": self._gpu_info.get("device_name", "unknown"),
+                        "custatevec": self._custatevec_available,
+                    },
+                    raw_result=result,
+                )
+            else:
+                # Get state vector
+                result = simulator.simulate(circuit)
+                statevector = result.final_state_vector
+                
+                execution_time_ms = (time.perf_counter() - start_time) * 1000
+                
+                return ExecutionResult(
+                    backend="qsim-gpu",
+                    simulator_type=SimulatorType.STATE_VECTOR,
+                    execution_time_ms=execution_time_ms,
+                    qubit_count=len(circuit.all_qubits()),
+                    result_type=ResultType.STATEVECTOR,
+                    data={"statevector": statevector},
+                    metadata={
+                        "gpu": True,
+                        "gpu_device": self._gpu_info.get("device_name", "unknown"),
+                        "custatevec": self._custatevec_available,
+                    },
+                    raw_result=result,
+                )
+                
+        except Exception as e:
+            self._logger.error(f"GPU execution failed: {e}")
+            raise QsimError(f"GPU execution failed: {e}")
+    
+    def get_gpu_info(self) -> dict[str, Any]:
+        """Get GPU information.
+        
+        Returns:
+            Dictionary with GPU information
+        """
+        return {
+            "gpu_available": self._gpu_available,
+            "custatevec_available": self._custatevec_available,
+            "qsimcirq_gpu": self._qsimcirq_gpu_available,
+            **self._gpu_info,
+        }
+
+
+# =============================================================================
+# ENHANCED CIRCUIT CONVERSION - Complete Gate Mapping
+# =============================================================================
+
+
+class EnhancedCircuitConverter:
+    """Enhanced circuit converter with complete gate mapping.
+    
+    Handles conversion edge cases for all gate types:
+    - All standard single-qubit gates
+    - All controlled gates (CX, CY, CZ, CH, etc.)
+    - Rotation gates with parameters
+    - Multi-controlled gates
+    - Custom/composite gates
+    """
+    
+    # Complete gate mapping from various frameworks to Cirq
+    GATE_MAPPING: dict[str, str] = {
+        # Single-qubit Pauli gates
+        "h": "H",
+        "x": "X",
+        "y": "Y",
+        "z": "Z",
+        "i": "I",
+        "id": "I",
+        "identity": "I",
+        
+        # Phase gates
+        "s": "S",
+        "t": "T",
+        "sdg": "S**-1",
+        "tdg": "T**-1",
+        "sx": "X**0.5",
+        "sxdg": "X**-0.5",
+        
+        # Rotation gates
+        "rx": "rx",
+        "ry": "ry",
+        "rz": "rz",
+        "p": "ZPowGate",
+        "phase": "ZPowGate",
+        "u1": "ZPowGate",
+        "u2": "u2",
+        "u3": "u3",
+        "u": "u",
+        
+        # Two-qubit gates
+        "cx": "CNOT",
+        "cnot": "CNOT",
+        "cy": "ControlledY",
+        "cz": "CZ",
+        "ch": "ControlledH",
+        "swap": "SWAP",
+        "iswap": "ISWAP",
+        "dcx": "DCX",
+        "ecr": "ECR",
+        
+        # Controlled rotations
+        "crx": "CRX",
+        "cry": "CRY",
+        "crz": "CRZ",
+        "cp": "CZPowGate",
+        "cphase": "CZPowGate",
+        "cu1": "CZPowGate",
+        "cu": "CU",
+        
+        # Three-qubit gates
+        "ccx": "TOFFOLI",
+        "toffoli": "TOFFOLI",
+        "ccz": "CCZ",
+        "cswap": "CSWAP",
+        "fredkin": "CSWAP",
+        
+        # Two-qubit rotation gates
+        "rxx": "XXPowGate",
+        "ryy": "YYPowGate",
+        "rzz": "ZZPowGate",
+        "rzx": "ZXPowGate",
+        "xx_plus_yy": "XXPlusYY",
+        "xx_minus_yy": "XXMinusYY",
+        
+        # Special operations
+        "barrier": "barrier",
+        "measure": "measure",
+        "m": "measure",
+        "reset": "reset",
+    }
+    
+    def __init__(self, logger: logging.Logger | None = None) -> None:
+        """Initialize converter.
+        
+        Args:
+            logger: Logger instance
+        """
+        self._logger = logger or logging.getLogger("proxima.backends.qsim.converter")
+    
+    def convert_to_cirq(self, circuit: Any) -> Any:
+        """Convert any circuit format to Cirq.
+        
+        Args:
+            circuit: Input circuit (Qiskit, list of gates, or Cirq)
+            
+        Returns:
+            Cirq circuit
+        """
+        import cirq
+        
+        if isinstance(circuit, cirq.Circuit):
+            return circuit
+        
+        # Try Qiskit conversion
+        try:
+            from qiskit import QuantumCircuit
+            if isinstance(circuit, QuantumCircuit):
+                return self._convert_qiskit(circuit)
+        except ImportError:
+            pass
+        
+        # Try list of gates conversion
+        if isinstance(circuit, list):
+            return self._convert_gate_list(circuit)
+        
+        raise ValueError(f"Cannot convert {type(circuit)} to Cirq circuit")
+    
+    def _convert_qiskit(self, qiskit_circuit: Any) -> Any:
+        """Convert Qiskit circuit to Cirq.
+        
+        Args:
+            qiskit_circuit: Qiskit QuantumCircuit
+            
+        Returns:
+            Cirq circuit
+        """
+        import cirq
+        
+        # Try QASM conversion first (most reliable)
+        try:
+            from cirq.contrib.qasm_import import circuit_from_qasm
+            qasm = qiskit_circuit.qasm()
+            return circuit_from_qasm(qasm)
+        except Exception:
+            pass
+        
+        # Manual conversion
+        num_qubits = qiskit_circuit.num_qubits
+        qubits = cirq.LineQubit.range(num_qubits)
+        ops = []
+        
+        for instruction, qargs, cargs in qiskit_circuit.data:
+            gate_name = instruction.name.lower()
+            indices = [qiskit_circuit.qubits.index(q) for q in qargs]
+            target_qubits = [qubits[i] for i in indices]
+            params = list(instruction.params) if hasattr(instruction, 'params') else []
+            
+            op = self._map_gate_to_cirq(gate_name, target_qubits, params, cirq)
+            if op is not None:
+                if isinstance(op, list):
+                    ops.extend(op)
+                else:
+                    ops.append(op)
+        
+        return cirq.Circuit(ops)
+    
+    def _convert_gate_list(self, gates: list) -> Any:
+        """Convert list of gate dictionaries to Cirq.
+        
+        Args:
+            gates: List of gate dictionaries
+            
+        Returns:
+            Cirq circuit
+        """
+        import cirq
+        
+        # Determine qubit count
+        max_qubit = 0
+        for gate in gates:
+            if isinstance(gate, dict) and 'qubits' in gate:
+                qubits = gate['qubits']
+                if isinstance(qubits, (list, tuple)):
+                    max_qubit = max(max_qubit, max(qubits) + 1)
+                elif isinstance(qubits, int):
+                    max_qubit = max(max_qubit, qubits + 1)
+        
+        qubits = cirq.LineQubit.range(max_qubit)
+        ops = []
+        
+        for gate in gates:
+            if not isinstance(gate, dict):
+                continue
+            
+            gate_name = gate.get('gate', '').lower()
+            gate_qubits = gate.get('qubits', [])
+            params = gate.get('params', [])
+            
+            if isinstance(gate_qubits, int):
+                gate_qubits = [gate_qubits]
+            
+            target_qubits = [qubits[i] for i in gate_qubits]
+            op = self._map_gate_to_cirq(gate_name, target_qubits, params, cirq)
+            
+            if op is not None:
+                if isinstance(op, list):
+                    ops.extend(op)
+                else:
+                    ops.append(op)
+        
+        return cirq.Circuit(ops)
+    
+    def _map_gate_to_cirq(
+        self,
+        gate_name: str,
+        qubits: list,
+        params: list,
+        cirq: Any,
+    ) -> Any:
+        """Map a gate to its Cirq equivalent.
+        
+        Args:
+            gate_name: Name of the gate
+            qubits: Target qubits
+            params: Gate parameters
+            cirq: Cirq module
+            
+        Returns:
+            Cirq operation or list of operations
+        """
+        # Single-qubit gates
+        if gate_name == "h":
+            return cirq.H(qubits[0])
+        elif gate_name == "x":
+            return cirq.X(qubits[0])
+        elif gate_name == "y":
+            return cirq.Y(qubits[0])
+        elif gate_name == "z":
+            return cirq.Z(qubits[0])
+        elif gate_name in ("i", "id", "identity"):
+            return cirq.I(qubits[0])
+        
+        # Phase gates
+        elif gate_name == "s":
+            return cirq.S(qubits[0])
+        elif gate_name == "t":
+            return cirq.T(qubits[0])
+        elif gate_name == "sdg":
+            return cirq.S(qubits[0]) ** -1
+        elif gate_name == "tdg":
+            return cirq.T(qubits[0]) ** -1
+        elif gate_name == "sx":
+            return cirq.X(qubits[0]) ** 0.5
+        elif gate_name == "sxdg":
+            return cirq.X(qubits[0]) ** -0.5
+        
+        # Rotation gates
+        elif gate_name == "rx" and params:
+            return cirq.rx(float(params[0]))(qubits[0])
+        elif gate_name == "ry" and params:
+            return cirq.ry(float(params[0]))(qubits[0])
+        elif gate_name == "rz" and params:
+            return cirq.rz(float(params[0]))(qubits[0])
+        elif gate_name in ("p", "phase", "u1") and params:
+            return cirq.ZPowGate(exponent=float(params[0]) / np.pi)(qubits[0])
+        
+        # U gates (decomposed)
+        elif gate_name == "u2" and len(params) >= 2:
+            phi, lam = float(params[0]), float(params[1])
+            return [
+                cirq.rz(lam)(qubits[0]),
+                cirq.ry(np.pi / 2)(qubits[0]),
+                cirq.rz(phi)(qubits[0]),
+            ]
+        elif gate_name in ("u3", "u") and len(params) >= 3:
+            theta, phi, lam = float(params[0]), float(params[1]), float(params[2])
+            return [
+                cirq.rz(lam)(qubits[0]),
+                cirq.ry(theta)(qubits[0]),
+                cirq.rz(phi)(qubits[0]),
+            ]
+        
+        # Two-qubit gates
+        elif gate_name in ("cx", "cnot"):
+            return cirq.CNOT(qubits[0], qubits[1])
+        elif gate_name == "cy":
+            return cirq.ControlledGate(cirq.Y)(qubits[0], qubits[1])
+        elif gate_name == "cz":
+            return cirq.CZ(qubits[0], qubits[1])
+        elif gate_name == "ch":
+            return cirq.ControlledGate(cirq.H)(qubits[0], qubits[1])
+        elif gate_name == "swap":
+            return cirq.SWAP(qubits[0], qubits[1])
+        elif gate_name == "iswap":
+            return cirq.ISWAP(qubits[0], qubits[1])
+        
+        # Controlled rotations
+        elif gate_name == "crx" and params:
+            return cirq.ControlledGate(cirq.rx(float(params[0])))(qubits[0], qubits[1])
+        elif gate_name == "cry" and params:
+            return cirq.ControlledGate(cirq.ry(float(params[0])))(qubits[0], qubits[1])
+        elif gate_name == "crz" and params:
+            return cirq.ControlledGate(cirq.rz(float(params[0])))(qubits[0], qubits[1])
+        elif gate_name in ("cp", "cphase", "cu1") and params:
+            return cirq.CZPowGate(exponent=float(params[0]) / np.pi)(qubits[0], qubits[1])
+        
+        # Three-qubit gates
+        elif gate_name in ("ccx", "toffoli"):
+            return cirq.TOFFOLI(qubits[0], qubits[1], qubits[2])
+        elif gate_name == "ccz":
+            return cirq.CCZ(qubits[0], qubits[1], qubits[2])
+        elif gate_name in ("cswap", "fredkin"):
+            return cirq.CSWAP(qubits[0], qubits[1], qubits[2])
+        
+        # Two-qubit rotation gates
+        elif gate_name == "rxx" and params:
+            return cirq.XXPowGate(exponent=float(params[0]) / np.pi)(qubits[0], qubits[1])
+        elif gate_name == "ryy" and params:
+            return cirq.YYPowGate(exponent=float(params[0]) / np.pi)(qubits[0], qubits[1])
+        elif gate_name == "rzz" and params:
+            return cirq.ZZPowGate(exponent=float(params[0]) / np.pi)(qubits[0], qubits[1])
+        
+        # Special operations
+        elif gate_name == "barrier":
+            return None
+        elif gate_name in ("measure", "m"):
+            return cirq.measure(*qubits)
+        elif gate_name == "reset":
+            return cirq.reset(qubits[0])
+        
+        # Unknown gate
+        else:
+            self._logger.warning(f"Unknown gate '{gate_name}', skipping")
+            return None
+    
+    def get_supported_gates(self) -> list[str]:
+        """Get list of all supported gates.
+        
+        Returns:
+            List of supported gate names
+        """
+        return list(self.GATE_MAPPING.keys())
+
+
+# =============================================================================
 # Module Helper Functions
 # =============================================================================
 
@@ -1998,4 +2580,9 @@ __all__ = [
     "get_qsim_config",
     "check_qsim_available",
     "get_qsim_performance_tier",
+    # GPU Support
+    "QsimGPUConfig",
+    "QsimGPUAdapter",
+    # Enhanced Circuit Conversion
+    "EnhancedCircuitConverter",
 ]

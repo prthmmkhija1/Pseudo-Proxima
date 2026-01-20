@@ -573,6 +573,540 @@ class ProximaApp(App):
         }
 
 
+# ==============================================================================
+# CIRCUIT EDITOR POLISH (5% Gap Coverage)
+# ==============================================================================
+
+
+class QuantumGate:
+    """Represents a quantum gate for the circuit editor."""
+    
+    # Standard gates with their properties
+    GATES = {
+        "H": {"name": "Hadamard", "symbol": "H", "qubits": 1, "color": "#3498db"},
+        "X": {"name": "Pauli-X", "symbol": "X", "qubits": 1, "color": "#e74c3c"},
+        "Y": {"name": "Pauli-Y", "symbol": "Y", "qubits": 1, "color": "#2ecc71"},
+        "Z": {"name": "Pauli-Z", "symbol": "Z", "qubits": 1, "color": "#9b59b6"},
+        "S": {"name": "S-Gate", "symbol": "S", "qubits": 1, "color": "#f39c12"},
+        "T": {"name": "T-Gate", "symbol": "T", "qubits": 1, "color": "#1abc9c"},
+        "RX": {"name": "Rotation-X", "symbol": "Rx", "qubits": 1, "color": "#e74c3c", "params": ["θ"]},
+        "RY": {"name": "Rotation-Y", "symbol": "Ry", "qubits": 1, "color": "#2ecc71", "params": ["θ"]},
+        "RZ": {"name": "Rotation-Z", "symbol": "Rz", "qubits": 1, "color": "#9b59b6", "params": ["θ"]},
+        "CNOT": {"name": "CNOT", "symbol": "●━◯", "qubits": 2, "color": "#3498db"},
+        "CZ": {"name": "CZ", "symbol": "●━●", "qubits": 2, "color": "#9b59b6"},
+        "SWAP": {"name": "SWAP", "symbol": "✕━✕", "qubits": 2, "color": "#f39c12"},
+        "CCX": {"name": "Toffoli", "symbol": "●●◯", "qubits": 3, "color": "#e74c3c"},
+        "M": {"name": "Measure", "symbol": "📊", "qubits": 1, "color": "#7f8c8d"},
+    }
+    
+    def __init__(
+        self,
+        gate_type: str,
+        target_qubits: list[int],
+        parameters: dict[str, float] | None = None,
+    ) -> None:
+        """Initialize a gate.
+        
+        Args:
+            gate_type: Type of gate (H, X, CNOT, etc.)
+            target_qubits: Target qubit indices
+            parameters: Optional gate parameters
+        """
+        self.gate_type = gate_type
+        self.target_qubits = target_qubits
+        self.parameters = parameters or {}
+        self.position = 0  # Column in circuit
+    
+    @property
+    def info(self) -> dict:
+        """Get gate info."""
+        return self.GATES.get(self.gate_type, {
+            "name": self.gate_type,
+            "symbol": self.gate_type[0],
+            "qubits": 1,
+            "color": "#95a5a6",
+        })
+    
+    def to_dict(self) -> dict:
+        """Convert to dictionary."""
+        return {
+            "type": self.gate_type,
+            "qubits": self.target_qubits,
+            "params": self.parameters,
+            "position": self.position,
+        }
+
+
+class CircuitEditorState:
+    """State management for the circuit editor."""
+    
+    def __init__(self, num_qubits: int = 3) -> None:
+        """Initialize editor state.
+        
+        Args:
+            num_qubits: Number of qubits
+        """
+        self.num_qubits = num_qubits
+        self.gates: list[QuantumGate] = []
+        self.selected_gate: str | None = None
+        self.cursor_qubit = 0
+        self.cursor_position = 0
+        self.clipboard: list[QuantumGate] = []
+        self.history: list[list[QuantumGate]] = []
+        self.history_index = -1
+        self.max_history = 50
+    
+    def add_gate(self, gate: QuantumGate) -> None:
+        """Add a gate to the circuit."""
+        self._save_history()
+        gate.position = self.cursor_position
+        self.gates.append(gate)
+        self._sort_gates()
+    
+    def remove_gate(self, index: int) -> QuantumGate | None:
+        """Remove a gate by index."""
+        if 0 <= index < len(self.gates):
+            self._save_history()
+            return self.gates.pop(index)
+        return None
+    
+    def undo(self) -> bool:
+        """Undo last action."""
+        if self.history_index > 0:
+            self.history_index -= 1
+            self.gates = [g for g in self.history[self.history_index]]
+            return True
+        return False
+    
+    def redo(self) -> bool:
+        """Redo last undone action."""
+        if self.history_index < len(self.history) - 1:
+            self.history_index += 1
+            self.gates = [g for g in self.history[self.history_index]]
+            return True
+        return False
+    
+    def _save_history(self) -> None:
+        """Save current state to history."""
+        # Truncate future if we're not at the end
+        self.history = self.history[:self.history_index + 1]
+        self.history.append([g for g in self.gates])
+        self.history_index = len(self.history) - 1
+        
+        # Limit history size
+        if len(self.history) > self.max_history:
+            self.history = self.history[-self.max_history:]
+            self.history_index = len(self.history) - 1
+    
+    def _sort_gates(self) -> None:
+        """Sort gates by position."""
+        self.gates.sort(key=lambda g: (g.position, min(g.target_qubits)))
+    
+    def get_circuit_depth(self) -> int:
+        """Get the circuit depth (number of columns)."""
+        if not self.gates:
+            return 0
+        return max(g.position for g in self.gates) + 1
+    
+    def to_ascii(self) -> str:
+        """Convert circuit to ASCII representation."""
+        depth = max(self.get_circuit_depth(), 5)
+        lines = []
+        
+        for q in range(self.num_qubits):
+            line = f"q{q}: ──"
+            for pos in range(depth):
+                gate_at_pos = None
+                for g in self.gates:
+                    if g.position == pos and q in g.target_qubits:
+                        gate_at_pos = g
+                        break
+                
+                if gate_at_pos:
+                    symbol = gate_at_pos.info["symbol"]
+                    if len(gate_at_pos.target_qubits) > 1:
+                        # Multi-qubit gate
+                        if q == min(gate_at_pos.target_qubits):
+                            line += f"─●─"
+                        elif q == max(gate_at_pos.target_qubits):
+                            line += f"─◯─"
+                        else:
+                            line += f"─│─"
+                    else:
+                        line += f"[{symbol[0]}]"
+                else:
+                    line += "───"
+            line += "──"
+            lines.append(line)
+        
+        return "\n".join(lines)
+    
+    def clear(self) -> None:
+        """Clear all gates."""
+        self._save_history()
+        self.gates = []
+    
+    def copy_selection(self) -> None:
+        """Copy current gate to clipboard."""
+        if self.gates:
+            # Copy gate at cursor position
+            for g in self.gates:
+                if g.position == self.cursor_position:
+                    self.clipboard = [QuantumGate(
+                        g.gate_type,
+                        g.target_qubits.copy(),
+                        g.parameters.copy() if g.parameters else None,
+                    )]
+                    break
+    
+    def paste(self) -> None:
+        """Paste from clipboard."""
+        for g in self.clipboard:
+            new_gate = QuantumGate(
+                g.gate_type,
+                g.target_qubits.copy(),
+                g.parameters.copy() if g.parameters else None,
+            )
+            new_gate.position = self.cursor_position
+            self.add_gate(new_gate)
+
+
+class CircuitEditorWidget:
+    """Enhanced circuit editor widget functionality.
+    
+    This provides the core circuit editing logic that can be
+    used by the TUI widget or web interface.
+    """
+    
+    def __init__(self, num_qubits: int = 3) -> None:
+        """Initialize circuit editor.
+        
+        Args:
+            num_qubits: Initial number of qubits
+        """
+        self.state = CircuitEditorState(num_qubits)
+        self._gate_palette = list(QuantumGate.GATES.keys())
+        self._palette_index = 0
+    
+    def get_palette_gates(self) -> list[dict]:
+        """Get available gates for palette."""
+        return [
+            {"type": gate, **QuantumGate.GATES[gate]}
+            for gate in self._gate_palette
+        ]
+    
+    def select_gate_from_palette(self, gate_type: str) -> None:
+        """Select a gate from the palette."""
+        if gate_type in QuantumGate.GATES:
+            self.state.selected_gate = gate_type
+    
+    def place_gate(self, qubit: int | None = None) -> bool:
+        """Place the selected gate at cursor or specified qubit.
+        
+        Args:
+            qubit: Target qubit (uses cursor if None)
+            
+        Returns:
+            True if gate was placed
+        """
+        if not self.state.selected_gate:
+            return False
+        
+        target_qubit = qubit if qubit is not None else self.state.cursor_qubit
+        gate_info = QuantumGate.GATES.get(self.state.selected_gate, {})
+        num_qubits_needed = gate_info.get("qubits", 1)
+        
+        # Determine target qubits
+        if num_qubits_needed == 1:
+            target_qubits = [target_qubit]
+        elif num_qubits_needed == 2:
+            target_qubits = [target_qubit, (target_qubit + 1) % self.state.num_qubits]
+        else:
+            target_qubits = [
+                (target_qubit + i) % self.state.num_qubits
+                for i in range(num_qubits_needed)
+            ]
+        
+        gate = QuantumGate(self.state.selected_gate, target_qubits)
+        self.state.add_gate(gate)
+        return True
+    
+    def move_cursor(self, direction: str) -> None:
+        """Move cursor in the specified direction.
+        
+        Args:
+            direction: up, down, left, right
+        """
+        if direction == "up":
+            self.state.cursor_qubit = max(0, self.state.cursor_qubit - 1)
+        elif direction == "down":
+            self.state.cursor_qubit = min(
+                self.state.num_qubits - 1, self.state.cursor_qubit + 1
+            )
+        elif direction == "left":
+            self.state.cursor_position = max(0, self.state.cursor_position - 1)
+        elif direction == "right":
+            self.state.cursor_position += 1
+    
+    def delete_at_cursor(self) -> bool:
+        """Delete gate at cursor position."""
+        for i, g in enumerate(self.state.gates):
+            if (g.position == self.state.cursor_position and
+                self.state.cursor_qubit in g.target_qubits):
+                self.state.remove_gate(i)
+                return True
+        return False
+    
+    def cycle_palette(self, direction: int = 1) -> None:
+        """Cycle through gate palette.
+        
+        Args:
+            direction: 1 for next, -1 for previous
+        """
+        self._palette_index = (
+            self._palette_index + direction
+        ) % len(self._gate_palette)
+        self.state.selected_gate = self._gate_palette[self._palette_index]
+    
+    def add_qubit(self) -> None:
+        """Add a qubit to the circuit."""
+        if self.state.num_qubits < 20:  # Limit
+            self.state.num_qubits += 1
+    
+    def remove_qubit(self) -> None:
+        """Remove the last qubit from the circuit."""
+        if self.state.num_qubits > 1:
+            # Remove gates that use the last qubit
+            self.state.gates = [
+                g for g in self.state.gates
+                if max(g.target_qubits) < self.state.num_qubits - 1
+            ]
+            self.state.num_qubits -= 1
+            self.state.cursor_qubit = min(
+                self.state.cursor_qubit, self.state.num_qubits - 1
+            )
+    
+    def export_circuit(self, format: str = "qasm") -> str:
+        """Export circuit to specified format.
+        
+        Args:
+            format: Export format (qasm, json, ascii)
+            
+        Returns:
+            Circuit in specified format
+        """
+        if format == "ascii":
+            return self.state.to_ascii()
+        
+        elif format == "json":
+            import json
+            return json.dumps({
+                "num_qubits": self.state.num_qubits,
+                "gates": [g.to_dict() for g in self.state.gates],
+            }, indent=2)
+        
+        elif format == "qasm":
+            lines = [
+                "OPENQASM 2.0;",
+                'include "qelib1.inc";',
+                f"qreg q[{self.state.num_qubits}];",
+                f"creg c[{self.state.num_qubits}];",
+                "",
+            ]
+            
+            for gate in sorted(self.state.gates, key=lambda g: g.position):
+                gt = gate.gate_type.lower()
+                qubits = ", ".join(f"q[{q}]" for q in gate.target_qubits)
+                
+                if gate.gate_type == "CNOT":
+                    lines.append(f"cx {qubits};")
+                elif gate.gate_type == "M":
+                    lines.append(f"measure q[{gate.target_qubits[0]}] -> c[{gate.target_qubits[0]}];")
+                elif gate.gate_type in ("RX", "RY", "RZ"):
+                    theta = gate.parameters.get("θ", 0)
+                    lines.append(f"{gt}({theta}) {qubits};")
+                else:
+                    lines.append(f"{gt} {qubits};")
+            
+            return "\n".join(lines)
+        
+        return self.state.to_ascii()
+    
+    def import_circuit(self, data: str, format: str = "json") -> bool:
+        """Import circuit from data.
+        
+        Args:
+            data: Circuit data
+            format: Data format
+            
+        Returns:
+            True if import successful
+        """
+        if format == "json":
+            import json
+            try:
+                parsed = json.loads(data)
+                self.state.num_qubits = parsed.get("num_qubits", 3)
+                self.state.gates = [
+                    QuantumGate(
+                        g["type"],
+                        g["qubits"],
+                        g.get("params"),
+                    )
+                    for g in parsed.get("gates", [])
+                ]
+                for i, g in enumerate(self.state.gates):
+                    g.position = parsed.get("gates", [])[i].get("position", i)
+                return True
+            except Exception:
+                return False
+        
+        return False
+    
+    def get_circuit_info(self) -> dict:
+        """Get circuit information summary."""
+        gate_counts: dict[str, int] = {}
+        for g in self.state.gates:
+            gate_counts[g.gate_type] = gate_counts.get(g.gate_type, 0) + 1
+        
+        return {
+            "num_qubits": self.state.num_qubits,
+            "depth": self.state.get_circuit_depth(),
+            "total_gates": len(self.state.gates),
+            "gate_counts": gate_counts,
+            "two_qubit_gates": sum(
+                1 for g in self.state.gates
+                if len(g.target_qubits) >= 2
+            ),
+        }
+
+
+class CircuitEditorController:
+    """Controller for circuit editor interactions.
+    
+    Provides a keyboard-driven interface for circuit editing
+    with command history and auto-complete.
+    """
+    
+    KEYBINDINGS = {
+        "h": ("add_h", "Add Hadamard gate"),
+        "x": ("add_x", "Add Pauli-X gate"),
+        "y": ("add_y", "Add Pauli-Y gate"),
+        "z": ("add_z", "Add Pauli-Z gate"),
+        "c": ("add_cnot", "Add CNOT gate"),
+        "m": ("add_measure", "Add measurement"),
+        "up": ("move_up", "Move cursor up"),
+        "down": ("move_down", "Move cursor down"),
+        "left": ("move_left", "Move cursor left"),
+        "right": ("move_right", "Move cursor right"),
+        "delete": ("delete", "Delete gate at cursor"),
+        "ctrl+z": ("undo", "Undo"),
+        "ctrl+y": ("redo", "Redo"),
+        "ctrl+c": ("copy", "Copy gate"),
+        "ctrl+v": ("paste", "Paste gate"),
+        "tab": ("next_gate", "Next gate in palette"),
+        "shift+tab": ("prev_gate", "Previous gate in palette"),
+        "+": ("add_qubit", "Add qubit"),
+        "-": ("remove_qubit", "Remove qubit"),
+    }
+    
+    def __init__(self, editor: CircuitEditorWidget) -> None:
+        """Initialize controller.
+        
+        Args:
+            editor: Circuit editor widget
+        """
+        self.editor = editor
+        self._command_history: list[str] = []
+    
+    def handle_key(self, key: str) -> tuple[bool, str]:
+        """Handle keyboard input.
+        
+        Args:
+            key: Key pressed
+            
+        Returns:
+            Tuple of (handled, message)
+        """
+        action_info = self.KEYBINDINGS.get(key.lower())
+        if not action_info:
+            return False, ""
+        
+        action, description = action_info
+        self._command_history.append(action)
+        
+        if action == "move_up":
+            self.editor.move_cursor("up")
+        elif action == "move_down":
+            self.editor.move_cursor("down")
+        elif action == "move_left":
+            self.editor.move_cursor("left")
+        elif action == "move_right":
+            self.editor.move_cursor("right")
+        elif action == "add_h":
+            self.editor.select_gate_from_palette("H")
+            self.editor.place_gate()
+        elif action == "add_x":
+            self.editor.select_gate_from_palette("X")
+            self.editor.place_gate()
+        elif action == "add_y":
+            self.editor.select_gate_from_palette("Y")
+            self.editor.place_gate()
+        elif action == "add_z":
+            self.editor.select_gate_from_palette("Z")
+            self.editor.place_gate()
+        elif action == "add_cnot":
+            self.editor.select_gate_from_palette("CNOT")
+            self.editor.place_gate()
+        elif action == "add_measure":
+            self.editor.select_gate_from_palette("M")
+            self.editor.place_gate()
+        elif action == "delete":
+            self.editor.delete_at_cursor()
+        elif action == "undo":
+            self.editor.state.undo()
+        elif action == "redo":
+            self.editor.state.redo()
+        elif action == "copy":
+            self.editor.state.copy_selection()
+        elif action == "paste":
+            self.editor.state.paste()
+        elif action == "next_gate":
+            self.editor.cycle_palette(1)
+        elif action == "prev_gate":
+            self.editor.cycle_palette(-1)
+        elif action == "add_qubit":
+            self.editor.add_qubit()
+        elif action == "remove_qubit":
+            self.editor.remove_qubit()
+        else:
+            return False, ""
+        
+        return True, description
+    
+    def get_help_text(self) -> str:
+        """Get help text for keyboard shortcuts."""
+        lines = ["Circuit Editor Shortcuts:", ""]
+        
+        categories = {
+            "Navigation": ["up", "down", "left", "right"],
+            "Gates": ["h", "x", "y", "z", "c", "m"],
+            "Edit": ["delete", "ctrl+z", "ctrl+y", "ctrl+c", "ctrl+v"],
+            "Palette": ["tab", "shift+tab"],
+            "Qubits": ["+", "-"],
+        }
+        
+        for category, keys in categories.items():
+            lines.append(f"{category}:")
+            for key in keys:
+                if key in self.KEYBINDINGS:
+                    action, desc = self.KEYBINDINGS[key]
+                    lines.append(f"  {key:12} - {desc}")
+            lines.append("")
+        
+        return "\n".join(lines)
+
+
 
 def run_tui(config_path: Path | None = None) -> None:
     """Run the Proxima TUI application.

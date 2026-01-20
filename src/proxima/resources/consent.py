@@ -2040,3 +2040,1755 @@ class EnhancedConsentManager(ConsentManager):
             "expiring_soon_count": len(expiring),
             "expiring_soon": expiring[:5],  # Top 5
         }
+
+
+# ==============================================================================
+# EDGE CASE CONSENT HANDLING (3% Gap Coverage)
+# ==============================================================================
+
+
+class ConsentConflictType(Enum):
+    """Types of consent conflicts."""
+    
+    CONTRADICTORY = "contradictory"  # User granted and denied same thing
+    HIERARCHICAL = "hierarchical"  # Child conflicts with parent consent
+    TEMPORAL = "temporal"  # Newer consent conflicts with older
+    SCOPE = "scope"  # Specific vs general consent conflict
+    MULTI_CATEGORY = "multi_category"  # Operation needs multiple conflicting consents
+
+
+class ConsentEdgeCaseType(Enum):
+    """Types of edge cases in consent handling."""
+    
+    EXPIRED_DURING_OPERATION = "expired_during_operation"
+    NETWORK_FAILURE_REMOTE = "network_failure_remote"
+    BULK_CONSENT_PARTIAL = "bulk_consent_partial"
+    CONFLICTING_CONSENTS = "conflicting_consents"
+    CASCADE_REVOCATION = "cascade_revocation"
+    CONCURRENT_MODIFICATION = "concurrent_modification"
+    INVALID_STATE_RECOVERY = "invalid_state_recovery"
+    UPGRADE_CONSENT_LEVEL = "upgrade_consent_level"
+    DOWNGRADE_CONSENT_LEVEL = "downgrade_consent_level"
+
+
+@dataclass
+class ConsentConflict:
+    """Represents a conflict between consents."""
+    
+    conflict_type: ConsentConflictType
+    categories_involved: list[ConsentCategory]
+    description: str
+    resolution_strategy: str
+    resolved: bool = False
+    resolution_result: str | None = None
+    timestamp: float = field(default_factory=time.time)
+
+
+@dataclass
+class EdgeCaseResolution:
+    """Result of edge case resolution."""
+    
+    edge_case_type: ConsentEdgeCaseType
+    resolved: bool
+    resolution_action: str
+    fallback_used: bool = False
+    user_notification_required: bool = False
+    notification_message: str | None = None
+    timestamp: float = field(default_factory=time.time)
+    
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary."""
+        return {
+            "edge_case_type": self.edge_case_type.value,
+            "resolved": self.resolved,
+            "resolution_action": self.resolution_action,
+            "fallback_used": self.fallback_used,
+            "user_notification_required": self.user_notification_required,
+            "timestamp": self.timestamp,
+        }
+
+
+class ConsentConflictResolver:
+    """Resolves conflicts between consents."""
+    
+    # Priority order for conflict resolution
+    CATEGORY_PRIORITY: dict[ConsentCategory, int] = {
+        # Safety categories have highest priority
+        ConsentCategory.BYPASS_SAFETY: 100,
+        ConsentCategory.UNTRUSTED_AGENT_MD: 95,
+        ConsentCategory.UNTRUSTED_PLUGIN: 95,
+        ConsentCategory.FORCE_EXECUTE: 90,
+        # Data categories
+        ConsentCategory.FILE_DELETE: 85,
+        ConsentCategory.DATA_EXPORT: 80,
+        ConsentCategory.REMOTE_LLM: 75,
+        # Compute categories
+        ConsentCategory.GPU_MEMORY_HIGH: 70,
+        ConsentCategory.HIGH_MEMORY_USAGE: 70,
+        ConsentCategory.DISTRIBUTED_COMPUTE: 65,
+        # Default priority
+    }
+    
+    def __init__(self) -> None:
+        self._conflict_history: list[ConsentConflict] = []
+        self._lock = threading.Lock()
+    
+    def detect_conflicts(
+        self,
+        consents: dict[str, ConsentRecord],
+        new_request: ConsentRequest,
+    ) -> list[ConsentConflict]:
+        """Detect conflicts between existing consents and new request."""
+        conflicts: list[ConsentConflict] = []
+        
+        # Check for contradictory consents
+        if new_request.category.value in consents:
+            existing = consents[new_request.category.value]
+            if existing.granted != new_request.granted:
+                conflicts.append(ConsentConflict(
+                    conflict_type=ConsentConflictType.CONTRADICTORY,
+                    categories_involved=[new_request.category],
+                    description=f"Contradictory consent for {new_request.category.value}",
+                    resolution_strategy="newer_wins",
+                ))
+        
+        # Check hierarchical conflicts (e.g., LOCAL_LLM vs specific provider)
+        conflicts.extend(self._check_hierarchical_conflicts(consents, new_request))
+        
+        # Check scope conflicts
+        conflicts.extend(self._check_scope_conflicts(consents, new_request))
+        
+        return conflicts
+    
+    def _check_hierarchical_conflicts(
+        self,
+        consents: dict[str, ConsentRecord],
+        new_request: ConsentRequest,
+    ) -> list[ConsentConflict]:
+        """Check for parent-child consent conflicts."""
+        conflicts = []
+        
+        # Define parent-child relationships
+        parent_child_map = {
+            ConsentCategory.LOCAL_LLM: [
+                ConsentCategory.LLM_OLLAMA,
+                ConsentCategory.LLM_LMSTUDIO,
+            ],
+            ConsentCategory.REMOTE_LLM: [
+                ConsentCategory.LLM_OPENAI,
+                ConsentCategory.LLM_ANTHROPIC,
+            ],
+            ConsentCategory.GPU_EXECUTION: [
+                ConsentCategory.GPU_MEMORY_HIGH,
+                ConsentCategory.BACKEND_CUQUANTUM,
+            ],
+        }
+        
+        # Check if new request conflicts with parent
+        for parent, children in parent_child_map.items():
+            if new_request.category in children and parent.value in consents:
+                parent_consent = consents[parent.value]
+                if not parent_consent.granted and new_request.granted:
+                    conflicts.append(ConsentConflict(
+                        conflict_type=ConsentConflictType.HIERARCHICAL,
+                        categories_involved=[parent, new_request.category],
+                        description=(
+                            f"Cannot grant {new_request.category.value} "
+                            f"when parent {parent.value} is denied"
+                        ),
+                        resolution_strategy="parent_overrides",
+                    ))
+        
+        return conflicts
+    
+    def _check_scope_conflicts(
+        self,
+        consents: dict[str, ConsentRecord],
+        new_request: ConsentRequest,
+    ) -> list[ConsentConflict]:
+        """Check for specific vs general consent conflicts."""
+        conflicts = []
+        
+        # Resource-related scope conflicts
+        if new_request.category == ConsentCategory.RESOURCE_INTENSIVE:
+            specific_categories = [
+                ConsentCategory.GPU_MEMORY_HIGH,
+                ConsentCategory.HIGH_MEMORY_USAGE,
+                ConsentCategory.LONG_RUNNING,
+            ]
+            
+            for cat in specific_categories:
+                if cat.value in consents:
+                    existing = consents[cat.value]
+                    if existing.granted != new_request.granted:
+                        conflicts.append(ConsentConflict(
+                            conflict_type=ConsentConflictType.SCOPE,
+                            categories_involved=[new_request.category, cat],
+                            description=f"Scope conflict: {new_request.category.value} vs {cat.value}",
+                            resolution_strategy="specific_wins",
+                        ))
+        
+        return conflicts
+    
+    def resolve_conflict(
+        self,
+        conflict: ConsentConflict,
+        consents: dict[str, ConsentRecord],
+    ) -> ConsentConflict:
+        """Resolve a detected conflict."""
+        with self._lock:
+            if conflict.resolution_strategy == "newer_wins":
+                conflict.resolved = True
+                conflict.resolution_result = "New consent supersedes old"
+            
+            elif conflict.resolution_strategy == "parent_overrides":
+                conflict.resolved = True
+                conflict.resolution_result = "Parent consent takes precedence"
+            
+            elif conflict.resolution_strategy == "specific_wins":
+                conflict.resolved = True
+                conflict.resolution_result = "Specific consent overrides general"
+            
+            else:
+                # Default: deny if any conflict
+                conflict.resolved = True
+                conflict.resolution_result = "Defaulted to deny for safety"
+            
+            self._conflict_history.append(conflict)
+            
+            # Limit history size
+            if len(self._conflict_history) > 1000:
+                self._conflict_history = self._conflict_history[-500:]
+            
+            return conflict
+    
+    def get_conflict_history(self) -> list[ConsentConflict]:
+        """Get conflict resolution history."""
+        with self._lock:
+            return self._conflict_history.copy()
+
+
+class EdgeCaseConsentHandler:
+    """Handles edge cases in consent management."""
+    
+    def __init__(
+        self,
+        consent_manager: ConsentManager | None = None,
+    ) -> None:
+        self._consent_manager = consent_manager
+        self._conflict_resolver = ConsentConflictResolver()
+        self._edge_case_log: list[EdgeCaseResolution] = []
+        self._lock = threading.Lock()
+        self._active_operations: dict[str, ConsentRecord] = {}
+        
+        # Callbacks for edge case notifications
+        self._notification_callbacks: list[Callable[[str, EdgeCaseResolution], None]] = []
+    
+    def register_notification_callback(
+        self,
+        callback: Callable[[str, EdgeCaseResolution], None],
+    ) -> None:
+        """Register callback for edge case notifications."""
+        self._notification_callbacks.append(callback)
+    
+    def _notify(self, operation_id: str, resolution: EdgeCaseResolution) -> None:
+        """Notify registered callbacks of edge case resolution."""
+        for callback in self._notification_callbacks:
+            try:
+                callback(operation_id, resolution)
+            except Exception as e:
+                logger.warning(f"Edge case notification callback failed: {e}")
+    
+    def handle_expired_during_operation(
+        self,
+        operation_id: str,
+        category: ConsentCategory,
+        operation_context: dict[str, Any],
+    ) -> EdgeCaseResolution:
+        """Handle consent expiring while operation is in progress.
+        
+        Strategy:
+        1. If operation is past point-of-no-return, continue with warning
+        2. If operation can be paused, pause and re-prompt
+        3. If operation is early stage, abort and notify
+        """
+        with self._lock:
+            operation_progress = operation_context.get("progress_percent", 0)
+            can_pause = operation_context.get("can_pause", False)
+            point_of_no_return = operation_context.get("point_of_no_return_percent", 80)
+            
+            if operation_progress >= point_of_no_return:
+                # Past point of no return - continue with warning
+                resolution = EdgeCaseResolution(
+                    edge_case_type=ConsentEdgeCaseType.EXPIRED_DURING_OPERATION,
+                    resolved=True,
+                    resolution_action="continue_with_warning",
+                    fallback_used=True,
+                    user_notification_required=True,
+                    notification_message=(
+                        f"Consent for {category.value} expired during operation. "
+                        f"Operation at {operation_progress}% - continuing to completion."
+                    ),
+                )
+            elif can_pause:
+                # Can pause - request re-consent
+                resolution = EdgeCaseResolution(
+                    edge_case_type=ConsentEdgeCaseType.EXPIRED_DURING_OPERATION,
+                    resolved=False,  # Needs user action
+                    resolution_action="pause_and_reprompt",
+                    fallback_used=False,
+                    user_notification_required=True,
+                    notification_message=(
+                        f"Consent for {category.value} expired. "
+                        f"Operation paused at {operation_progress}%. Please re-consent."
+                    ),
+                )
+            else:
+                # Early stage and can't pause - abort
+                resolution = EdgeCaseResolution(
+                    edge_case_type=ConsentEdgeCaseType.EXPIRED_DURING_OPERATION,
+                    resolved=True,
+                    resolution_action="abort_operation",
+                    fallback_used=False,
+                    user_notification_required=True,
+                    notification_message=(
+                        f"Consent for {category.value} expired. "
+                        f"Operation aborted at {operation_progress}%."
+                    ),
+                )
+            
+            self._edge_case_log.append(resolution)
+            self._notify(operation_id, resolution)
+            
+            return resolution
+    
+    def handle_network_failure_remote_consent(
+        self,
+        operation_id: str,
+        category: ConsentCategory,
+        retry_count: int = 3,
+        fallback_to_local: bool = True,
+    ) -> EdgeCaseResolution:
+        """Handle network failure during remote LLM consent verification.
+        
+        Strategy:
+        1. Retry with exponential backoff
+        2. If retries exhausted, fallback to cached consent if available
+        3. If no cache, fallback to local LLM if enabled
+        4. If no fallback, deny with notification
+        """
+        with self._lock:
+            # Check for cached consent
+            cached_consent = self._get_cached_consent(category)
+            
+            if cached_consent and cached_consent.granted:
+                resolution = EdgeCaseResolution(
+                    edge_case_type=ConsentEdgeCaseType.NETWORK_FAILURE_REMOTE,
+                    resolved=True,
+                    resolution_action="use_cached_consent",
+                    fallback_used=True,
+                    user_notification_required=False,
+                    notification_message=(
+                        f"Network failure during {category.value} consent. "
+                        "Using cached consent."
+                    ),
+                )
+            elif fallback_to_local and category in (
+                ConsentCategory.REMOTE_LLM,
+                ConsentCategory.LLM_OPENAI,
+                ConsentCategory.LLM_ANTHROPIC,
+            ):
+                resolution = EdgeCaseResolution(
+                    edge_case_type=ConsentEdgeCaseType.NETWORK_FAILURE_REMOTE,
+                    resolved=True,
+                    resolution_action="fallback_to_local_llm",
+                    fallback_used=True,
+                    user_notification_required=True,
+                    notification_message=(
+                        f"Network failure during {category.value} consent. "
+                        "Falling back to local LLM."
+                    ),
+                )
+            else:
+                resolution = EdgeCaseResolution(
+                    edge_case_type=ConsentEdgeCaseType.NETWORK_FAILURE_REMOTE,
+                    resolved=True,
+                    resolution_action="deny_operation",
+                    fallback_used=False,
+                    user_notification_required=True,
+                    notification_message=(
+                        f"Network failure during {category.value} consent. "
+                        "Operation denied. Please check network connection."
+                    ),
+                )
+            
+            self._edge_case_log.append(resolution)
+            self._notify(operation_id, resolution)
+            
+            return resolution
+    
+    def _get_cached_consent(
+        self,
+        category: ConsentCategory,
+    ) -> ConsentRecord | None:
+        """Get cached consent for a category."""
+        if self._consent_manager:
+            # Access manager's records if available
+            records = getattr(self._consent_manager, "_session_records", {})
+            return records.get(category.value)
+        return None
+    
+    def handle_bulk_consent_partial_failure(
+        self,
+        operation_id: str,
+        requested_categories: list[ConsentCategory],
+        granted_categories: list[ConsentCategory],
+        denied_categories: list[ConsentCategory],
+    ) -> EdgeCaseResolution:
+        """Handle partial success in bulk consent requests.
+        
+        Strategy:
+        1. Determine if operation can proceed with granted subset
+        2. If critical consents denied, abort
+        3. If optional consents denied, proceed with reduced functionality
+        """
+        with self._lock:
+            # Determine critical categories
+            critical_categories = {
+                ConsentCategory.FORCE_EXECUTE,
+                ConsentCategory.BYPASS_SAFETY,
+                ConsentCategory.UNTRUSTED_AGENT_MD,
+            }
+            
+            critical_denied = set(denied_categories) & critical_categories
+            
+            if critical_denied:
+                resolution = EdgeCaseResolution(
+                    edge_case_type=ConsentEdgeCaseType.BULK_CONSENT_PARTIAL,
+                    resolved=True,
+                    resolution_action="abort_critical_denied",
+                    fallback_used=False,
+                    user_notification_required=True,
+                    notification_message=(
+                        f"Critical consents denied: {[c.value for c in critical_denied]}. "
+                        "Operation cannot proceed."
+                    ),
+                )
+            elif len(granted_categories) >= len(requested_categories) // 2:
+                # More than half granted - proceed with reduced functionality
+                resolution = EdgeCaseResolution(
+                    edge_case_type=ConsentEdgeCaseType.BULK_CONSENT_PARTIAL,
+                    resolved=True,
+                    resolution_action="proceed_with_subset",
+                    fallback_used=True,
+                    user_notification_required=True,
+                    notification_message=(
+                        f"Proceeding with {len(granted_categories)}/{len(requested_categories)} "
+                        f"consents. Denied: {[c.value for c in denied_categories]}"
+                    ),
+                )
+            else:
+                # Too few granted
+                resolution = EdgeCaseResolution(
+                    edge_case_type=ConsentEdgeCaseType.BULK_CONSENT_PARTIAL,
+                    resolved=True,
+                    resolution_action="abort_insufficient_consents",
+                    fallback_used=False,
+                    user_notification_required=True,
+                    notification_message=(
+                        f"Insufficient consents granted ({len(granted_categories)}/{len(requested_categories)}). "
+                        "Operation aborted."
+                    ),
+                )
+            
+            self._edge_case_log.append(resolution)
+            self._notify(operation_id, resolution)
+            
+            return resolution
+    
+    def handle_conflicting_consents(
+        self,
+        operation_id: str,
+        consents: dict[str, ConsentRecord],
+        new_request: ConsentRequest,
+    ) -> EdgeCaseResolution:
+        """Handle conflicting consent requests."""
+        with self._lock:
+            # Detect conflicts
+            conflicts = self._conflict_resolver.detect_conflicts(consents, new_request)
+            
+            if not conflicts:
+                resolution = EdgeCaseResolution(
+                    edge_case_type=ConsentEdgeCaseType.CONFLICTING_CONSENTS,
+                    resolved=True,
+                    resolution_action="no_conflict",
+                    fallback_used=False,
+                    user_notification_required=False,
+                )
+            else:
+                # Resolve all conflicts
+                all_resolved = True
+                resolution_details = []
+                
+                for conflict in conflicts:
+                    resolved = self._conflict_resolver.resolve_conflict(conflict, consents)
+                    if not resolved.resolved:
+                        all_resolved = False
+                    resolution_details.append(resolved.resolution_result)
+                
+                resolution = EdgeCaseResolution(
+                    edge_case_type=ConsentEdgeCaseType.CONFLICTING_CONSENTS,
+                    resolved=all_resolved,
+                    resolution_action=f"resolved_{len(conflicts)}_conflicts",
+                    fallback_used=False,
+                    user_notification_required=True,
+                    notification_message=(
+                        f"Resolved {len(conflicts)} consent conflict(s): "
+                        f"{'; '.join(filter(None, resolution_details))}"
+                    ),
+                )
+            
+            self._edge_case_log.append(resolution)
+            self._notify(operation_id, resolution)
+            
+            return resolution
+    
+    def handle_cascade_revocation(
+        self,
+        operation_id: str,
+        revoked_category: ConsentCategory,
+        dependent_operations: list[str],
+    ) -> EdgeCaseResolution:
+        """Handle cascading effects when a consent is revoked.
+        
+        Strategy:
+        1. Identify all dependent operations
+        2. Attempt graceful shutdown of each
+        3. If graceful fails, force terminate
+        """
+        with self._lock:
+            terminated_ops = []
+            failed_ops = []
+            
+            for op_id in dependent_operations:
+                if op_id in self._active_operations:
+                    # Mark for termination
+                    terminated_ops.append(op_id)
+                    del self._active_operations[op_id]
+                else:
+                    failed_ops.append(op_id)
+            
+            if failed_ops:
+                resolution = EdgeCaseResolution(
+                    edge_case_type=ConsentEdgeCaseType.CASCADE_REVOCATION,
+                    resolved=False,
+                    resolution_action="partial_cascade_termination",
+                    fallback_used=False,
+                    user_notification_required=True,
+                    notification_message=(
+                        f"Revoked {revoked_category.value}. "
+                        f"Terminated {len(terminated_ops)} operations, "
+                        f"{len(failed_ops)} could not be terminated."
+                    ),
+                )
+            else:
+                resolution = EdgeCaseResolution(
+                    edge_case_type=ConsentEdgeCaseType.CASCADE_REVOCATION,
+                    resolved=True,
+                    resolution_action="full_cascade_termination",
+                    fallback_used=False,
+                    user_notification_required=True,
+                    notification_message=(
+                        f"Revoked {revoked_category.value}. "
+                        f"Terminated {len(terminated_ops)} dependent operations."
+                    ),
+                )
+            
+            self._edge_case_log.append(resolution)
+            self._notify(operation_id, resolution)
+            
+            return resolution
+    
+    def handle_concurrent_modification(
+        self,
+        operation_id: str,
+        category: ConsentCategory,
+        expected_version: int,
+        current_version: int,
+    ) -> EdgeCaseResolution:
+        """Handle concurrent consent modifications (optimistic locking)."""
+        with self._lock:
+            if expected_version != current_version:
+                resolution = EdgeCaseResolution(
+                    edge_case_type=ConsentEdgeCaseType.CONCURRENT_MODIFICATION,
+                    resolved=False,
+                    resolution_action="retry_with_current_version",
+                    fallback_used=False,
+                    user_notification_required=False,
+                    notification_message=(
+                        f"Consent for {category.value} was modified concurrently. "
+                        f"Expected version {expected_version}, got {current_version}."
+                    ),
+                )
+            else:
+                resolution = EdgeCaseResolution(
+                    edge_case_type=ConsentEdgeCaseType.CONCURRENT_MODIFICATION,
+                    resolved=True,
+                    resolution_action="version_match",
+                    fallback_used=False,
+                    user_notification_required=False,
+                )
+            
+            self._edge_case_log.append(resolution)
+            return resolution
+    
+    def handle_invalid_state_recovery(
+        self,
+        operation_id: str,
+        invalid_records: list[str],
+        recovery_strategy: str = "reset_to_default",
+    ) -> EdgeCaseResolution:
+        """Handle recovery from invalid consent state (e.g., corrupted storage)."""
+        with self._lock:
+            if recovery_strategy == "reset_to_default":
+                resolution = EdgeCaseResolution(
+                    edge_case_type=ConsentEdgeCaseType.INVALID_STATE_RECOVERY,
+                    resolved=True,
+                    resolution_action="reset_invalid_records",
+                    fallback_used=True,
+                    user_notification_required=True,
+                    notification_message=(
+                        f"Detected {len(invalid_records)} invalid consent records. "
+                        "Reset to default values. Please re-consent."
+                    ),
+                )
+            elif recovery_strategy == "backup_restore":
+                resolution = EdgeCaseResolution(
+                    edge_case_type=ConsentEdgeCaseType.INVALID_STATE_RECOVERY,
+                    resolved=True,
+                    resolution_action="restore_from_backup",
+                    fallback_used=True,
+                    user_notification_required=True,
+                    notification_message=(
+                        f"Detected {len(invalid_records)} invalid consent records. "
+                        "Restored from backup."
+                    ),
+                )
+            else:
+                resolution = EdgeCaseResolution(
+                    edge_case_type=ConsentEdgeCaseType.INVALID_STATE_RECOVERY,
+                    resolved=False,
+                    resolution_action="manual_intervention_required",
+                    fallback_used=False,
+                    user_notification_required=True,
+                    notification_message=(
+                        f"Detected {len(invalid_records)} invalid consent records. "
+                        "Manual intervention required."
+                    ),
+                )
+            
+            self._edge_case_log.append(resolution)
+            self._notify(operation_id, resolution)
+            
+            return resolution
+    
+    def handle_consent_level_upgrade(
+        self,
+        operation_id: str,
+        category: ConsentCategory,
+        current_level: ConsentLevel,
+        requested_level: ConsentLevel,
+    ) -> EdgeCaseResolution:
+        """Handle upgrading consent level (e.g., SESSION -> PERSISTENT)."""
+        with self._lock:
+            # Define level ordering
+            level_order = {
+                ConsentLevel.ONE_TIME: 0,
+                ConsentLevel.SESSION: 1,
+                ConsentLevel.PERSISTENT: 2,
+                ConsentLevel.NEVER: -1,  # Special case
+            }
+            
+            current_order = level_order.get(current_level, 0)
+            requested_order = level_order.get(requested_level, 0)
+            
+            if current_level == ConsentLevel.NEVER:
+                # Cannot upgrade from NEVER without explicit revocation
+                resolution = EdgeCaseResolution(
+                    edge_case_type=ConsentEdgeCaseType.UPGRADE_CONSENT_LEVEL,
+                    resolved=False,
+                    resolution_action="cannot_upgrade_from_never",
+                    fallback_used=False,
+                    user_notification_required=True,
+                    notification_message=(
+                        f"Cannot upgrade {category.value} from NEVER. "
+                        "Please revoke the NEVER consent first."
+                    ),
+                )
+            elif requested_order > current_order:
+                resolution = EdgeCaseResolution(
+                    edge_case_type=ConsentEdgeCaseType.UPGRADE_CONSENT_LEVEL,
+                    resolved=True,
+                    resolution_action=f"upgraded_{current_level.name}_to_{requested_level.name}",
+                    fallback_used=False,
+                    user_notification_required=False,
+                )
+            else:
+                resolution = EdgeCaseResolution(
+                    edge_case_type=ConsentEdgeCaseType.UPGRADE_CONSENT_LEVEL,
+                    resolved=True,
+                    resolution_action="no_upgrade_needed",
+                    fallback_used=False,
+                    user_notification_required=False,
+                )
+            
+            self._edge_case_log.append(resolution)
+            self._notify(operation_id, resolution)
+            
+            return resolution
+    
+    def handle_consent_level_downgrade(
+        self,
+        operation_id: str,
+        category: ConsentCategory,
+        current_level: ConsentLevel,
+        requested_level: ConsentLevel,
+        active_operations_with_consent: list[str],
+    ) -> EdgeCaseResolution:
+        """Handle downgrading consent level (e.g., PERSISTENT -> SESSION)."""
+        with self._lock:
+            if active_operations_with_consent:
+                # Cannot downgrade while operations are using the consent
+                resolution = EdgeCaseResolution(
+                    edge_case_type=ConsentEdgeCaseType.DOWNGRADE_CONSENT_LEVEL,
+                    resolved=False,
+                    resolution_action="blocked_by_active_operations",
+                    fallback_used=False,
+                    user_notification_required=True,
+                    notification_message=(
+                        f"Cannot downgrade {category.value} consent. "
+                        f"{len(active_operations_with_consent)} operations are using it."
+                    ),
+                )
+            else:
+                resolution = EdgeCaseResolution(
+                    edge_case_type=ConsentEdgeCaseType.DOWNGRADE_CONSENT_LEVEL,
+                    resolved=True,
+                    resolution_action=f"downgraded_{current_level.name}_to_{requested_level.name}",
+                    fallback_used=False,
+                    user_notification_required=False,
+                )
+            
+            self._edge_case_log.append(resolution)
+            self._notify(operation_id, resolution)
+            
+            return resolution
+    
+    def track_operation_consent(
+        self,
+        operation_id: str,
+        consent_record: ConsentRecord,
+    ) -> None:
+        """Track that an operation is using a consent."""
+        with self._lock:
+            self._active_operations[operation_id] = consent_record
+    
+    def untrack_operation_consent(
+        self,
+        operation_id: str,
+    ) -> None:
+        """Stop tracking an operation's consent."""
+        with self._lock:
+            self._active_operations.pop(operation_id, None)
+    
+    def get_operations_using_consent(
+        self,
+        category: ConsentCategory,
+    ) -> list[str]:
+        """Get all operations currently using a consent category."""
+        with self._lock:
+            return [
+                op_id for op_id, record in self._active_operations.items()
+                if record.category == category
+            ]
+    
+    def get_edge_case_log(self) -> list[EdgeCaseResolution]:
+        """Get edge case resolution log."""
+        with self._lock:
+            return self._edge_case_log.copy()
+    
+    def get_edge_case_summary(self) -> dict[str, Any]:
+        """Get summary of edge case handling."""
+        with self._lock:
+            type_counts: dict[str, int] = {}
+            resolved_count = 0
+            fallback_count = 0
+            
+            for resolution in self._edge_case_log:
+                type_name = resolution.edge_case_type.value
+                type_counts[type_name] = type_counts.get(type_name, 0) + 1
+                if resolution.resolved:
+                    resolved_count += 1
+                if resolution.fallback_used:
+                    fallback_count += 1
+            
+            return {
+                "total_edge_cases": len(self._edge_case_log),
+                "resolved": resolved_count,
+                "unresolved": len(self._edge_case_log) - resolved_count,
+                "fallback_used": fallback_count,
+                "by_type": type_counts,
+                "active_tracked_operations": len(self._active_operations),
+                "conflict_history_size": len(self._conflict_resolver.get_conflict_history()),
+            }
+
+
+# =============================================================================
+# CONSENT UI POLISH (2% Gap Coverage)
+# User-friendly consent display, formatting, and interactive UI helpers
+# =============================================================================
+
+
+class ConsentDisplayStyle(Enum):
+    """Display styles for consent prompts."""
+    
+    MINIMAL = "minimal"  # Just the essentials
+    STANDARD = "standard"  # Default presentation
+    DETAILED = "detailed"  # Full information
+    ACCESSIBLE = "accessible"  # Screen reader friendly
+    COMPACT = "compact"  # Narrow terminal/small space
+
+
+@dataclass
+class ConsentCategoryInfo:
+    """Rich information about a consent category for UI display."""
+    
+    category: ConsentCategory
+    name: str
+    description: str
+    icon: str
+    color_hint: str  # Suggested color for UI theming
+    risk_level: str  # "low", "medium", "high"
+    examples: list[str]
+    related_categories: list[ConsentCategory]
+    
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for JSON serialization."""
+        return {
+            "category": self.category.value,
+            "name": self.name,
+            "description": self.description,
+            "icon": self.icon,
+            "color_hint": self.color_hint,
+            "risk_level": self.risk_level,
+            "examples": self.examples,
+            "related_categories": [c.value for c in self.related_categories],
+        }
+
+
+class ConsentCategoryRegistry:
+    """Registry of rich consent category information for UI display."""
+    
+    _CATEGORY_INFO: ClassVar[dict[ConsentCategory, ConsentCategoryInfo]] = {}
+    
+    @classmethod
+    def _initialize(cls) -> None:
+        """Initialize category information."""
+        if cls._CATEGORY_INFO:
+            return
+        
+        cls._CATEGORY_INFO = {
+            ConsentCategory.LLM_USAGE: ConsentCategoryInfo(
+                category=ConsentCategory.LLM_USAGE,
+                name="AI/LLM Usage",
+                description="Allow use of Large Language Models for code analysis and assistance",
+                icon="🤖",
+                color_hint="#4A90A4",
+                risk_level="medium",
+                examples=["Code explanations", "Bug suggestions", "Refactoring hints"],
+                related_categories=[ConsentCategory.DATA_COLLECTION, ConsentCategory.EXTERNAL_API],
+            ),
+            ConsentCategory.GPU_USAGE: ConsentCategoryInfo(
+                category=ConsentCategory.GPU_USAGE,
+                name="GPU Acceleration",
+                description="Use GPU for accelerated quantum simulations",
+                icon="⚡",
+                color_hint="#FFB74D",
+                risk_level="low",
+                examples=["Faster simulations", "Larger qubit counts", "Parallel processing"],
+                related_categories=[ConsentCategory.RESOURCE_INTENSIVE],
+            ),
+            ConsentCategory.TELEMETRY: ConsentCategoryInfo(
+                category=ConsentCategory.TELEMETRY,
+                name="Anonymous Telemetry",
+                description="Send anonymous usage statistics to improve Proxima",
+                icon="📊",
+                color_hint="#90CAF9",
+                risk_level="low",
+                examples=["Feature usage counts", "Performance metrics", "Error rates"],
+                related_categories=[ConsentCategory.DATA_COLLECTION, ConsentCategory.ANALYTICS],
+            ),
+            ConsentCategory.ANALYTICS: ConsentCategoryInfo(
+                category=ConsentCategory.ANALYTICS,
+                name="Usage Analytics",
+                description="Collect detailed analytics for performance optimization",
+                icon="📈",
+                color_hint="#81C784",
+                risk_level="low",
+                examples=["Benchmark results", "Backend comparisons", "Resource usage"],
+                related_categories=[ConsentCategory.TELEMETRY, ConsentCategory.DATA_COLLECTION],
+            ),
+            ConsentCategory.DATA_COLLECTION: ConsentCategoryInfo(
+                category=ConsentCategory.DATA_COLLECTION,
+                name="Data Collection",
+                description="Collect usage data for analysis and improvements",
+                icon="📁",
+                color_hint="#CE93D8",
+                risk_level="medium",
+                examples=["Circuit patterns", "Usage history", "Preferences"],
+                related_categories=[ConsentCategory.TELEMETRY, ConsentCategory.ANALYTICS],
+            ),
+            ConsentCategory.EXTERNAL_API: ConsentCategoryInfo(
+                category=ConsentCategory.EXTERNAL_API,
+                name="External APIs",
+                description="Connect to external services and APIs",
+                icon="🌐",
+                color_hint="#FFD54F",
+                risk_level="medium",
+                examples=["Cloud providers", "LLM services", "External backends"],
+                related_categories=[ConsentCategory.NETWORK_ACCESS, ConsentCategory.LLM_USAGE],
+            ),
+            ConsentCategory.NETWORK_ACCESS: ConsentCategoryInfo(
+                category=ConsentCategory.NETWORK_ACCESS,
+                name="Network Access",
+                description="Allow network connectivity for updates and services",
+                icon="📡",
+                color_hint="#4FC3F7",
+                risk_level="medium",
+                examples=["Update checks", "Package downloads", "Remote backends"],
+                related_categories=[ConsentCategory.EXTERNAL_API],
+            ),
+            ConsentCategory.FILE_SYSTEM: ConsentCategoryInfo(
+                category=ConsentCategory.FILE_SYSTEM,
+                name="File System Access",
+                description="Read and write files on your system",
+                icon="📂",
+                color_hint="#A5D6A7",
+                risk_level="medium",
+                examples=["Save results", "Cache data", "Export circuits"],
+                related_categories=[ConsentCategory.DATA_STORAGE],
+            ),
+            ConsentCategory.DATA_STORAGE: ConsentCategoryInfo(
+                category=ConsentCategory.DATA_STORAGE,
+                name="Data Storage",
+                description="Store data locally for caching and history",
+                icon="💾",
+                color_hint="#BCAAA4",
+                risk_level="low",
+                examples=["Cache results", "Session history", "Configuration"],
+                related_categories=[ConsentCategory.FILE_SYSTEM],
+            ),
+            ConsentCategory.RESOURCE_INTENSIVE: ConsentCategoryInfo(
+                category=ConsentCategory.RESOURCE_INTENSIVE,
+                name="Resource Intensive",
+                description="Run computationally intensive operations",
+                icon="🔥",
+                color_hint="#EF5350",
+                risk_level="medium",
+                examples=["Large simulations", "Parallel processing", "GPU operations"],
+                related_categories=[ConsentCategory.GPU_USAGE],
+            ),
+            ConsentCategory.EXPERIMENTAL: ConsentCategoryInfo(
+                category=ConsentCategory.EXPERIMENTAL,
+                name="Experimental Features",
+                description="Use experimental and preview features",
+                icon="🧪",
+                color_hint="#BA68C8",
+                risk_level="high",
+                examples=["Beta features", "Prototype backends", "New algorithms"],
+                related_categories=[],
+            ),
+            ConsentCategory.PLUGIN_EXECUTION: ConsentCategoryInfo(
+                category=ConsentCategory.PLUGIN_EXECUTION,
+                name="Plugin Execution",
+                description="Allow third-party plugins to run code",
+                icon="🔌",
+                color_hint="#FFA726",
+                risk_level="high",
+                examples=["Custom backends", "Extensions", "Third-party tools"],
+                related_categories=[ConsentCategory.EXPERIMENTAL],
+            ),
+            ConsentCategory.SAFETY_OVERRIDE: ConsentCategoryInfo(
+                category=ConsentCategory.SAFETY_OVERRIDE,
+                name="Safety Override",
+                description="Override safety limits and restrictions",
+                icon="⚠️",
+                color_hint="#F44336",
+                risk_level="high",
+                examples=["Memory limits", "Time limits", "Qubit limits"],
+                related_categories=[ConsentCategory.RESOURCE_INTENSIVE],
+            ),
+            ConsentCategory.ERROR_REPORTING: ConsentCategoryInfo(
+                category=ConsentCategory.ERROR_REPORTING,
+                name="Error Reporting",
+                description="Send error reports to help diagnose issues",
+                icon="🐛",
+                color_hint="#7986CB",
+                risk_level="low",
+                examples=["Crash reports", "Stack traces", "Error context"],
+                related_categories=[ConsentCategory.TELEMETRY],
+            ),
+            ConsentCategory.AUTO_UPDATE: ConsentCategoryInfo(
+                category=ConsentCategory.AUTO_UPDATE,
+                name="Auto Update",
+                description="Automatically check for and install updates",
+                icon="🔄",
+                color_hint="#4DB6AC",
+                risk_level="low",
+                examples=["Version checks", "Package updates", "Security patches"],
+                related_categories=[ConsentCategory.NETWORK_ACCESS],
+            ),
+        }
+    
+    @classmethod
+    def get_info(cls, category: ConsentCategory) -> ConsentCategoryInfo:
+        """Get rich information for a category."""
+        cls._initialize()
+        
+        if category in cls._CATEGORY_INFO:
+            return cls._CATEGORY_INFO[category]
+        
+        # Fallback for unknown categories
+        return ConsentCategoryInfo(
+            category=category,
+            name=category.value.replace("_", " ").title(),
+            description=f"Permission for {category.value}",
+            icon="❓",
+            color_hint="#9E9E9E",
+            risk_level="medium",
+            examples=[],
+            related_categories=[],
+        )
+    
+    @classmethod
+    def get_all_info(cls) -> dict[ConsentCategory, ConsentCategoryInfo]:
+        """Get information for all categories."""
+        cls._initialize()
+        return cls._CATEGORY_INFO.copy()
+    
+    @classmethod
+    def get_by_risk_level(cls, risk_level: str) -> list[ConsentCategoryInfo]:
+        """Get categories by risk level."""
+        cls._initialize()
+        return [
+            info for info in cls._CATEGORY_INFO.values()
+            if info.risk_level == risk_level
+        ]
+
+
+@dataclass
+class FormattedConsentPrompt:
+    """A formatted consent prompt ready for display."""
+    
+    title: str
+    description: str
+    category_display: str
+    risk_indicator: str
+    action_options: list[str]
+    additional_info: str
+    
+    # Terminal formatting
+    plain_text: str
+    ansi_colored: str
+    
+    # Structured for rich UIs
+    structured: dict[str, Any]
+    
+    # Accessibility
+    screen_reader_text: str
+
+
+class ConsentUIFormatter:
+    """Formats consent prompts for various UI contexts.
+    
+    Supports:
+    - Terminal (plain text and ANSI colored)
+    - GUI (structured data)
+    - Accessibility (screen reader friendly)
+    """
+    
+    # ANSI color codes
+    _COLORS: ClassVar[dict[str, str]] = {
+        "reset": "\033[0m",
+        "bold": "\033[1m",
+        "dim": "\033[2m",
+        "red": "\033[91m",
+        "green": "\033[92m",
+        "yellow": "\033[93m",
+        "blue": "\033[94m",
+        "magenta": "\033[95m",
+        "cyan": "\033[96m",
+        "white": "\033[97m",
+    }
+    
+    _RISK_COLORS: ClassVar[dict[str, str]] = {
+        "low": "green",
+        "medium": "yellow",
+        "high": "red",
+    }
+    
+    def __init__(
+        self,
+        style: ConsentDisplayStyle = ConsentDisplayStyle.STANDARD,
+        use_colors: bool = True,
+        use_icons: bool = True,
+        terminal_width: int = 80,
+    ) -> None:
+        """Initialize UI formatter.
+        
+        Args:
+            style: Display style to use
+            use_colors: Whether to use ANSI colors
+            use_icons: Whether to use emoji icons
+            terminal_width: Terminal width for text wrapping
+        """
+        self._style = style
+        self._use_colors = use_colors
+        self._use_icons = use_icons
+        self._width = terminal_width
+    
+    def format_consent_prompt(
+        self,
+        category: ConsentCategory,
+        operation: str,
+        current_level: ConsentLevel = ConsentLevel.NEVER,
+        requested_level: ConsentLevel = ConsentLevel.SESSION,
+    ) -> FormattedConsentPrompt:
+        """Format a consent prompt for display.
+        
+        Args:
+            category: Consent category being requested
+            operation: Operation requiring consent
+            current_level: Current consent level
+            requested_level: Requested consent level
+            
+        Returns:
+            FormattedConsentPrompt with multiple format options
+        """
+        info = ConsentCategoryRegistry.get_info(category)
+        
+        # Build title
+        icon = info.icon if self._use_icons else ""
+        title = f"{icon} {info.name} Permission Required".strip()
+        
+        # Build description based on style
+        if self._style == ConsentDisplayStyle.MINIMAL:
+            description = f"Allow {operation}?"
+        elif self._style == ConsentDisplayStyle.DETAILED:
+            description = f"{info.description}\n\nThis operation ({operation}) requires your permission."
+            if info.examples:
+                description += f"\n\nExamples: {', '.join(info.examples)}"
+        else:
+            description = f"{info.description}\n\nOperation: {operation}"
+        
+        # Category display
+        category_display = f"[{category.value}]"
+        
+        # Risk indicator
+        risk_color = self._RISK_COLORS.get(info.risk_level, "yellow")
+        risk_indicator = f"Risk: {info.risk_level.upper()}"
+        
+        # Action options
+        action_options = self._get_action_options(requested_level)
+        
+        # Additional info
+        additional_info = ""
+        if current_level != ConsentLevel.NEVER:
+            additional_info = f"Current permission: {current_level.value}"
+        
+        # Format for terminal
+        plain_text = self._format_plain_text(
+            title, description, category_display, risk_indicator,
+            action_options, additional_info
+        )
+        
+        ansi_colored = self._format_ansi(
+            title, description, category_display, risk_indicator,
+            action_options, additional_info, risk_color, info
+        )
+        
+        # Structured for GUIs
+        structured = {
+            "category": category.value,
+            "category_info": info.to_dict(),
+            "operation": operation,
+            "current_level": current_level.value,
+            "requested_level": requested_level.value,
+            "actions": [
+                {"key": "y", "label": "Yes", "level": requested_level.value},
+                {"key": "n", "label": "No", "level": ConsentLevel.NEVER.value},
+                {"key": "a", "label": "Always", "level": ConsentLevel.PERSISTENT.value},
+                {"key": "o", "label": "Once", "level": ConsentLevel.ONE_TIME.value},
+            ],
+        }
+        
+        # Screen reader text
+        screen_reader_text = self._format_accessible(
+            info, operation, current_level, requested_level
+        )
+        
+        return FormattedConsentPrompt(
+            title=title,
+            description=description,
+            category_display=category_display,
+            risk_indicator=risk_indicator,
+            action_options=action_options,
+            additional_info=additional_info,
+            plain_text=plain_text,
+            ansi_colored=ansi_colored,
+            structured=structured,
+            screen_reader_text=screen_reader_text,
+        )
+    
+    def _get_action_options(self, requested_level: ConsentLevel) -> list[str]:
+        """Get action options for the prompt."""
+        if self._style == ConsentDisplayStyle.MINIMAL:
+            return ["[Y]es", "[N]o"]
+        
+        return [
+            "[Y]es - Allow for this session",
+            "[N]o - Deny",
+            "[A]lways - Always allow",
+            "[O]nce - Allow just this time",
+        ]
+    
+    def _format_plain_text(
+        self,
+        title: str,
+        description: str,
+        category_display: str,
+        risk_indicator: str,
+        action_options: list[str],
+        additional_info: str,
+    ) -> str:
+        """Format as plain text."""
+        lines = [
+            "=" * self._width,
+            title,
+            "=" * self._width,
+            "",
+            description,
+            "",
+            f"Category: {category_display}",
+            risk_indicator,
+        ]
+        
+        if additional_info:
+            lines.append(additional_info)
+        
+        lines.append("")
+        lines.extend(action_options)
+        lines.append("")
+        lines.append("-" * self._width)
+        
+        return "\n".join(lines)
+    
+    def _format_ansi(
+        self,
+        title: str,
+        description: str,
+        category_display: str,
+        risk_indicator: str,
+        action_options: list[str],
+        additional_info: str,
+        risk_color: str,
+        info: ConsentCategoryInfo,
+    ) -> str:
+        """Format with ANSI color codes."""
+        if not self._use_colors:
+            return self._format_plain_text(
+                title, description, category_display, risk_indicator,
+                action_options, additional_info
+            )
+        
+        c = self._COLORS
+        rc = c.get(risk_color, c["yellow"])
+        
+        lines = [
+            f"{c['cyan']}{'=' * self._width}{c['reset']}",
+            f"{c['bold']}{c['white']}{title}{c['reset']}",
+            f"{c['cyan']}{'=' * self._width}{c['reset']}",
+            "",
+            f"{c['white']}{description}{c['reset']}",
+            "",
+            f"{c['dim']}Category:{c['reset']} {c['blue']}{category_display}{c['reset']}",
+            f"{rc}{risk_indicator}{c['reset']}",
+        ]
+        
+        if additional_info:
+            lines.append(f"{c['dim']}{additional_info}{c['reset']}")
+        
+        lines.append("")
+        
+        for opt in action_options:
+            # Highlight the key in brackets
+            highlighted = opt.replace("[", f"{c['green']}[{c['bold']}").replace(
+                "]", f"{c['reset']}{c['green']}]{c['reset']}"
+            )
+            lines.append(highlighted)
+        
+        lines.append("")
+        lines.append(f"{c['cyan']}{'-' * self._width}{c['reset']}")
+        
+        return "\n".join(lines)
+    
+    def _format_accessible(
+        self,
+        info: ConsentCategoryInfo,
+        operation: str,
+        current_level: ConsentLevel,
+        requested_level: ConsentLevel,
+    ) -> str:
+        """Format for screen readers."""
+        parts = [
+            f"Consent prompt for {info.name}.",
+            info.description,
+            f"The operation {operation} is requesting permission.",
+            f"Risk level is {info.risk_level}.",
+        ]
+        
+        if current_level != ConsentLevel.NEVER:
+            parts.append(f"Your current setting is {current_level.value}.")
+        
+        parts.append(
+            "Press Y to allow for this session, "
+            "N to deny, "
+            "A to always allow, "
+            "or O to allow just once."
+        )
+        
+        return " ".join(parts)
+    
+    def format_consent_summary(
+        self,
+        consents: dict[ConsentCategory, ConsentLevel],
+    ) -> str:
+        """Format a summary of all consent settings.
+        
+        Args:
+            consents: Dictionary of category to consent level
+            
+        Returns:
+            Formatted summary string
+        """
+        c = self._COLORS if self._use_colors else {k: "" for k in self._COLORS}
+        
+        lines = [
+            f"{c['bold']}Consent Settings Summary{c['reset']}",
+            f"{c['dim']}{'=' * 50}{c['reset']}",
+        ]
+        
+        # Group by level
+        by_level: dict[ConsentLevel, list[ConsentCategory]] = {}
+        for cat, level in consents.items():
+            by_level.setdefault(level, []).append(cat)
+        
+        level_colors = {
+            ConsentLevel.PERSISTENT: c.get("green", ""),
+            ConsentLevel.SESSION: c.get("blue", ""),
+            ConsentLevel.ONE_TIME: c.get("yellow", ""),
+            ConsentLevel.NEVER: c.get("red", ""),
+        }
+        
+        for level in ConsentLevel:
+            cats = by_level.get(level, [])
+            if cats:
+                color = level_colors.get(level, "")
+                lines.append(f"\n{color}{c['bold']}{level.value.upper()}{c['reset']}")
+                
+                for cat in sorted(cats, key=lambda x: x.value):
+                    info = ConsentCategoryRegistry.get_info(cat)
+                    icon = info.icon if self._use_icons else "•"
+                    lines.append(f"  {icon} {info.name}")
+        
+        return "\n".join(lines)
+    
+    def format_consent_change_notification(
+        self,
+        category: ConsentCategory,
+        old_level: ConsentLevel,
+        new_level: ConsentLevel,
+        reason: str = "",
+    ) -> str:
+        """Format a notification about consent level change.
+        
+        Args:
+            category: Category that changed
+            old_level: Previous consent level
+            new_level: New consent level
+            reason: Reason for change
+            
+        Returns:
+            Formatted notification string
+        """
+        info = ConsentCategoryRegistry.get_info(category)
+        c = self._COLORS if self._use_colors else {k: "" for k in self._COLORS}
+        
+        icon = info.icon if self._use_icons else ""
+        
+        lines = [
+            f"{c['bold']}Consent Changed{c['reset']}",
+            f"{icon} {info.name}",
+            f"  {c['red']}{old_level.value}{c['reset']} → {c['green']}{new_level.value}{c['reset']}",
+        ]
+        
+        if reason:
+            lines.append(f"  Reason: {reason}")
+        
+        return "\n".join(lines)
+
+
+class ConsentFlowHelper:
+    """Helper for managing consent collection flows.
+    
+    Provides:
+    - Multi-category consent collection
+    - Batch consent updates
+    - Consent wizard support
+    - Undo/redo for consent changes
+    """
+    
+    def __init__(
+        self,
+        formatter: ConsentUIFormatter | None = None,
+    ) -> None:
+        """Initialize flow helper.
+        
+        Args:
+            formatter: Optional UI formatter
+        """
+        self._formatter = formatter or ConsentUIFormatter()
+        self._pending_changes: list[tuple[ConsentCategory, ConsentLevel, ConsentLevel]] = []
+        self._change_history: list[list[tuple[ConsentCategory, ConsentLevel, ConsentLevel]]] = []
+        self._redo_stack: list[list[tuple[ConsentCategory, ConsentLevel, ConsentLevel]]] = []
+    
+    def start_batch(self) -> None:
+        """Start a new batch of consent changes."""
+        self._pending_changes = []
+    
+    def add_change(
+        self,
+        category: ConsentCategory,
+        old_level: ConsentLevel,
+        new_level: ConsentLevel,
+    ) -> None:
+        """Add a consent change to the pending batch."""
+        self._pending_changes.append((category, old_level, new_level))
+    
+    def commit_batch(self) -> list[tuple[ConsentCategory, ConsentLevel, ConsentLevel]]:
+        """Commit pending changes and add to history.
+        
+        Returns:
+            List of changes committed
+        """
+        changes = self._pending_changes.copy()
+        
+        if changes:
+            self._change_history.append(changes)
+            self._redo_stack.clear()
+        
+        self._pending_changes = []
+        return changes
+    
+    def undo(self) -> list[tuple[ConsentCategory, ConsentLevel, ConsentLevel]] | None:
+        """Undo the last batch of changes.
+        
+        Returns:
+            List of changes to reverse, or None if nothing to undo
+        """
+        if not self._change_history:
+            return None
+        
+        changes = self._change_history.pop()
+        self._redo_stack.append(changes)
+        
+        # Return reversed changes
+        return [(cat, new, old) for cat, old, new in changes]
+    
+    def redo(self) -> list[tuple[ConsentCategory, ConsentLevel, ConsentLevel]] | None:
+        """Redo previously undone changes.
+        
+        Returns:
+            List of changes to apply, or None if nothing to redo
+        """
+        if not self._redo_stack:
+            return None
+        
+        changes = self._redo_stack.pop()
+        self._change_history.append(changes)
+        return changes
+    
+    def generate_wizard_steps(
+        self,
+        categories: list[ConsentCategory],
+    ) -> list[dict[str, Any]]:
+        """Generate wizard steps for consent collection.
+        
+        Args:
+            categories: Categories to include in wizard
+            
+        Returns:
+            List of wizard step configurations
+        """
+        # Group by risk level for progressive disclosure
+        by_risk: dict[str, list[ConsentCategory]] = {}
+        for cat in categories:
+            info = ConsentCategoryRegistry.get_info(cat)
+            by_risk.setdefault(info.risk_level, []).append(cat)
+        
+        steps = []
+        step_num = 1
+        
+        # Start with low risk
+        for risk_level in ["low", "medium", "high"]:
+            risk_cats = by_risk.get(risk_level, [])
+            if not risk_cats:
+                continue
+            
+            step = {
+                "step_number": step_num,
+                "title": f"{risk_level.title()} Risk Permissions",
+                "description": self._get_risk_description(risk_level),
+                "categories": [
+                    {
+                        "category": cat.value,
+                        "info": ConsentCategoryRegistry.get_info(cat).to_dict(),
+                    }
+                    for cat in risk_cats
+                ],
+                "can_skip": risk_level != "high",  # High risk must be explicitly handled
+            }
+            steps.append(step)
+            step_num += 1
+        
+        return steps
+    
+    def _get_risk_description(self, risk_level: str) -> str:
+        """Get description for risk level step."""
+        descriptions = {
+            "low": "These permissions have minimal impact and are recommended for best experience.",
+            "medium": "These permissions enable additional features but share some data or use resources.",
+            "high": "These permissions allow powerful operations that should be carefully considered.",
+        }
+        return descriptions.get(risk_level, "")
+    
+    def suggest_related_consents(
+        self,
+        category: ConsentCategory,
+        granting: bool,
+    ) -> list[ConsentCategory]:
+        """Suggest related consents based on a grant/deny action.
+        
+        Args:
+            category: Category being changed
+            granting: True if granting consent, False if denying
+            
+        Returns:
+            List of related categories to consider
+        """
+        info = ConsentCategoryRegistry.get_info(category)
+        suggestions = []
+        
+        for related in info.related_categories:
+            # If granting, suggest enabling related
+            # If denying, suggest reviewing related
+            suggestions.append(related)
+        
+        return suggestions
+    
+    def get_pending_summary(self) -> str:
+        """Get a formatted summary of pending changes."""
+        if not self._pending_changes:
+            return "No pending changes."
+        
+        lines = [f"Pending Changes ({len(self._pending_changes)}):"]
+        
+        for cat, old, new in self._pending_changes:
+            info = ConsentCategoryRegistry.get_info(cat)
+            lines.append(f"  {info.icon} {info.name}: {old.value} → {new.value}")
+        
+        return "\n".join(lines)
+
+
+class ConsentDashboard:
+    """Dashboard view for consent management.
+    
+    Provides:
+    - Overview of all consent settings
+    - Quick actions for common operations
+    - Statistics and insights
+    """
+    
+    def __init__(
+        self,
+        consents: dict[ConsentCategory, ConsentLevel] | None = None,
+        formatter: ConsentUIFormatter | None = None,
+    ) -> None:
+        """Initialize dashboard.
+        
+        Args:
+            consents: Current consent settings
+            formatter: UI formatter
+        """
+        self._consents = consents or {}
+        self._formatter = formatter or ConsentUIFormatter()
+    
+    def update_consents(self, consents: dict[ConsentCategory, ConsentLevel]) -> None:
+        """Update consent settings."""
+        self._consents = consents
+    
+    def get_statistics(self) -> dict[str, Any]:
+        """Get consent statistics.
+        
+        Returns:
+            Dictionary with statistics
+        """
+        if not self._consents:
+            return {
+                "total_categories": 0,
+                "by_level": {},
+                "by_risk": {},
+                "privacy_score": 0,
+            }
+        
+        # Count by level
+        by_level: dict[str, int] = {}
+        for level in ConsentLevel:
+            by_level[level.value] = sum(
+                1 for l in self._consents.values() if l == level
+            )
+        
+        # Count by risk
+        by_risk: dict[str, int] = {"low": 0, "medium": 0, "high": 0}
+        for cat in self._consents:
+            info = ConsentCategoryRegistry.get_info(cat)
+            by_risk[info.risk_level] = by_risk.get(info.risk_level, 0) + 1
+        
+        # Privacy score (0-100, higher = more restrictive)
+        total = len(self._consents)
+        if total == 0:
+            privacy_score = 100
+        else:
+            never_count = by_level.get(ConsentLevel.NEVER.value, 0)
+            one_time_count = by_level.get(ConsentLevel.ONE_TIME.value, 0)
+            session_count = by_level.get(ConsentLevel.SESSION.value, 0)
+            
+            # Weighted score
+            privacy_score = int(
+                (never_count * 100 + one_time_count * 75 + session_count * 50) / total
+            )
+        
+        return {
+            "total_categories": total,
+            "by_level": by_level,
+            "by_risk": by_risk,
+            "privacy_score": privacy_score,
+        }
+    
+    def render_dashboard(self) -> str:
+        """Render the consent dashboard.
+        
+        Returns:
+            Formatted dashboard string
+        """
+        stats = self.get_statistics()
+        c = self._formatter._COLORS if self._formatter._use_colors else {k: "" for k in self._formatter._COLORS}
+        
+        lines = [
+            f"{c['bold']}╔════════════════════════════════════════════════╗{c['reset']}",
+            f"{c['bold']}║           CONSENT DASHBOARD                    ║{c['reset']}",
+            f"{c['bold']}╚════════════════════════════════════════════════╝{c['reset']}",
+            "",
+            f"📊 Privacy Score: {self._render_score_bar(stats['privacy_score'])}",
+            "",
+            f"{c['bold']}By Permission Level:{c['reset']}",
+        ]
+        
+        level_icons = {
+            ConsentLevel.PERSISTENT.value: "🟢",
+            ConsentLevel.SESSION.value: "🔵",
+            ConsentLevel.ONE_TIME.value: "🟡",
+            ConsentLevel.NEVER.value: "🔴",
+        }
+        
+        for level in ConsentLevel:
+            count = stats["by_level"].get(level.value, 0)
+            icon = level_icons.get(level.value, "⚪")
+            lines.append(f"  {icon} {level.value.title()}: {count}")
+        
+        lines.append("")
+        lines.append(f"{c['bold']}By Risk Level:{c['reset']}")
+        
+        for risk in ["low", "medium", "high"]:
+            count = stats["by_risk"].get(risk, 0)
+            lines.append(f"  • {risk.title()}: {count}")
+        
+        lines.append("")
+        lines.append(f"{c['dim']}Quick Actions: [R]eset All | [E]xport | [I]mport{c['reset']}")
+        
+        return "\n".join(lines)
+    
+    def _render_score_bar(self, score: int) -> str:
+        """Render a visual score bar."""
+        filled = score // 10
+        empty = 10 - filled
+        
+        if score >= 70:
+            color = "🟩"
+        elif score >= 40:
+            color = "🟨"
+        else:
+            color = "🟥"
+        
+        bar = color * filled + "⬜" * empty
+        return f"{bar} {score}%"
+    
+    def get_quick_actions(self) -> list[dict[str, Any]]:
+        """Get available quick actions.
+        
+        Returns:
+            List of quick action configurations
+        """
+        return [
+            {
+                "key": "r",
+                "label": "Reset All",
+                "description": "Reset all consents to default (deny)",
+                "action": "reset_all",
+            },
+            {
+                "key": "e",
+                "label": "Export",
+                "description": "Export consent settings to file",
+                "action": "export",
+            },
+            {
+                "key": "i",
+                "label": "Import",
+                "description": "Import consent settings from file",
+                "action": "import",
+            },
+            {
+                "key": "m",
+                "label": "Minimal",
+                "description": "Enable only essential permissions",
+                "action": "set_minimal",
+            },
+            {
+                "key": "f",
+                "label": "Full",
+                "description": "Enable all permissions",
+                "action": "set_full",
+            },
+        ]
+

@@ -1682,3 +1682,1915 @@ class EnhancedExecutionController(ExecutionController):
             success, actions = self._transaction_manager.rollback_transaction()
             logger.info(f"Rollback {'succeeded' if success else 'failed'}: {actions}")
             return False, None
+
+
+# =============================================================================
+# DISTRIBUTED ROLLBACK (2% Gap Coverage)
+# =============================================================================
+
+
+class DistributedNodeState(Enum):
+    """State of a node in distributed rollback."""
+    
+    UNKNOWN = auto()
+    READY = auto()
+    PREPARING = auto()
+    PREPARED = auto()
+    COMMITTING = auto()
+    COMMITTED = auto()
+    ROLLING_BACK = auto()
+    ROLLED_BACK = auto()
+    FAILED = auto()
+    UNREACHABLE = auto()
+
+
+@dataclass
+class DistributedNode:
+    """Represents a node in distributed computation."""
+    
+    node_id: str
+    address: str  # e.g., "host:port" or "localhost"
+    state: DistributedNodeState = DistributedNodeState.UNKNOWN
+    last_heartbeat: float = field(default_factory=time.time)
+    checkpoint_id: str | None = None
+    transaction_id: str | None = None
+    error_message: str | None = None
+    retry_count: int = 0
+    max_retries: int = 3
+    
+    def is_healthy(self, timeout_seconds: float = 30.0) -> bool:
+        """Check if node is healthy based on last heartbeat."""
+        return (time.time() - self.last_heartbeat) < timeout_seconds
+    
+    def can_retry(self) -> bool:
+        """Check if node can be retried."""
+        return self.retry_count < self.max_retries
+
+
+@dataclass
+class DistributedRollbackResult:
+    """Result of distributed rollback operation."""
+    
+    success: bool
+    nodes_rolled_back: list[str]
+    nodes_failed: list[str]
+    nodes_unreachable: list[str]
+    partial_rollback: bool = False
+    error_messages: dict[str, str] = field(default_factory=dict)
+    duration_ms: float = 0.0
+    coordinator_id: str = ""
+    transaction_id: str = ""
+    timestamp: float = field(default_factory=time.time)
+    
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary."""
+        return {
+            "success": self.success,
+            "nodes_rolled_back": self.nodes_rolled_back,
+            "nodes_failed": self.nodes_failed,
+            "nodes_unreachable": self.nodes_unreachable,
+            "partial_rollback": self.partial_rollback,
+            "error_messages": self.error_messages,
+            "duration_ms": self.duration_ms,
+            "coordinator_id": self.coordinator_id,
+            "transaction_id": self.transaction_id,
+            "timestamp": self.timestamp,
+        }
+
+
+class TwoPhaseCommitProtocol(Enum):
+    """Two-phase commit protocol phases."""
+    
+    IDLE = auto()
+    PREPARE = auto()
+    VOTE = auto()
+    COMMIT = auto()
+    ABORT = auto()
+    COMPLETE = auto()
+
+
+@dataclass
+class DistributedTransaction:
+    """State of a distributed transaction."""
+    
+    transaction_id: str
+    coordinator_id: str
+    participating_nodes: list[str]
+    phase: TwoPhaseCommitProtocol = TwoPhaseCommitProtocol.IDLE
+    votes: dict[str, bool] = field(default_factory=dict)
+    start_time: float = field(default_factory=time.time)
+    prepare_deadline: float = 0.0
+    commit_deadline: float = 0.0
+    rollback_checkpoints: dict[str, str] = field(default_factory=dict)
+    is_committed: bool = False
+    is_aborted: bool = False
+    
+    def all_votes_received(self) -> bool:
+        """Check if all votes have been received."""
+        return len(self.votes) == len(self.participating_nodes)
+    
+    def all_votes_yes(self) -> bool:
+        """Check if all votes are yes."""
+        return self.all_votes_received() and all(self.votes.values())
+
+
+class DistributedRollbackCoordinator:
+    """Coordinates distributed rollback across multiple nodes.
+    
+    Implements Two-Phase Commit (2PC) protocol for distributed transactions
+    with support for:
+    - Network partition handling
+    - Node failure recovery
+    - Timeout-based decision making
+    - Partial rollback for graceful degradation
+    """
+    
+    def __init__(
+        self,
+        coordinator_id: str | None = None,
+        prepare_timeout_ms: float = 5000.0,
+        commit_timeout_ms: float = 10000.0,
+        heartbeat_interval_ms: float = 1000.0,
+    ) -> None:
+        """Initialize distributed rollback coordinator.
+        
+        Args:
+            coordinator_id: Unique ID for this coordinator
+            prepare_timeout_ms: Timeout for prepare phase
+            commit_timeout_ms: Timeout for commit phase
+            heartbeat_interval_ms: Interval for node heartbeats
+        """
+        self._coordinator_id = coordinator_id or f"coord_{int(time.time() * 1000)}"
+        self._prepare_timeout_ms = prepare_timeout_ms
+        self._commit_timeout_ms = commit_timeout_ms
+        self._heartbeat_interval_ms = heartbeat_interval_ms
+        
+        self._nodes: dict[str, DistributedNode] = {}
+        self._active_transaction: DistributedTransaction | None = None
+        self._transaction_history: list[DistributedTransaction] = []
+        
+        self._lock = threading.Lock()
+        self._heartbeat_thread: threading.Thread | None = None
+        self._running = False
+        
+        # Callbacks for node communication (to be implemented by user)
+        self._node_prepare_callback: Callable[[str, str], bool] | None = None
+        self._node_commit_callback: Callable[[str, str], bool] | None = None
+        self._node_rollback_callback: Callable[[str, str, str], bool] | None = None
+        self._node_heartbeat_callback: Callable[[str], bool] | None = None
+    
+    def register_callbacks(
+        self,
+        prepare: Callable[[str, str], bool] | None = None,
+        commit: Callable[[str, str], bool] | None = None,
+        rollback: Callable[[str, str, str], bool] | None = None,
+        heartbeat: Callable[[str], bool] | None = None,
+    ) -> None:
+        """Register callbacks for node communication.
+        
+        Args:
+            prepare: Callback(node_id, transaction_id) -> success
+            commit: Callback(node_id, transaction_id) -> success
+            rollback: Callback(node_id, transaction_id, checkpoint_id) -> success
+            heartbeat: Callback(node_id) -> is_alive
+        """
+        if prepare:
+            self._node_prepare_callback = prepare
+        if commit:
+            self._node_commit_callback = commit
+        if rollback:
+            self._node_rollback_callback = rollback
+        if heartbeat:
+            self._node_heartbeat_callback = heartbeat
+    
+    def register_node(
+        self,
+        node_id: str,
+        address: str,
+    ) -> DistributedNode:
+        """Register a node for distributed transactions."""
+        with self._lock:
+            node = DistributedNode(
+                node_id=node_id,
+                address=address,
+                state=DistributedNodeState.READY,
+            )
+            self._nodes[node_id] = node
+            logger.info(f"Registered node: {node_id} at {address}")
+            return node
+    
+    def unregister_node(self, node_id: str) -> bool:
+        """Unregister a node."""
+        with self._lock:
+            if node_id in self._nodes:
+                del self._nodes[node_id]
+                logger.info(f"Unregistered node: {node_id}")
+                return True
+            return False
+    
+    def get_node(self, node_id: str) -> DistributedNode | None:
+        """Get node by ID."""
+        return self._nodes.get(node_id)
+    
+    def get_healthy_nodes(self) -> list[DistributedNode]:
+        """Get all healthy nodes."""
+        with self._lock:
+            return [n for n in self._nodes.values() if n.is_healthy()]
+    
+    def start_heartbeat_monitor(self) -> None:
+        """Start background heartbeat monitoring."""
+        if self._running:
+            return
+        
+        self._running = True
+        self._heartbeat_thread = threading.Thread(
+            target=self._heartbeat_loop,
+            daemon=True,
+        )
+        self._heartbeat_thread.start()
+        logger.info("Started heartbeat monitor")
+    
+    def stop_heartbeat_monitor(self) -> None:
+        """Stop heartbeat monitoring."""
+        self._running = False
+        if self._heartbeat_thread:
+            self._heartbeat_thread.join(timeout=2.0)
+            self._heartbeat_thread = None
+        logger.info("Stopped heartbeat monitor")
+    
+    def _heartbeat_loop(self) -> None:
+        """Background loop for node heartbeats."""
+        while self._running:
+            try:
+                self._check_node_health()
+            except Exception as e:
+                logger.warning(f"Heartbeat check failed: {e}")
+            
+            time.sleep(self._heartbeat_interval_ms / 1000)
+    
+    def _check_node_health(self) -> None:
+        """Check health of all nodes."""
+        with self._lock:
+            for node in self._nodes.values():
+                if self._node_heartbeat_callback:
+                    try:
+                        if self._node_heartbeat_callback(node.node_id):
+                            node.last_heartbeat = time.time()
+                            if node.state == DistributedNodeState.UNREACHABLE:
+                                node.state = DistributedNodeState.READY
+                                logger.info(f"Node {node.node_id} recovered")
+                        else:
+                            if node.is_healthy():
+                                node.state = DistributedNodeState.UNREACHABLE
+                                logger.warning(f"Node {node.node_id} unreachable")
+                    except Exception as e:
+                        logger.debug(f"Heartbeat to {node.node_id} failed: {e}")
+    
+    def begin_distributed_transaction(
+        self,
+        node_ids: list[str] | None = None,
+        checkpoints: dict[str, str] | None = None,
+    ) -> DistributedTransaction | None:
+        """Begin a distributed transaction.
+        
+        Args:
+            node_ids: Nodes to include (default: all healthy nodes)
+            checkpoints: Checkpoint IDs for each node (for rollback)
+            
+        Returns:
+            Transaction if started, None if failed
+        """
+        with self._lock:
+            if self._active_transaction:
+                logger.warning("Distributed transaction already active")
+                return None
+            
+            # Select participating nodes
+            if node_ids is None:
+                participating = [n.node_id for n in self.get_healthy_nodes()]
+            else:
+                participating = [
+                    nid for nid in node_ids 
+                    if nid in self._nodes and self._nodes[nid].is_healthy()
+                ]
+            
+            if not participating:
+                logger.error("No healthy nodes for distributed transaction")
+                return None
+            
+            transaction_id = f"dtxn_{int(time.time() * 1000)}"
+            current_time = time.time()
+            
+            self._active_transaction = DistributedTransaction(
+                transaction_id=transaction_id,
+                coordinator_id=self._coordinator_id,
+                participating_nodes=participating,
+                phase=TwoPhaseCommitProtocol.IDLE,
+                prepare_deadline=current_time + self._prepare_timeout_ms / 1000,
+                commit_deadline=current_time + self._commit_timeout_ms / 1000,
+                rollback_checkpoints=checkpoints or {},
+            )
+            
+            # Update node states
+            for node_id in participating:
+                self._nodes[node_id].transaction_id = transaction_id
+            
+            logger.info(
+                f"Started distributed transaction {transaction_id} "
+                f"with {len(participating)} nodes"
+            )
+            return self._active_transaction
+    
+    def prepare_phase(self) -> tuple[bool, dict[str, bool]]:
+        """Execute prepare phase of 2PC.
+        
+        Returns:
+            Tuple of (all_prepared, vote_results)
+        """
+        with self._lock:
+            if not self._active_transaction:
+                return False, {}
+            
+            self._active_transaction.phase = TwoPhaseCommitProtocol.PREPARE
+            votes: dict[str, bool] = {}
+            
+            for node_id in self._active_transaction.participating_nodes:
+                node = self._nodes.get(node_id)
+                if not node or not node.is_healthy():
+                    votes[node_id] = False
+                    continue
+                
+                node.state = DistributedNodeState.PREPARING
+                
+                # Ask node to prepare
+                if self._node_prepare_callback:
+                    try:
+                        prepared = self._node_prepare_callback(
+                            node_id,
+                            self._active_transaction.transaction_id,
+                        )
+                        votes[node_id] = prepared
+                        node.state = (
+                            DistributedNodeState.PREPARED 
+                            if prepared 
+                            else DistributedNodeState.FAILED
+                        )
+                    except Exception as e:
+                        logger.warning(f"Prepare failed for {node_id}: {e}")
+                        votes[node_id] = False
+                        node.state = DistributedNodeState.FAILED
+                else:
+                    # No callback - assume prepared
+                    votes[node_id] = True
+                    node.state = DistributedNodeState.PREPARED
+            
+            self._active_transaction.votes = votes
+            self._active_transaction.phase = TwoPhaseCommitProtocol.VOTE
+            
+            all_prepared = all(votes.values())
+            return all_prepared, votes
+    
+    def commit_phase(self) -> DistributedRollbackResult:
+        """Execute commit phase of 2PC.
+        
+        Returns:
+            Result of commit operation
+        """
+        start_time = time.time()
+        
+        with self._lock:
+            if not self._active_transaction:
+                return DistributedRollbackResult(
+                    success=False,
+                    nodes_rolled_back=[],
+                    nodes_failed=["coordinator"],
+                    nodes_unreachable=[],
+                    error_messages={"coordinator": "No active transaction"},
+                )
+            
+            self._active_transaction.phase = TwoPhaseCommitProtocol.COMMIT
+            committed_nodes: list[str] = []
+            failed_nodes: list[str] = []
+            error_messages: dict[str, str] = {}
+            
+            for node_id in self._active_transaction.participating_nodes:
+                node = self._nodes.get(node_id)
+                if not node or node.state != DistributedNodeState.PREPARED:
+                    failed_nodes.append(node_id)
+                    error_messages[node_id] = "Not in prepared state"
+                    continue
+                
+                node.state = DistributedNodeState.COMMITTING
+                
+                if self._node_commit_callback:
+                    try:
+                        if self._node_commit_callback(
+                            node_id,
+                            self._active_transaction.transaction_id,
+                        ):
+                            node.state = DistributedNodeState.COMMITTED
+                            committed_nodes.append(node_id)
+                        else:
+                            node.state = DistributedNodeState.FAILED
+                            failed_nodes.append(node_id)
+                            error_messages[node_id] = "Commit returned false"
+                    except Exception as e:
+                        node.state = DistributedNodeState.FAILED
+                        failed_nodes.append(node_id)
+                        error_messages[node_id] = str(e)
+                else:
+                    # No callback - assume committed
+                    node.state = DistributedNodeState.COMMITTED
+                    committed_nodes.append(node_id)
+            
+            self._active_transaction.is_committed = len(failed_nodes) == 0
+            self._active_transaction.phase = TwoPhaseCommitProtocol.COMPLETE
+            
+            duration_ms = (time.time() - start_time) * 1000
+            
+            result = DistributedRollbackResult(
+                success=len(failed_nodes) == 0,
+                nodes_rolled_back=committed_nodes,
+                nodes_failed=failed_nodes,
+                nodes_unreachable=[],
+                partial_rollback=len(committed_nodes) > 0 and len(failed_nodes) > 0,
+                error_messages=error_messages,
+                duration_ms=duration_ms,
+                coordinator_id=self._coordinator_id,
+                transaction_id=self._active_transaction.transaction_id,
+            )
+            
+            # Archive transaction
+            self._transaction_history.append(self._active_transaction)
+            self._active_transaction = None
+            
+            return result
+    
+    def distributed_rollback(
+        self,
+        force: bool = False,
+        partial_allowed: bool = True,
+    ) -> DistributedRollbackResult:
+        """Perform distributed rollback across all participating nodes.
+        
+        This is the main entry point for distributed rollback.
+        
+        Args:
+            force: Force rollback even if some nodes are unreachable
+            partial_allowed: Allow partial rollback if some nodes fail
+            
+        Returns:
+            Result of rollback operation
+        """
+        start_time = time.time()
+        
+        with self._lock:
+            if not self._active_transaction:
+                return DistributedRollbackResult(
+                    success=False,
+                    nodes_rolled_back=[],
+                    nodes_failed=[],
+                    nodes_unreachable=[],
+                    error_messages={"coordinator": "No active transaction"},
+                )
+            
+            self._active_transaction.phase = TwoPhaseCommitProtocol.ABORT
+            
+            rolled_back_nodes: list[str] = []
+            failed_nodes: list[str] = []
+            unreachable_nodes: list[str] = []
+            error_messages: dict[str, str] = {}
+            
+            for node_id in self._active_transaction.participating_nodes:
+                node = self._nodes.get(node_id)
+                
+                if not node:
+                    unreachable_nodes.append(node_id)
+                    continue
+                
+                if not node.is_healthy():
+                    if force:
+                        unreachable_nodes.append(node_id)
+                        node.state = DistributedNodeState.UNREACHABLE
+                    else:
+                        failed_nodes.append(node_id)
+                        error_messages[node_id] = "Node unhealthy, force not set"
+                    continue
+                
+                node.state = DistributedNodeState.ROLLING_BACK
+                checkpoint_id = self._active_transaction.rollback_checkpoints.get(
+                    node_id, ""
+                )
+                
+                # Attempt rollback with retries
+                success = self._rollback_node_with_retry(
+                    node,
+                    self._active_transaction.transaction_id,
+                    checkpoint_id,
+                )
+                
+                if success:
+                    node.state = DistributedNodeState.ROLLED_BACK
+                    rolled_back_nodes.append(node_id)
+                else:
+                    node.state = DistributedNodeState.FAILED
+                    failed_nodes.append(node_id)
+                    error_messages[node_id] = node.error_message or "Rollback failed"
+            
+            # Determine success
+            all_success = len(failed_nodes) == 0 and len(unreachable_nodes) == 0
+            partial_success = len(rolled_back_nodes) > 0
+            
+            if all_success:
+                success = True
+            elif partial_allowed and partial_success:
+                success = True
+            else:
+                success = False
+            
+            self._active_transaction.is_aborted = True
+            self._active_transaction.phase = TwoPhaseCommitProtocol.COMPLETE
+            
+            duration_ms = (time.time() - start_time) * 1000
+            
+            result = DistributedRollbackResult(
+                success=success,
+                nodes_rolled_back=rolled_back_nodes,
+                nodes_failed=failed_nodes,
+                nodes_unreachable=unreachable_nodes,
+                partial_rollback=partial_success and not all_success,
+                error_messages=error_messages,
+                duration_ms=duration_ms,
+                coordinator_id=self._coordinator_id,
+                transaction_id=self._active_transaction.transaction_id,
+            )
+            
+            logger.info(
+                f"Distributed rollback complete: "
+                f"success={success}, "
+                f"rolled_back={len(rolled_back_nodes)}, "
+                f"failed={len(failed_nodes)}, "
+                f"unreachable={len(unreachable_nodes)}"
+            )
+            
+            # Archive transaction
+            self._transaction_history.append(self._active_transaction)
+            self._active_transaction = None
+            
+            return result
+    
+    def _rollback_node_with_retry(
+        self,
+        node: DistributedNode,
+        transaction_id: str,
+        checkpoint_id: str,
+    ) -> bool:
+        """Attempt to rollback a node with retries."""
+        while node.can_retry():
+            if self._node_rollback_callback:
+                try:
+                    if self._node_rollback_callback(
+                        node.node_id,
+                        transaction_id,
+                        checkpoint_id,
+                    ):
+                        return True
+                except Exception as e:
+                    node.error_message = str(e)
+            else:
+                # No callback - assume success
+                return True
+            
+            node.retry_count += 1
+            time.sleep(0.1 * (2 ** node.retry_count))  # Exponential backoff
+        
+        return False
+    
+    def handle_network_partition(
+        self,
+        isolated_nodes: list[str],
+        strategy: str = "pessimistic",
+    ) -> DistributedRollbackResult:
+        """Handle network partition during distributed transaction.
+        
+        Strategies:
+        - pessimistic: Abort transaction, rollback reachable nodes
+        - optimistic: Continue with reachable nodes, reconcile later
+        - quorum: Proceed if majority of nodes are reachable
+        
+        Args:
+            isolated_nodes: Nodes that are isolated
+            strategy: Partition handling strategy
+            
+        Returns:
+            Result of partition handling
+        """
+        with self._lock:
+            if not self._active_transaction:
+                return DistributedRollbackResult(
+                    success=False,
+                    nodes_rolled_back=[],
+                    nodes_failed=[],
+                    nodes_unreachable=isolated_nodes,
+                    error_messages={"coordinator": "No active transaction"},
+                )
+            
+            # Mark isolated nodes
+            for node_id in isolated_nodes:
+                if node_id in self._nodes:
+                    self._nodes[node_id].state = DistributedNodeState.UNREACHABLE
+            
+            reachable = [
+                nid for nid in self._active_transaction.participating_nodes
+                if nid not in isolated_nodes
+            ]
+            
+            if strategy == "pessimistic":
+                # Abort and rollback
+                return self.distributed_rollback(force=True, partial_allowed=True)
+            
+            elif strategy == "quorum":
+                # Check if we have quorum
+                total = len(self._active_transaction.participating_nodes)
+                if len(reachable) > total // 2:
+                    logger.info("Quorum maintained, continuing transaction")
+                    return DistributedRollbackResult(
+                        success=True,
+                        nodes_rolled_back=[],
+                        nodes_failed=[],
+                        nodes_unreachable=isolated_nodes,
+                        partial_rollback=False,
+                        coordinator_id=self._coordinator_id,
+                        transaction_id=self._active_transaction.transaction_id,
+                    )
+                else:
+                    logger.warning("Quorum lost, aborting transaction")
+                    return self.distributed_rollback(force=True, partial_allowed=True)
+            
+            else:  # optimistic
+                logger.info(
+                    f"Optimistic strategy: continuing with {len(reachable)} nodes"
+                )
+                return DistributedRollbackResult(
+                    success=True,
+                    nodes_rolled_back=[],
+                    nodes_failed=[],
+                    nodes_unreachable=isolated_nodes,
+                    partial_rollback=False,
+                    coordinator_id=self._coordinator_id,
+                    transaction_id=self._active_transaction.transaction_id,
+                )
+    
+    def get_transaction_status(self) -> dict[str, Any]:
+        """Get current distributed transaction status."""
+        with self._lock:
+            if not self._active_transaction:
+                return {"active": False}
+            
+            node_states = {
+                nid: self._nodes[nid].state.name 
+                for nid in self._active_transaction.participating_nodes
+                if nid in self._nodes
+            }
+            
+            return {
+                "active": True,
+                "transaction_id": self._active_transaction.transaction_id,
+                "phase": self._active_transaction.phase.name,
+                "participating_nodes": self._active_transaction.participating_nodes,
+                "node_states": node_states,
+                "votes": self._active_transaction.votes,
+                "is_committed": self._active_transaction.is_committed,
+                "is_aborted": self._active_transaction.is_aborted,
+            }
+    
+    def get_coordinator_summary(self) -> dict[str, Any]:
+        """Get summary of coordinator state."""
+        with self._lock:
+            return {
+                "coordinator_id": self._coordinator_id,
+                "registered_nodes": len(self._nodes),
+                "healthy_nodes": len([n for n in self._nodes.values() if n.is_healthy()]),
+                "active_transaction": self._active_transaction is not None,
+                "transaction_history_count": len(self._transaction_history),
+                "heartbeat_running": self._running,
+            }
+
+
+# =============================================================================
+# TRANSACTION EDGE CASES (2% Gap Coverage)
+# Handles nested transactions, timeouts, deadlocks, and partial failures
+# =============================================================================
+
+
+class TransactionIsolationLevel(Enum):
+    """Transaction isolation levels."""
+    
+    READ_UNCOMMITTED = "read_uncommitted"
+    READ_COMMITTED = "read_committed"
+    REPEATABLE_READ = "repeatable_read"
+    SERIALIZABLE = "serializable"
+
+
+class NestedTransactionMode(Enum):
+    """Mode for handling nested transactions."""
+    
+    FLAT = "flat"  # All operations in single transaction
+    SAVEPOINT = "savepoint"  # Use savepoints for nesting
+    AUTONOMOUS = "autonomous"  # Separate independent transactions
+
+
+@dataclass
+class TransactionTimeout:
+    """Transaction timeout configuration."""
+    
+    soft_timeout_seconds: float  # Warning threshold
+    hard_timeout_seconds: float  # Forced rollback threshold
+    auto_rollback: bool = True
+    rollback_callback: Callable[[], None] | None = None
+    
+    def check_soft(self, elapsed: float) -> bool:
+        """Check if soft timeout exceeded."""
+        return elapsed >= self.soft_timeout_seconds
+    
+    def check_hard(self, elapsed: float) -> bool:
+        """Check if hard timeout exceeded."""
+        return elapsed >= self.hard_timeout_seconds
+
+
+@dataclass
+class Savepoint:
+    """A transaction savepoint for nested operations."""
+    
+    savepoint_id: str
+    name: str
+    parent_savepoint_id: str | None
+    created_at: float
+    state_snapshot: dict[str, Any]
+    is_released: bool = False
+    is_rolled_back: bool = False
+    
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary."""
+        return {
+            "savepoint_id": self.savepoint_id,
+            "name": self.name,
+            "parent_savepoint_id": self.parent_savepoint_id,
+            "created_at": self.created_at,
+            "is_released": self.is_released,
+            "is_rolled_back": self.is_rolled_back,
+        }
+
+
+@dataclass
+class DeadlockInfo:
+    """Information about a detected deadlock."""
+    
+    detection_time: float
+    involved_transactions: list[str]
+    wait_graph: dict[str, list[str]]  # Transaction -> transactions it's waiting for
+    victim_transaction: str | None
+    resolution_strategy: str
+    resolved: bool = False
+    
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary."""
+        return {
+            "detection_time": self.detection_time,
+            "involved_transactions": self.involved_transactions,
+            "wait_graph": self.wait_graph,
+            "victim_transaction": self.victim_transaction,
+            "resolution_strategy": self.resolution_strategy,
+            "resolved": self.resolved,
+        }
+
+
+class TransactionEdgeCaseResult(Enum):
+    """Result of edge case handling."""
+    
+    RESOLVED = "resolved"
+    ROLLBACK_REQUIRED = "rollback_required"
+    RETRY_SUGGESTED = "retry_suggested"
+    ESCALATION_NEEDED = "escalation_needed"
+    PARTIAL_SUCCESS = "partial_success"
+
+
+@dataclass
+class EdgeCaseResolution:
+    """Resolution of a transaction edge case."""
+    
+    edge_case_type: str
+    result: TransactionEdgeCaseResult
+    message: str
+    retry_delay_seconds: float | None = None
+    partial_results: dict[str, Any] | None = None
+    corrective_action: str | None = None
+    
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary."""
+        return {
+            "edge_case_type": self.edge_case_type,
+            "result": self.result.value,
+            "message": self.message,
+            "retry_delay_seconds": self.retry_delay_seconds,
+            "partial_results": self.partial_results,
+            "corrective_action": self.corrective_action,
+        }
+
+
+class NestedTransactionManager:
+    """Manages nested transactions with savepoints.
+    
+    Features:
+    - Savepoint-based nesting
+    - Selective rollback to savepoints
+    - Nested isolation levels
+    - Automatic savepoint release
+    """
+    
+    def __init__(
+        self,
+        mode: NestedTransactionMode = NestedTransactionMode.SAVEPOINT,
+        max_depth: int = 10,
+    ) -> None:
+        """Initialize nested transaction manager.
+        
+        Args:
+            mode: Nested transaction mode
+            max_depth: Maximum nesting depth
+        """
+        self._mode = mode
+        self._max_depth = max_depth
+        self._lock = threading.Lock()
+        
+        # Transaction state
+        self._active = False
+        self._savepoints: list[Savepoint] = []
+        self._current_state: dict[str, Any] = {}
+        self._savepoint_counter = 0
+    
+    def begin(self) -> str:
+        """Begin or enter a transaction.
+        
+        Returns:
+            Transaction or savepoint ID
+        """
+        with self._lock:
+            if not self._active:
+                # Start new root transaction
+                self._active = True
+                self._current_state = {}
+                return "txn_root"
+            
+            if self._mode == NestedTransactionMode.FLAT:
+                # Flat mode - just continue
+                return "txn_root"
+            
+            if self._mode == NestedTransactionMode.SAVEPOINT:
+                # Create savepoint
+                return self._create_savepoint(f"auto_{len(self._savepoints)}")
+            
+            # Autonomous mode - not supported in this simplified version
+            return "txn_autonomous"
+    
+    def _create_savepoint(self, name: str) -> str:
+        """Create a new savepoint.
+        
+        Args:
+            name: Savepoint name
+            
+        Returns:
+            Savepoint ID
+        """
+        if len(self._savepoints) >= self._max_depth:
+            raise ValueError(f"Maximum nesting depth ({self._max_depth}) exceeded")
+        
+        self._savepoint_counter += 1
+        savepoint_id = f"sp_{self._savepoint_counter}"
+        
+        parent_id = self._savepoints[-1].savepoint_id if self._savepoints else None
+        
+        savepoint = Savepoint(
+            savepoint_id=savepoint_id,
+            name=name,
+            parent_savepoint_id=parent_id,
+            created_at=time.time(),
+            state_snapshot=self._current_state.copy(),
+        )
+        
+        self._savepoints.append(savepoint)
+        return savepoint_id
+    
+    def savepoint(self, name: str) -> str:
+        """Create a named savepoint.
+        
+        Args:
+            name: Savepoint name
+            
+        Returns:
+            Savepoint ID
+        """
+        with self._lock:
+            if not self._active:
+                raise ValueError("No active transaction")
+            
+            return self._create_savepoint(name)
+    
+    def rollback_to_savepoint(self, savepoint_id: str) -> bool:
+        """Rollback to a specific savepoint.
+        
+        Args:
+            savepoint_id: ID of savepoint to rollback to
+            
+        Returns:
+            True if successful
+        """
+        with self._lock:
+            # Find savepoint
+            target_idx = None
+            for i, sp in enumerate(self._savepoints):
+                if sp.savepoint_id == savepoint_id:
+                    target_idx = i
+                    break
+            
+            if target_idx is None:
+                return False
+            
+            # Restore state from savepoint
+            target = self._savepoints[target_idx]
+            self._current_state = target.state_snapshot.copy()
+            
+            # Mark later savepoints as rolled back
+            for sp in self._savepoints[target_idx + 1:]:
+                sp.is_rolled_back = True
+            
+            # Remove rolled back savepoints
+            self._savepoints = self._savepoints[:target_idx + 1]
+            
+            return True
+    
+    def release_savepoint(self, savepoint_id: str) -> bool:
+        """Release a savepoint, merging changes up.
+        
+        Args:
+            savepoint_id: ID of savepoint to release
+            
+        Returns:
+            True if successful
+        """
+        with self._lock:
+            for sp in self._savepoints:
+                if sp.savepoint_id == savepoint_id:
+                    sp.is_released = True
+                    return True
+            return False
+    
+    def commit(self) -> bool:
+        """Commit the transaction.
+        
+        Returns:
+            True if successful
+        """
+        with self._lock:
+            if not self._active:
+                return False
+            
+            # Release all savepoints
+            for sp in self._savepoints:
+                sp.is_released = True
+            
+            self._active = False
+            self._savepoints = []
+            return True
+    
+    def rollback(self) -> bool:
+        """Rollback entire transaction.
+        
+        Returns:
+            True if successful
+        """
+        with self._lock:
+            if not self._active:
+                return False
+            
+            # Clear state
+            self._current_state = {}
+            
+            # Mark all savepoints as rolled back
+            for sp in self._savepoints:
+                sp.is_rolled_back = True
+            
+            self._active = False
+            self._savepoints = []
+            return True
+    
+    def set_value(self, key: str, value: Any) -> None:
+        """Set a value in transaction state.
+        
+        Args:
+            key: State key
+            value: State value
+        """
+        with self._lock:
+            self._current_state[key] = value
+    
+    def get_value(self, key: str, default: Any = None) -> Any:
+        """Get a value from transaction state.
+        
+        Args:
+            key: State key
+            default: Default value if not found
+            
+        Returns:
+            State value
+        """
+        with self._lock:
+            return self._current_state.get(key, default)
+    
+    def get_current_depth(self) -> int:
+        """Get current nesting depth.
+        
+        Returns:
+            Number of active savepoints
+        """
+        with self._lock:
+            return len(self._savepoints)
+    
+    def get_savepoints(self) -> list[dict[str, Any]]:
+        """Get list of active savepoints.
+        
+        Returns:
+            List of savepoint information
+        """
+        with self._lock:
+            return [sp.to_dict() for sp in self._savepoints if not sp.is_released and not sp.is_rolled_back]
+
+
+class TransactionTimeoutManager:
+    """Manages transaction timeouts with automatic rollback.
+    
+    Features:
+    - Soft timeout warnings
+    - Hard timeout with auto-rollback
+    - Configurable callbacks
+    - Timeout extension
+    """
+    
+    def __init__(self) -> None:
+        """Initialize timeout manager."""
+        self._lock = threading.Lock()
+        self._timeouts: dict[str, tuple[TransactionTimeout, float]] = {}  # txn_id -> (config, start_time)
+        self._running = False
+        self._monitor_thread: threading.Thread | None = None
+        self._stop_event = threading.Event()
+        self._timeout_callbacks: dict[str, Callable[[str, bool], None]] = {}  # txn_id -> callback
+    
+    def register_timeout(
+        self,
+        transaction_id: str,
+        timeout: TransactionTimeout,
+        callback: Callable[[str, bool], None] | None = None,
+    ) -> None:
+        """Register a timeout for a transaction.
+        
+        Args:
+            transaction_id: Transaction ID
+            timeout: Timeout configuration
+            callback: Callback for timeout events (txn_id, is_hard_timeout)
+        """
+        with self._lock:
+            self._timeouts[transaction_id] = (timeout, time.time())
+            if callback:
+                self._timeout_callbacks[transaction_id] = callback
+    
+    def unregister_timeout(self, transaction_id: str) -> None:
+        """Unregister a transaction timeout.
+        
+        Args:
+            transaction_id: Transaction ID
+        """
+        with self._lock:
+            self._timeouts.pop(transaction_id, None)
+            self._timeout_callbacks.pop(transaction_id, None)
+    
+    def extend_timeout(
+        self,
+        transaction_id: str,
+        additional_seconds: float,
+    ) -> bool:
+        """Extend a transaction's timeout.
+        
+        Args:
+            transaction_id: Transaction ID
+            additional_seconds: Additional time to add
+            
+        Returns:
+            True if extended
+        """
+        with self._lock:
+            if transaction_id not in self._timeouts:
+                return False
+            
+            timeout, start_time = self._timeouts[transaction_id]
+            # Effectively extend by moving start time forward
+            new_start = start_time + additional_seconds
+            self._timeouts[transaction_id] = (timeout, new_start)
+            return True
+    
+    def check_timeout(self, transaction_id: str) -> tuple[bool, bool]:
+        """Check timeout status for a transaction.
+        
+        Args:
+            transaction_id: Transaction ID
+            
+        Returns:
+            Tuple of (soft_timeout_exceeded, hard_timeout_exceeded)
+        """
+        with self._lock:
+            if transaction_id not in self._timeouts:
+                return (False, False)
+            
+            timeout, start_time = self._timeouts[transaction_id]
+            elapsed = time.time() - start_time
+            
+            return (timeout.check_soft(elapsed), timeout.check_hard(elapsed))
+    
+    def start_monitoring(self, check_interval: float = 1.0) -> None:
+        """Start background timeout monitoring.
+        
+        Args:
+            check_interval: Interval between checks in seconds
+        """
+        if self._running:
+            return
+        
+        self._running = True
+        self._stop_event.clear()
+        
+        def monitor():
+            while not self._stop_event.is_set():
+                self._check_all_timeouts()
+                self._stop_event.wait(check_interval)
+        
+        self._monitor_thread = threading.Thread(target=monitor, daemon=True)
+        self._monitor_thread.start()
+    
+    def stop_monitoring(self) -> None:
+        """Stop background monitoring."""
+        self._stop_event.set()
+        self._running = False
+        
+        if self._monitor_thread:
+            self._monitor_thread.join(timeout=2.0)
+            self._monitor_thread = None
+    
+    def _check_all_timeouts(self) -> None:
+        """Check all registered timeouts."""
+        with self._lock:
+            now = time.time()
+            expired = []
+            
+            for txn_id, (timeout, start_time) in self._timeouts.items():
+                elapsed = now - start_time
+                
+                if timeout.check_hard(elapsed):
+                    # Hard timeout - trigger callback
+                    callback = self._timeout_callbacks.get(txn_id)
+                    if callback:
+                        try:
+                            callback(txn_id, True)  # True = hard timeout
+                        except Exception:
+                            pass
+                    
+                    if timeout.rollback_callback:
+                        try:
+                            timeout.rollback_callback()
+                        except Exception:
+                            pass
+                    
+                    expired.append(txn_id)
+                
+                elif timeout.check_soft(elapsed):
+                    # Soft timeout - warning
+                    callback = self._timeout_callbacks.get(txn_id)
+                    if callback:
+                        try:
+                            callback(txn_id, False)  # False = soft timeout
+                        except Exception:
+                            pass
+            
+            # Remove expired timeouts
+            for txn_id in expired:
+                self._timeouts.pop(txn_id, None)
+                self._timeout_callbacks.pop(txn_id, None)
+
+
+class DeadlockDetector:
+    """Detects and resolves transaction deadlocks.
+    
+    Uses wait-for graph analysis to detect cycles.
+    
+    Features:
+    - Wait-for graph tracking
+    - Cycle detection
+    - Victim selection strategies
+    - Automatic resolution
+    """
+    
+    def __init__(
+        self,
+        detection_interval: float = 1.0,
+        victim_strategy: str = "youngest",  # youngest, oldest, least_work
+    ) -> None:
+        """Initialize deadlock detector.
+        
+        Args:
+            detection_interval: Interval between detection runs
+            victim_strategy: Strategy for selecting deadlock victim
+        """
+        self._interval = detection_interval
+        self._strategy = victim_strategy
+        self._lock = threading.Lock()
+        
+        # Wait-for graph: transaction -> set of transactions it waits for
+        self._wait_graph: dict[str, set[str]] = {}
+        
+        # Transaction metadata for victim selection
+        self._transaction_meta: dict[str, dict[str, Any]] = {}
+        
+        # History of detected deadlocks
+        self._deadlock_history: list[DeadlockInfo] = []
+        
+        # Monitoring
+        self._running = False
+        self._monitor_thread: threading.Thread | None = None
+        self._stop_event = threading.Event()
+        
+        # Callbacks
+        self._deadlock_callback: Callable[[DeadlockInfo], None] | None = None
+    
+    def register_transaction(
+        self,
+        transaction_id: str,
+        start_time: float | None = None,
+        work_units: int = 0,
+    ) -> None:
+        """Register a transaction for deadlock detection.
+        
+        Args:
+            transaction_id: Transaction ID
+            start_time: When transaction started
+            work_units: Amount of work done (for victim selection)
+        """
+        with self._lock:
+            self._wait_graph[transaction_id] = set()
+            self._transaction_meta[transaction_id] = {
+                "start_time": start_time or time.time(),
+                "work_units": work_units,
+            }
+    
+    def unregister_transaction(self, transaction_id: str) -> None:
+        """Unregister a transaction.
+        
+        Args:
+            transaction_id: Transaction ID
+        """
+        with self._lock:
+            self._wait_graph.pop(transaction_id, None)
+            self._transaction_meta.pop(transaction_id, None)
+            
+            # Remove from others' wait sets
+            for waits in self._wait_graph.values():
+                waits.discard(transaction_id)
+    
+    def add_wait(self, waiter: str, waiting_for: str) -> None:
+        """Record that a transaction is waiting for another.
+        
+        Args:
+            waiter: Transaction that is waiting
+            waiting_for: Transaction being waited for
+        """
+        with self._lock:
+            if waiter in self._wait_graph:
+                self._wait_graph[waiter].add(waiting_for)
+    
+    def remove_wait(self, waiter: str, waiting_for: str) -> None:
+        """Remove a wait relationship.
+        
+        Args:
+            waiter: Transaction that was waiting
+            waiting_for: Transaction that was waited for
+        """
+        with self._lock:
+            if waiter in self._wait_graph:
+                self._wait_graph[waiter].discard(waiting_for)
+    
+    def set_deadlock_callback(
+        self,
+        callback: Callable[[DeadlockInfo], None],
+    ) -> None:
+        """Set callback for deadlock detection.
+        
+        Args:
+            callback: Function to call when deadlock detected
+        """
+        self._deadlock_callback = callback
+    
+    def detect_deadlock(self) -> DeadlockInfo | None:
+        """Detect deadlock in current wait graph.
+        
+        Returns:
+            DeadlockInfo if deadlock found, None otherwise
+        """
+        with self._lock:
+            cycle = self._find_cycle()
+            
+            if not cycle:
+                return None
+            
+            # Build wait graph for just the cycle
+            cycle_graph = {
+                txn: list(self._wait_graph.get(txn, set()) & set(cycle))
+                for txn in cycle
+            }
+            
+            # Select victim
+            victim = self._select_victim(cycle)
+            
+            deadlock = DeadlockInfo(
+                detection_time=time.time(),
+                involved_transactions=cycle,
+                wait_graph=cycle_graph,
+                victim_transaction=victim,
+                resolution_strategy=self._strategy,
+            )
+            
+            self._deadlock_history.append(deadlock)
+            
+            return deadlock
+    
+    def _find_cycle(self) -> list[str] | None:
+        """Find a cycle in the wait-for graph using DFS.
+        
+        Returns:
+            List of transaction IDs in cycle, or None
+        """
+        visited = set()
+        rec_stack = set()
+        path = []
+        
+        def dfs(node: str) -> list[str] | None:
+            visited.add(node)
+            rec_stack.add(node)
+            path.append(node)
+            
+            for neighbor in self._wait_graph.get(node, set()):
+                if neighbor not in visited:
+                    result = dfs(neighbor)
+                    if result:
+                        return result
+                elif neighbor in rec_stack:
+                    # Found cycle - extract it
+                    cycle_start = path.index(neighbor)
+                    return path[cycle_start:]
+            
+            path.pop()
+            rec_stack.remove(node)
+            return None
+        
+        for node in self._wait_graph:
+            if node not in visited:
+                cycle = dfs(node)
+                if cycle:
+                    return cycle
+        
+        return None
+    
+    def _select_victim(self, cycle: list[str]) -> str:
+        """Select a victim transaction to abort.
+        
+        Args:
+            cycle: List of transactions in deadlock
+            
+        Returns:
+            Transaction ID to abort
+        """
+        if not cycle:
+            return ""
+        
+        if self._strategy == "youngest":
+            # Abort the most recently started transaction
+            return max(
+                cycle,
+                key=lambda t: self._transaction_meta.get(t, {}).get("start_time", 0)
+            )
+        
+        elif self._strategy == "oldest":
+            # Abort the oldest transaction
+            return min(
+                cycle,
+                key=lambda t: self._transaction_meta.get(t, {}).get("start_time", float("inf"))
+            )
+        
+        elif self._strategy == "least_work":
+            # Abort the transaction with least work done
+            return min(
+                cycle,
+                key=lambda t: self._transaction_meta.get(t, {}).get("work_units", 0)
+            )
+        
+        # Default: first in cycle
+        return cycle[0]
+    
+    def start_detection(self) -> None:
+        """Start background deadlock detection."""
+        if self._running:
+            return
+        
+        self._running = True
+        self._stop_event.clear()
+        
+        def detect_loop():
+            while not self._stop_event.is_set():
+                deadlock = self.detect_deadlock()
+                
+                if deadlock and self._deadlock_callback:
+                    try:
+                        self._deadlock_callback(deadlock)
+                    except Exception:
+                        pass
+                
+                self._stop_event.wait(self._interval)
+        
+        self._monitor_thread = threading.Thread(target=detect_loop, daemon=True)
+        self._monitor_thread.start()
+    
+    def stop_detection(self) -> None:
+        """Stop background detection."""
+        self._stop_event.set()
+        self._running = False
+        
+        if self._monitor_thread:
+            self._monitor_thread.join(timeout=2.0)
+            self._monitor_thread = None
+    
+    def get_deadlock_history(self) -> list[dict[str, Any]]:
+        """Get history of detected deadlocks.
+        
+        Returns:
+            List of deadlock information
+        """
+        with self._lock:
+            return [d.to_dict() for d in self._deadlock_history]
+
+
+class PartialFailureHandler:
+    """Handles partial transaction failures.
+    
+    When some operations in a transaction succeed and others fail,
+    this handler determines the appropriate response.
+    
+    Features:
+    - Partial commit support
+    - Compensation transactions
+    - Result aggregation
+    - Recovery suggestions
+    """
+    
+    def __init__(
+        self,
+        allow_partial_commit: bool = False,
+        min_success_ratio: float = 0.5,
+    ) -> None:
+        """Initialize partial failure handler.
+        
+        Args:
+            allow_partial_commit: Whether to allow partial commits
+            min_success_ratio: Minimum success ratio for partial commit
+        """
+        self._allow_partial = allow_partial_commit
+        self._min_ratio = min_success_ratio
+        self._lock = threading.Lock()
+        
+        # Operation results
+        self._operations: dict[str, list[tuple[str, bool, Any]]] = {}  # txn_id -> [(op_id, success, result)]
+        
+        # Compensation actions
+        self._compensations: dict[str, list[Callable[[], None]]] = {}  # txn_id -> [compensation_fn]
+    
+    def register_transaction(self, transaction_id: str) -> None:
+        """Register a transaction for failure handling.
+        
+        Args:
+            transaction_id: Transaction ID
+        """
+        with self._lock:
+            self._operations[transaction_id] = []
+            self._compensations[transaction_id] = []
+    
+    def record_operation(
+        self,
+        transaction_id: str,
+        operation_id: str,
+        success: bool,
+        result: Any = None,
+        compensation: Callable[[], None] | None = None,
+    ) -> None:
+        """Record an operation result.
+        
+        Args:
+            transaction_id: Transaction ID
+            operation_id: Operation identifier
+            success: Whether operation succeeded
+            result: Operation result or error
+            compensation: Function to undo this operation if needed
+        """
+        with self._lock:
+            if transaction_id in self._operations:
+                self._operations[transaction_id].append((operation_id, success, result))
+                
+                if compensation and success:
+                    self._compensations[transaction_id].append(compensation)
+    
+    def handle_partial_failure(
+        self,
+        transaction_id: str,
+    ) -> EdgeCaseResolution:
+        """Handle a partial failure scenario.
+        
+        Args:
+            transaction_id: Transaction ID
+            
+        Returns:
+            EdgeCaseResolution with recommended action
+        """
+        with self._lock:
+            operations = self._operations.get(transaction_id, [])
+            
+            if not operations:
+                return EdgeCaseResolution(
+                    edge_case_type="partial_failure",
+                    result=TransactionEdgeCaseResult.RESOLVED,
+                    message="No operations recorded",
+                )
+            
+            successes = [op for op in operations if op[1]]
+            failures = [op for op in operations if not op[1]]
+            
+            success_ratio = len(successes) / len(operations)
+            
+            if not failures:
+                # All succeeded
+                return EdgeCaseResolution(
+                    edge_case_type="partial_failure",
+                    result=TransactionEdgeCaseResult.RESOLVED,
+                    message="All operations succeeded",
+                )
+            
+            if not successes:
+                # All failed
+                return EdgeCaseResolution(
+                    edge_case_type="partial_failure",
+                    result=TransactionEdgeCaseResult.ROLLBACK_REQUIRED,
+                    message="All operations failed",
+                )
+            
+            # Partial success
+            if self._allow_partial and success_ratio >= self._min_ratio:
+                return EdgeCaseResolution(
+                    edge_case_type="partial_failure",
+                    result=TransactionEdgeCaseResult.PARTIAL_SUCCESS,
+                    message=f"Partial success: {len(successes)}/{len(operations)} operations succeeded",
+                    partial_results={
+                        "succeeded": [op[0] for op in successes],
+                        "failed": [op[0] for op in failures],
+                        "success_ratio": success_ratio,
+                    },
+                )
+            
+            # Need to rollback
+            return EdgeCaseResolution(
+                edge_case_type="partial_failure",
+                result=TransactionEdgeCaseResult.ROLLBACK_REQUIRED,
+                message=f"Partial failure below threshold: {success_ratio:.1%} < {self._min_ratio:.1%}",
+                corrective_action="Execute compensating transactions for succeeded operations",
+                partial_results={
+                    "to_compensate": [op[0] for op in successes],
+                    "already_failed": [op[0] for op in failures],
+                },
+            )
+    
+    def execute_compensations(self, transaction_id: str) -> list[tuple[int, bool]]:
+        """Execute compensation actions for a transaction.
+        
+        Args:
+            transaction_id: Transaction ID
+            
+        Returns:
+            List of (index, success) for each compensation
+        """
+        with self._lock:
+            compensations = self._compensations.get(transaction_id, [])
+        
+        results = []
+        
+        # Execute in reverse order
+        for i, comp in enumerate(reversed(compensations)):
+            try:
+                comp()
+                results.append((len(compensations) - 1 - i, True))
+            except Exception:
+                results.append((len(compensations) - 1 - i, False))
+        
+        return results
+    
+    def cleanup(self, transaction_id: str) -> None:
+        """Clean up tracking for a transaction.
+        
+        Args:
+            transaction_id: Transaction ID
+        """
+        with self._lock:
+            self._operations.pop(transaction_id, None)
+            self._compensations.pop(transaction_id, None)
+
+
+class TransactionEdgeCaseManager:
+    """Comprehensive manager for transaction edge cases.
+    
+    Combines:
+    - Nested transactions
+    - Timeouts
+    - Deadlock detection
+    - Partial failure handling
+    """
+    
+    def __init__(
+        self,
+        nested_mode: NestedTransactionMode = NestedTransactionMode.SAVEPOINT,
+        default_timeout: TransactionTimeout | None = None,
+        deadlock_detection: bool = True,
+        allow_partial_commits: bool = False,
+    ) -> None:
+        """Initialize edge case manager.
+        
+        Args:
+            nested_mode: Mode for nested transactions
+            default_timeout: Default timeout configuration
+            deadlock_detection: Whether to enable deadlock detection
+            allow_partial_commits: Whether to allow partial commits
+        """
+        self._nested_mgr = NestedTransactionManager(mode=nested_mode)
+        self._timeout_mgr = TransactionTimeoutManager()
+        self._deadlock_detector = DeadlockDetector() if deadlock_detection else None
+        self._failure_handler = PartialFailureHandler(allow_partial_commit=allow_partial_commits)
+        
+        self._default_timeout = default_timeout
+        self._lock = threading.Lock()
+        
+        # Active transactions
+        self._transactions: dict[str, dict[str, Any]] = {}
+        self._txn_counter = 0
+    
+    def start_transaction(
+        self,
+        timeout: TransactionTimeout | None = None,
+        isolation_level: TransactionIsolationLevel = TransactionIsolationLevel.READ_COMMITTED,
+    ) -> str:
+        """Start a new transaction with edge case handling.
+        
+        Args:
+            timeout: Optional timeout configuration
+            isolation_level: Isolation level for this transaction
+            
+        Returns:
+            Transaction ID
+        """
+        with self._lock:
+            self._txn_counter += 1
+            txn_id = f"txn_{self._txn_counter}_{int(time.time())}"
+            
+            # Set up nested transaction
+            nested_id = self._nested_mgr.begin()
+            
+            # Register timeout
+            effective_timeout = timeout or self._default_timeout
+            if effective_timeout:
+                self._timeout_mgr.register_timeout(
+                    txn_id,
+                    effective_timeout,
+                    callback=self._on_timeout,
+                )
+            
+            # Register for deadlock detection
+            if self._deadlock_detector:
+                self._deadlock_detector.register_transaction(txn_id)
+            
+            # Register for failure handling
+            self._failure_handler.register_transaction(txn_id)
+            
+            self._transactions[txn_id] = {
+                "nested_id": nested_id,
+                "isolation_level": isolation_level,
+                "start_time": time.time(),
+                "status": "active",
+            }
+            
+            return txn_id
+    
+    def _on_timeout(self, txn_id: str, is_hard: bool) -> None:
+        """Handle timeout callback."""
+        if is_hard:
+            # Force rollback
+            self.rollback_transaction(txn_id)
+    
+    def record_operation(
+        self,
+        transaction_id: str,
+        operation_id: str,
+        success: bool,
+        result: Any = None,
+        compensation: Callable[[], None] | None = None,
+    ) -> None:
+        """Record an operation within a transaction.
+        
+        Args:
+            transaction_id: Transaction ID
+            operation_id: Operation identifier
+            success: Whether operation succeeded
+            result: Operation result
+            compensation: Compensation function
+        """
+        self._failure_handler.record_operation(
+            transaction_id, operation_id, success, result, compensation
+        )
+        
+        # Update work units for deadlock victim selection
+        if self._deadlock_detector:
+            with self._lock:
+                if transaction_id in self._transactions:
+                    work = self._transactions[transaction_id].get("work_units", 0)
+                    self._transactions[transaction_id]["work_units"] = work + 1
+    
+    def create_savepoint(self, transaction_id: str, name: str) -> str:
+        """Create a savepoint in a transaction.
+        
+        Args:
+            transaction_id: Transaction ID
+            name: Savepoint name
+            
+        Returns:
+            Savepoint ID
+        """
+        with self._lock:
+            if transaction_id not in self._transactions:
+                raise ValueError(f"Unknown transaction: {transaction_id}")
+        
+        return self._nested_mgr.savepoint(name)
+    
+    def rollback_to_savepoint(
+        self,
+        transaction_id: str,
+        savepoint_id: str,
+    ) -> bool:
+        """Rollback to a savepoint.
+        
+        Args:
+            transaction_id: Transaction ID
+            savepoint_id: Savepoint ID
+            
+        Returns:
+            True if successful
+        """
+        with self._lock:
+            if transaction_id not in self._transactions:
+                return False
+        
+        return self._nested_mgr.rollback_to_savepoint(savepoint_id)
+    
+    def commit_transaction(self, transaction_id: str) -> EdgeCaseResolution:
+        """Commit a transaction with edge case handling.
+        
+        Args:
+            transaction_id: Transaction ID
+            
+        Returns:
+            EdgeCaseResolution describing the outcome
+        """
+        with self._lock:
+            if transaction_id not in self._transactions:
+                return EdgeCaseResolution(
+                    edge_case_type="commit",
+                    result=TransactionEdgeCaseResult.ROLLBACK_REQUIRED,
+                    message=f"Unknown transaction: {transaction_id}",
+                )
+        
+        # Check for partial failures
+        failure_result = self._failure_handler.handle_partial_failure(transaction_id)
+        
+        if failure_result.result == TransactionEdgeCaseResult.ROLLBACK_REQUIRED:
+            # Execute compensations and rollback
+            self._failure_handler.execute_compensations(transaction_id)
+            self._nested_mgr.rollback()
+            self._cleanup_transaction(transaction_id)
+            return failure_result
+        
+        # Commit
+        self._nested_mgr.commit()
+        self._cleanup_transaction(transaction_id)
+        
+        if failure_result.result == TransactionEdgeCaseResult.PARTIAL_SUCCESS:
+            return failure_result
+        
+        return EdgeCaseResolution(
+            edge_case_type="commit",
+            result=TransactionEdgeCaseResult.RESOLVED,
+            message="Transaction committed successfully",
+        )
+    
+    def rollback_transaction(self, transaction_id: str) -> EdgeCaseResolution:
+        """Rollback a transaction.
+        
+        Args:
+            transaction_id: Transaction ID
+            
+        Returns:
+            EdgeCaseResolution describing the outcome
+        """
+        with self._lock:
+            if transaction_id not in self._transactions:
+                return EdgeCaseResolution(
+                    edge_case_type="rollback",
+                    result=TransactionEdgeCaseResult.RESOLVED,
+                    message=f"Transaction not found: {transaction_id}",
+                )
+        
+        # Execute compensations
+        comp_results = self._failure_handler.execute_compensations(transaction_id)
+        
+        # Rollback nested
+        self._nested_mgr.rollback()
+        
+        self._cleanup_transaction(transaction_id)
+        
+        failed_comps = [r for r in comp_results if not r[1]]
+        if failed_comps:
+            return EdgeCaseResolution(
+                edge_case_type="rollback",
+                result=TransactionEdgeCaseResult.PARTIAL_SUCCESS,
+                message=f"Rollback completed with {len(failed_comps)} compensation failures",
+            )
+        
+        return EdgeCaseResolution(
+            edge_case_type="rollback",
+            result=TransactionEdgeCaseResult.RESOLVED,
+            message="Transaction rolled back successfully",
+        )
+    
+    def _cleanup_transaction(self, transaction_id: str) -> None:
+        """Clean up transaction resources."""
+        with self._lock:
+            self._transactions.pop(transaction_id, None)
+        
+        self._timeout_mgr.unregister_timeout(transaction_id)
+        
+        if self._deadlock_detector:
+            self._deadlock_detector.unregister_transaction(transaction_id)
+        
+        self._failure_handler.cleanup(transaction_id)
+    
+    def start_monitoring(self) -> None:
+        """Start background monitoring for timeouts and deadlocks."""
+        self._timeout_mgr.start_monitoring()
+        
+        if self._deadlock_detector:
+            self._deadlock_detector.start_detection()
+    
+    def stop_monitoring(self) -> None:
+        """Stop background monitoring."""
+        self._timeout_mgr.stop_monitoring()
+        
+        if self._deadlock_detector:
+            self._deadlock_detector.stop_detection()
+    
+    def get_transaction_status(self, transaction_id: str) -> dict[str, Any]:
+        """Get status of a transaction.
+        
+        Args:
+            transaction_id: Transaction ID
+            
+        Returns:
+            Status information
+        """
+        with self._lock:
+            txn = self._transactions.get(transaction_id, {})
+            
+            return {
+                "transaction_id": transaction_id,
+                "status": txn.get("status", "unknown"),
+                "isolation_level": txn.get("isolation_level", TransactionIsolationLevel.READ_COMMITTED).value,
+                "nesting_depth": self._nested_mgr.get_current_depth(),
+                "savepoints": self._nested_mgr.get_savepoints(),
+                "timeout_status": self._timeout_mgr.check_timeout(transaction_id),
+            }
+

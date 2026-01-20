@@ -602,3 +602,462 @@ class TestBackendRegistry:
         # Unregister should return True for existing backend
         result = registry.unregister("nonexistent_backend")
         assert result is False
+
+
+# =============================================================================
+# HEALTH MONITORING EDGE CASES TESTS
+# =============================================================================
+
+
+class TestHealthMonitoringEdgeCases:
+    """Tests for health monitoring edge case handlers."""
+
+    @pytest.fixture
+    def registry_with_monitor(self):
+        """Create registry with health monitor."""
+        from proxima.backends.registry import BackendRegistry
+
+        registry = BackendRegistry(
+            enable_health_monitoring=True,
+            health_check_interval=1.0,
+        )
+        registry.discover()
+        return registry
+
+    @pytest.mark.backend
+    def test_timeout_edge_case(self, registry_with_monitor):
+        """Test health check with timeout handling."""
+        registry = registry_with_monitor
+
+        if not registry._health_monitor:
+            pytest.skip("Health monitor not available")
+
+        available = registry.list_available()
+        if not available:
+            pytest.skip("No backends available")
+
+        # Test timeout handler
+        result = registry._health_monitor.handle_timeout_edge_case(
+            available[0],
+            timeout_seconds=5.0,
+        )
+
+        assert result.backend_name == available[0]
+        assert "response_time_ms" in dir(result)
+        assert isinstance(result.healthy, bool)
+
+    @pytest.mark.backend
+    def test_intermittent_failure_edge_case(self, registry_with_monitor):
+        """Test handling of intermittent failures."""
+        registry = registry_with_monitor
+
+        if not registry._health_monitor:
+            pytest.skip("Health monitor not available")
+
+        available = registry.list_available()
+        if not available:
+            pytest.skip("No backends available")
+
+        # Test intermittent failure handler
+        result = registry._health_monitor.handle_intermittent_failure_edge_case(
+            available[0],
+            retry_count=2,
+            retry_delay_ms=50.0,
+        )
+
+        assert result.backend_name == available[0]
+        assert "edge_case" in result.details
+        assert "attempts" in result.details
+
+    @pytest.mark.backend
+    def test_partial_degradation_edge_case(self, registry_with_monitor):
+        """Test detection of partial degradation."""
+        registry = registry_with_monitor
+
+        if not registry._health_monitor:
+            pytest.skip("Health monitor not available")
+
+        available = registry.list_available()
+        if not available:
+            pytest.skip("No backends available")
+
+        # Test partial degradation handler
+        result = registry._health_monitor.handle_partial_degradation_edge_case(
+            available[0]
+        )
+
+        assert result.backend_name == available[0]
+        assert "edge_case" in result.details
+        assert result.details["edge_case"] == "partial_degradation"
+
+    @pytest.mark.backend
+    def test_flapping_edge_case(self, registry_with_monitor):
+        """Test detection of flapping backends."""
+        registry = registry_with_monitor
+
+        if not registry._health_monitor:
+            pytest.skip("Health monitor not available")
+
+        available = registry.list_available()
+        if not available:
+            pytest.skip("No backends available")
+
+        # Do some health checks to build history
+        for _ in range(5):
+            registry._health_monitor.check_backend(available[0])
+
+        # Test flapping detection
+        is_flapping, details = registry._health_monitor.handle_flapping_edge_case(
+            available[0],
+            stability_window=5,
+            flap_threshold=3,
+        )
+
+        assert isinstance(is_flapping, bool)
+        assert "edge_case" in details
+        assert details["edge_case"] == "flapping"
+        assert "state_changes" in details
+
+    @pytest.mark.backend
+    def test_resource_exhaustion_edge_case(self, registry_with_monitor):
+        """Test resource exhaustion detection."""
+        registry = registry_with_monitor
+
+        if not registry._health_monitor:
+            pytest.skip("Health monitor not available")
+
+        available = registry.list_available()
+        if not available:
+            pytest.skip("No backends available")
+
+        # Test resource exhaustion handler
+        result = registry._health_monitor.handle_resource_exhaustion_edge_case(
+            available[0]
+        )
+
+        assert result.backend_name == available[0]
+        # May have edge_case in details if resource issues detected
+        assert isinstance(result.healthy, bool)
+
+    @pytest.mark.backend
+    def test_cascading_failure_edge_case(self, registry_with_monitor):
+        """Test cascading failure detection."""
+        registry = registry_with_monitor
+
+        if not registry._health_monitor:
+            pytest.skip("Health monitor not available")
+
+        # Test cascading failure handler with limited backends
+        results = registry._health_monitor.handle_cascading_failure_edge_case(
+            affected_backends=None  # Check all
+        )
+
+        assert isinstance(results, dict)
+        for name, result in results.items():
+            assert result.backend_name == name
+            assert isinstance(result.healthy, bool)
+
+    @pytest.mark.backend
+    def test_comprehensive_health_check(self, registry_with_monitor):
+        """Test comprehensive health check with all edge cases."""
+        registry = registry_with_monitor
+
+        if not registry._health_monitor:
+            pytest.skip("Health monitor not available")
+
+        available = registry.list_available()
+        if not available:
+            pytest.skip("No backends available")
+
+        # Do some checks to build history
+        for _ in range(3):
+            registry._health_monitor.check_backend(available[0])
+
+        # Test comprehensive check
+        report = registry._health_monitor.comprehensive_health_check(
+            available[0],
+            include_edge_cases=True,
+        )
+
+        assert "backend_name" in report
+        assert "timestamp" in report
+        assert "basic_check" in report
+        assert "edge_cases" in report
+        assert "overall_status" in report
+        assert "recommendations" in report
+
+        # Verify edge cases were checked
+        assert "flapping" in report["edge_cases"]
+        assert "degradation" in report["edge_cases"]
+        assert "resources" in report["edge_cases"]
+
+    @pytest.mark.backend
+    def test_health_monitor_start_stop(self, registry_with_monitor):
+        """Test starting and stopping health monitor."""
+        registry = registry_with_monitor
+
+        if not registry._health_monitor:
+            pytest.skip("Health monitor not available")
+
+        # Start monitoring
+        registry.start_health_monitoring()
+        assert registry._health_monitor.is_running
+
+        # Stop monitoring
+        registry.stop_health_monitoring()
+        assert not registry._health_monitor.is_running
+
+
+# =============================================================================
+# GPU MEMORY LEAK DETECTION TESTS
+# =============================================================================
+
+
+class TestGPUMemoryLeakDetection:
+    """Tests for GPU memory leak detection."""
+
+    @pytest.fixture
+    def leak_detector(self):
+        """Create a memory leak detector."""
+        from proxima.backends.gpu_memory_manager import GPUMemoryLeakDetector
+
+        return GPUMemoryLeakDetector(device_id=0, baseline_samples=2)
+
+    @pytest.fixture
+    def memory_manager(self):
+        """Create a GPU memory manager."""
+        from proxima.backends.gpu_memory_manager import GPUMemoryManager
+
+        return GPUMemoryManager()
+
+    @pytest.mark.backend
+    def test_memory_snapshot_creation(self, leak_detector):
+        """Test creating memory snapshots."""
+        snapshot = leak_detector.get_current_memory_usage()
+
+        assert snapshot.timestamp > 0
+        assert isinstance(snapshot.total_mb, float)
+        assert isinstance(snapshot.used_mb, float)
+        assert isinstance(snapshot.free_mb, float)
+
+    @pytest.mark.backend
+    def test_baseline_establishment(self, leak_detector):
+        """Test establishing memory baseline."""
+        baseline = leak_detector.establish_baseline()
+
+        assert isinstance(baseline, float)
+        assert baseline >= 0
+
+    @pytest.mark.backend
+    def test_record_snapshot(self, leak_detector):
+        """Test recording memory snapshots."""
+        snapshot = leak_detector.record_snapshot("test_context")
+
+        assert snapshot.context == "test_context"
+        assert len(leak_detector._snapshots) == 1
+
+    @pytest.mark.backend
+    def test_mark_iteration(self, leak_detector):
+        """Test marking iteration completion."""
+        leak_detector.record_snapshot("before")
+        leak_detector.mark_iteration()
+
+        assert leak_detector._iteration_count == 1
+
+    @pytest.mark.backend
+    def test_analyze_for_leaks_no_leak(self, leak_detector):
+        """Test leak analysis with no leak."""
+        from proxima.backends.gpu_memory_manager import MemoryLeakSeverity
+
+        leak_detector.establish_baseline()
+
+        # Record some snapshots without memory change
+        for i in range(5):
+            leak_detector.record_snapshot(f"iteration_{i}")
+            leak_detector.mark_iteration()
+
+        report = leak_detector.analyze_for_leaks()
+
+        assert report.iterations_analyzed == 5
+        assert report.baseline_mb >= 0
+        # With no actual memory leak, should be NONE or LOW
+        assert report.severity in [MemoryLeakSeverity.NONE, MemoryLeakSeverity.LOW]
+
+    @pytest.mark.backend
+    def test_leak_report_structure(self, leak_detector):
+        """Test leak report has correct structure."""
+        leak_detector.establish_baseline()
+        leak_detector.record_snapshot("test")
+
+        report = leak_detector.analyze_for_leaks()
+
+        assert hasattr(report, "leak_detected")
+        assert hasattr(report, "severity")
+        assert hasattr(report, "leaked_mb")
+        assert hasattr(report, "leak_rate_mb_per_iteration")
+        assert hasattr(report, "baseline_mb")
+        assert hasattr(report, "current_mb")
+        assert hasattr(report, "iterations_analyzed")
+        assert hasattr(report, "recommendations")
+        assert hasattr(report, "details")
+
+    @pytest.mark.backend
+    def test_detector_reset(self, leak_detector):
+        """Test resetting detector state."""
+        leak_detector.establish_baseline()
+        leak_detector.record_snapshot("test")
+        leak_detector.mark_iteration()
+
+        leak_detector.reset()
+
+        assert len(leak_detector._snapshots) == 0
+        assert leak_detector._baseline_mb is None
+        assert leak_detector._iteration_count == 0
+
+    @pytest.mark.backend
+    def test_get_summary(self, leak_detector):
+        """Test getting detector summary."""
+        leak_detector.establish_baseline()
+        leak_detector.record_snapshot("test")
+
+        summary = leak_detector.get_summary()
+
+        assert "monitoring_active" in summary
+        assert "baseline_mb" in summary
+        assert "snapshot_count" in summary
+        assert "iteration_count" in summary
+        assert "device_id" in summary
+
+    @pytest.mark.backend
+    def test_memory_manager_leak_detector_integration(self, memory_manager):
+        """Test memory manager creates leak detector."""
+        detector = memory_manager.get_leak_detector()
+
+        assert detector is not None
+        # Same instance should be returned
+        assert memory_manager.get_leak_detector() is detector
+
+    @pytest.mark.backend
+    def test_memory_manager_leak_mitigator_integration(self, memory_manager):
+        """Test memory manager creates leak mitigator."""
+        mitigator = memory_manager.get_leak_mitigator()
+
+        assert mitigator is not None
+        assert not mitigator.is_circuit_open()
+
+    @pytest.mark.backend
+    def test_record_execution_snapshot(self, memory_manager):
+        """Test recording execution snapshots via manager."""
+        snapshot = memory_manager.record_execution_snapshot("test")
+
+        assert snapshot is not None
+        assert snapshot.context == "test"
+
+    @pytest.mark.backend
+    def test_check_for_leaks(self, memory_manager):
+        """Test checking for leaks via manager."""
+        # Record some snapshots
+        memory_manager.record_execution_snapshot("before")
+        memory_manager.mark_iteration_complete()
+        memory_manager.record_execution_snapshot("after")
+
+        report = memory_manager.check_for_leaks()
+
+        assert hasattr(report, "leak_detected")
+        assert hasattr(report, "severity")
+
+    @pytest.mark.backend
+    def test_leak_detection_summary(self, memory_manager):
+        """Test getting leak detection summary."""
+        summary = memory_manager.get_leak_detection_summary()
+
+        assert "monitoring_active" in summary
+        assert "circuit_breaker_open" in summary
+
+    @pytest.mark.backend
+    def test_reset_leak_detection(self, memory_manager):
+        """Test resetting leak detection state."""
+        # Record some data
+        memory_manager.record_execution_snapshot("test")
+        memory_manager.mark_iteration_complete()
+
+        # Reset
+        memory_manager.reset_leak_detection()
+
+        summary = memory_manager.get_leak_detection_summary()
+        assert summary["iteration_count"] == 0
+
+
+class TestMemoryLeakMitigator:
+    """Tests for memory leak mitigator."""
+
+    @pytest.fixture
+    def mitigator(self):
+        """Create a memory leak mitigator."""
+        from proxima.backends.gpu_memory_manager import (
+            GPUMemoryManager,
+            GPUMemoryLeakDetector,
+            MemoryLeakMitigator,
+        )
+
+        manager = GPUMemoryManager()
+        detector = GPUMemoryLeakDetector()
+        return MemoryLeakMitigator(manager, detector)
+
+    @pytest.mark.backend
+    def test_attempt_cleanup(self, mitigator):
+        """Test cleanup attempt."""
+        result = mitigator.attempt_cleanup(aggressive=False)
+
+        assert result["cleanup_attempted"]
+        assert "strategies_used" in result
+        assert isinstance(result["strategies_used"], list)
+        assert "memory_freed_mb" in result
+
+    @pytest.mark.backend
+    def test_aggressive_cleanup(self, mitigator):
+        """Test aggressive cleanup."""
+        result = mitigator.attempt_cleanup(aggressive=True)
+
+        assert result["cleanup_attempted"]
+        assert len(result["strategies_used"]) > 0
+
+    @pytest.mark.backend
+    def test_circuit_breaker_initial_state(self, mitigator):
+        """Test circuit breaker is initially closed."""
+        assert not mitigator.is_circuit_open()
+
+    @pytest.mark.backend
+    def test_circuit_breaker_reset(self, mitigator):
+        """Test resetting circuit breaker."""
+        # Manually open
+        mitigator._circuit_open = True
+        assert mitigator.is_circuit_open()
+
+        # Reset
+        mitigator.reset_circuit_breaker()
+        assert not mitigator.is_circuit_open()
+
+    @pytest.mark.backend
+    def test_check_and_mitigate_no_leak(self, mitigator):
+        """Test check and mitigate with no leak."""
+        result = mitigator.check_and_mitigate()
+
+        assert "leak_report" in result
+        assert "mitigation_performed" in result
+
+
+class TestMemoryLeakSeverity:
+    """Tests for memory leak severity levels."""
+
+    @pytest.mark.backend
+    def test_severity_values(self):
+        """Test severity enum values."""
+        from proxima.backends.gpu_memory_manager import MemoryLeakSeverity
+
+        assert MemoryLeakSeverity.NONE.value == "none"
+        assert MemoryLeakSeverity.LOW.value == "low"
+        assert MemoryLeakSeverity.MEDIUM.value == "medium"
+        assert MemoryLeakSeverity.HIGH.value == "high"
+        assert MemoryLeakSeverity.CRITICAL.value == "critical"
+

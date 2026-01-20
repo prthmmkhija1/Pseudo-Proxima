@@ -21,6 +21,7 @@ import time
 import traceback
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any, TypeVar
 
 from proxima.core.state import ExecutionState, ExecutionStateMachine
@@ -1396,3 +1397,547 @@ class BatchExecutor:
                     self._notify_progress(completed_count[0], total)
         
         return result
+
+
+# ==============================================================================
+# DISTRIBUTED EXECUTION EDGE CASES (2% Gap Coverage)
+# ==============================================================================
+
+
+class WorkerState(Enum):
+    """State of a distributed worker."""
+    
+    HEALTHY = "healthy"
+    DEGRADED = "degraded"
+    UNHEALTHY = "unhealthy"
+    DISCONNECTED = "disconnected"
+    RECOVERING = "recovering"
+
+
+@dataclass
+class WorkerHealth:
+    """Health status of a distributed worker."""
+    
+    worker_id: str
+    state: WorkerState
+    last_heartbeat: float
+    failed_tasks: int = 0
+    successful_tasks: int = 0
+    avg_latency_ms: float = 0.0
+    error_rate: float = 0.0
+    consecutive_failures: int = 0
+    last_error: str | None = None
+    
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary."""
+        return {
+            "worker_id": self.worker_id,
+            "state": self.state.value,
+            "last_heartbeat": self.last_heartbeat,
+            "failed_tasks": self.failed_tasks,
+            "successful_tasks": self.successful_tasks,
+            "avg_latency_ms": self.avg_latency_ms,
+            "error_rate": self.error_rate,
+            "consecutive_failures": self.consecutive_failures,
+            "last_error": self.last_error,
+        }
+
+
+class CircuitState(Enum):
+    """Circuit breaker state."""
+    
+    CLOSED = "closed"      # Normal operation
+    OPEN = "open"          # Blocking all calls
+    HALF_OPEN = "half_open"  # Testing if service recovered
+
+
+@dataclass
+class CircuitBreakerConfig:
+    """Configuration for circuit breaker."""
+    
+    failure_threshold: int = 5      # Failures before opening
+    success_threshold: int = 3      # Successes to close from half-open
+    timeout_seconds: float = 30.0   # Time before trying half-open
+    half_open_max_calls: int = 1    # Max concurrent calls in half-open
+
+
+class CircuitBreaker:
+    """Circuit breaker for distributed execution resilience.
+    
+    Implements the circuit breaker pattern to prevent cascade failures
+    and allow graceful degradation.
+    """
+    
+    def __init__(
+        self,
+        name: str,
+        config: CircuitBreakerConfig | None = None,
+    ) -> None:
+        """Initialize circuit breaker.
+        
+        Args:
+            name: Identifier for this circuit breaker
+            config: Configuration settings
+        """
+        self._name = name
+        self._config = config or CircuitBreakerConfig()
+        self._state = CircuitState.CLOSED
+        self._failure_count = 0
+        self._success_count = 0
+        self._last_failure_time: float | None = None
+        self._half_open_calls = 0
+        self._lock = threading.RLock()
+        self._logger = get_logger(f"circuit_breaker.{name}")
+    
+    @property
+    def state(self) -> CircuitState:
+        """Get current circuit state."""
+        with self._lock:
+            self._check_state_transition()
+            return self._state
+    
+    def _check_state_transition(self) -> None:
+        """Check and perform automatic state transitions."""
+        if self._state == CircuitState.OPEN:
+            if self._last_failure_time is not None:
+                elapsed = time.time() - self._last_failure_time
+                if elapsed >= self._config.timeout_seconds:
+                    self._transition_to(CircuitState.HALF_OPEN)
+    
+    def _transition_to(self, new_state: CircuitState) -> None:
+        """Transition to a new state."""
+        old_state = self._state
+        self._state = new_state
+        
+        if new_state == CircuitState.HALF_OPEN:
+            self._half_open_calls = 0
+            self._success_count = 0
+        elif new_state == CircuitState.CLOSED:
+            self._failure_count = 0
+            self._success_count = 0
+        
+        self._logger.info(
+            "circuit_breaker.transition",
+            from_state=old_state.value,
+            to_state=new_state.value,
+        )
+    
+    def allow_request(self) -> bool:
+        """Check if a request should be allowed.
+        
+        Returns:
+            True if request should proceed, False if blocked
+        """
+        with self._lock:
+            self._check_state_transition()
+            
+            if self._state == CircuitState.CLOSED:
+                return True
+            
+            if self._state == CircuitState.OPEN:
+                return False
+            
+            # Half-open: allow limited requests
+            if self._half_open_calls < self._config.half_open_max_calls:
+                self._half_open_calls += 1
+                return True
+            
+            return False
+    
+    def record_success(self) -> None:
+        """Record a successful request."""
+        with self._lock:
+            self._success_count += 1
+            self._failure_count = 0
+            
+            if self._state == CircuitState.HALF_OPEN:
+                if self._success_count >= self._config.success_threshold:
+                    self._transition_to(CircuitState.CLOSED)
+    
+    def record_failure(self, error: str | None = None) -> None:
+        """Record a failed request."""
+        with self._lock:
+            self._failure_count += 1
+            self._last_failure_time = time.time()
+            
+            if self._state == CircuitState.HALF_OPEN:
+                self._transition_to(CircuitState.OPEN)
+            elif self._state == CircuitState.CLOSED:
+                if self._failure_count >= self._config.failure_threshold:
+                    self._transition_to(CircuitState.OPEN)
+    
+    def get_stats(self) -> dict[str, Any]:
+        """Get circuit breaker statistics."""
+        with self._lock:
+            return {
+                "name": self._name,
+                "state": self._state.value,
+                "failure_count": self._failure_count,
+                "success_count": self._success_count,
+                "last_failure_time": self._last_failure_time,
+            }
+
+
+@dataclass
+class PartialExecutionResult:
+    """Result of a partially completed distributed execution."""
+    
+    completed_tasks: list[str]
+    failed_tasks: list[str]
+    pending_tasks: list[str]
+    recovered_tasks: list[str]
+    total_tasks: int
+    completion_percent: float
+    recoverable: bool
+    checkpoint_id: str | None = None
+    errors: list[dict[str, Any]] = field(default_factory=list)
+    
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary."""
+        return {
+            "completed_tasks": self.completed_tasks,
+            "failed_tasks": self.failed_tasks,
+            "pending_tasks": self.pending_tasks,
+            "recovered_tasks": self.recovered_tasks,
+            "total_tasks": self.total_tasks,
+            "completion_percent": self.completion_percent,
+            "recoverable": self.recoverable,
+            "checkpoint_id": self.checkpoint_id,
+            "errors": self.errors,
+        }
+
+
+class DistributedEdgeCaseHandler:
+    """Handles edge cases in distributed execution.
+    
+    Features:
+    - Network failure handling with retry
+    - Partial execution recovery
+    - Worker health monitoring
+    - Circuit breaker pattern
+    - Graceful degradation
+    """
+    
+    def __init__(
+        self,
+        max_retries: int = 3,
+        retry_delay_base: float = 1.0,
+        health_check_interval: float = 5.0,
+        logger: Any = None,
+    ) -> None:
+        """Initialize edge case handler.
+        
+        Args:
+            max_retries: Maximum retry attempts
+            retry_delay_base: Base delay for exponential backoff
+            health_check_interval: Interval for health checks
+            logger: Logger instance
+        """
+        self._max_retries = max_retries
+        self._retry_delay_base = retry_delay_base
+        self._health_check_interval = health_check_interval
+        self._logger = logger or get_logger("distributed_edge_cases")
+        
+        self._worker_health: dict[str, WorkerHealth] = {}
+        self._circuit_breakers: dict[str, CircuitBreaker] = {}
+        self._partial_results: dict[str, PartialExecutionResult] = {}
+        self._lock = threading.RLock()
+    
+    def register_worker(self, worker_id: str) -> None:
+        """Register a worker for health monitoring."""
+        with self._lock:
+            self._worker_health[worker_id] = WorkerHealth(
+                worker_id=worker_id,
+                state=WorkerState.HEALTHY,
+                last_heartbeat=time.time(),
+            )
+            self._circuit_breakers[worker_id] = CircuitBreaker(worker_id)
+    
+    def record_heartbeat(self, worker_id: str) -> None:
+        """Record a heartbeat from a worker."""
+        with self._lock:
+            if worker_id in self._worker_health:
+                self._worker_health[worker_id].last_heartbeat = time.time()
+                if self._worker_health[worker_id].state == WorkerState.DISCONNECTED:
+                    self._worker_health[worker_id].state = WorkerState.RECOVERING
+    
+    def record_task_result(
+        self,
+        worker_id: str,
+        success: bool,
+        latency_ms: float,
+        error: str | None = None,
+    ) -> None:
+        """Record a task execution result."""
+        with self._lock:
+            if worker_id not in self._worker_health:
+                return
+            
+            health = self._worker_health[worker_id]
+            circuit = self._circuit_breakers.get(worker_id)
+            
+            if success:
+                health.successful_tasks += 1
+                health.consecutive_failures = 0
+                # Update average latency
+                total_tasks = health.successful_tasks + health.failed_tasks
+                health.avg_latency_ms = (
+                    (health.avg_latency_ms * (total_tasks - 1) + latency_ms) / total_tasks
+                )
+                if circuit:
+                    circuit.record_success()
+            else:
+                health.failed_tasks += 1
+                health.consecutive_failures += 1
+                health.last_error = error
+                if circuit:
+                    circuit.record_failure(error)
+            
+            # Update error rate
+            total = health.successful_tasks + health.failed_tasks
+            if total > 0:
+                health.error_rate = health.failed_tasks / total
+            
+            # Update worker state based on metrics
+            self._update_worker_state(worker_id)
+    
+    def _update_worker_state(self, worker_id: str) -> None:
+        """Update worker state based on health metrics."""
+        if worker_id not in self._worker_health:
+            return
+        
+        health = self._worker_health[worker_id]
+        
+        # Check for disconnection
+        heartbeat_age = time.time() - health.last_heartbeat
+        if heartbeat_age > self._health_check_interval * 3:
+            health.state = WorkerState.DISCONNECTED
+            return
+        
+        # Check error rate
+        if health.consecutive_failures >= 5:
+            health.state = WorkerState.UNHEALTHY
+        elif health.error_rate > 0.3:
+            health.state = WorkerState.DEGRADED
+        elif health.state in (WorkerState.RECOVERING, WorkerState.DEGRADED):
+            if health.consecutive_failures == 0 and health.error_rate < 0.1:
+                health.state = WorkerState.HEALTHY
+    
+    def get_healthy_workers(self) -> list[str]:
+        """Get list of healthy workers."""
+        with self._lock:
+            return [
+                wid for wid, health in self._worker_health.items()
+                if health.state in (WorkerState.HEALTHY, WorkerState.DEGRADED)
+                and self._circuit_breakers.get(wid, CircuitBreaker("")).state != CircuitState.OPEN
+            ]
+    
+    def handle_network_failure(
+        self,
+        worker_id: str,
+        task: dict[str, Any],
+        error: Exception,
+        retry_count: int = 0,
+    ) -> tuple[bool, dict[str, Any] | None]:
+        """Handle network failure with retry logic.
+        
+        Args:
+            worker_id: ID of failed worker
+            task: Task that failed
+            error: Network error
+            retry_count: Current retry count
+            
+        Returns:
+            Tuple of (should_retry, modified_task)
+        """
+        self._logger.warning(
+            "distributed.network_failure",
+            worker_id=worker_id,
+            error=str(error),
+            retry_count=retry_count,
+        )
+        
+        # Record failure
+        self.record_task_result(worker_id, False, 0, str(error))
+        
+        if retry_count >= self._max_retries:
+            return False, None
+        
+        # Calculate backoff delay
+        delay = self._retry_delay_base * (2 ** retry_count)
+        
+        # Find alternative worker
+        healthy_workers = self.get_healthy_workers()
+        alternative = next(
+            (w for w in healthy_workers if w != worker_id),
+            None,
+        )
+        
+        if alternative:
+            # Modify task to use alternative worker
+            modified_task = dict(task)
+            modified_task["_retry_count"] = retry_count + 1
+            modified_task["_assigned_worker"] = alternative
+            modified_task["_retry_delay"] = delay
+            return True, modified_task
+        
+        # No alternative, retry on same worker after delay
+        modified_task = dict(task)
+        modified_task["_retry_count"] = retry_count + 1
+        modified_task["_retry_delay"] = delay
+        return True, modified_task
+    
+    def handle_partial_failure(
+        self,
+        execution_id: str,
+        completed: list[str],
+        failed: list[str],
+        pending: list[str],
+        errors: list[dict[str, Any]],
+    ) -> PartialExecutionResult:
+        """Handle partial execution failure.
+        
+        Args:
+            execution_id: Execution identifier
+            completed: IDs of completed tasks
+            failed: IDs of failed tasks
+            pending: IDs of pending tasks
+            errors: Error details
+            
+        Returns:
+            PartialExecutionResult with recovery info
+        """
+        total = len(completed) + len(failed) + len(pending)
+        completion_percent = (len(completed) / total * 100) if total > 0 else 0
+        
+        # Determine if recovery is possible
+        recoverable = len(pending) > 0 or any(
+            self._is_recoverable_error(e) for e in errors
+        )
+        
+        # Create checkpoint if recoverable
+        checkpoint_id = None
+        if recoverable:
+            checkpoint_id = f"partial_{execution_id}_{int(time.time())}"
+        
+        result = PartialExecutionResult(
+            completed_tasks=completed,
+            failed_tasks=failed,
+            pending_tasks=pending,
+            recovered_tasks=[],
+            total_tasks=total,
+            completion_percent=completion_percent,
+            recoverable=recoverable,
+            checkpoint_id=checkpoint_id,
+            errors=errors,
+        )
+        
+        with self._lock:
+            self._partial_results[execution_id] = result
+        
+        return result
+    
+    def _is_recoverable_error(self, error: dict[str, Any]) -> bool:
+        """Check if an error is recoverable."""
+        error_type = error.get("type", "")
+        recoverable_types = [
+            "TimeoutError",
+            "ConnectionError",
+            "NetworkError",
+            "TemporaryError",
+        ]
+        return any(rt.lower() in error_type.lower() for rt in recoverable_types)
+    
+    def recover_partial_execution(
+        self,
+        execution_id: str,
+        task_executor: Callable[[dict[str, Any]], Any],
+        tasks: dict[str, dict[str, Any]],
+    ) -> PartialExecutionResult:
+        """Attempt to recover from partial execution.
+        
+        Args:
+            execution_id: Execution to recover
+            task_executor: Function to execute tasks
+            tasks: Task definitions by ID
+            
+        Returns:
+            Updated PartialExecutionResult
+        """
+        with self._lock:
+            if execution_id not in self._partial_results:
+                return PartialExecutionResult(
+                    completed_tasks=[],
+                    failed_tasks=[],
+                    pending_tasks=[],
+                    recovered_tasks=[],
+                    total_tasks=0,
+                    completion_percent=0,
+                    recoverable=False,
+                )
+            
+            partial = self._partial_results[execution_id]
+        
+        if not partial.recoverable:
+            return partial
+        
+        # Try to recover pending tasks
+        recovered = []
+        still_failed = list(partial.failed_tasks)
+        still_pending = []
+        
+        for task_id in partial.pending_tasks:
+            if task_id not in tasks:
+                continue
+            
+            task = tasks[task_id]
+            try:
+                task_executor(task)
+                recovered.append(task_id)
+                partial.completed_tasks.append(task_id)
+            except Exception as e:
+                still_failed.append(task_id)
+                partial.errors.append({
+                    "task_id": task_id,
+                    "type": type(e).__name__,
+                    "message": str(e),
+                })
+        
+        # Update result
+        partial.recovered_tasks = recovered
+        partial.failed_tasks = still_failed
+        partial.pending_tasks = still_pending
+        partial.completion_percent = (
+            len(partial.completed_tasks) / partial.total_tasks * 100
+            if partial.total_tasks > 0 else 0
+        )
+        partial.recoverable = len(still_pending) > 0
+        
+        return partial
+    
+    def get_worker_status(self) -> dict[str, WorkerHealth]:
+        """Get status of all workers."""
+        with self._lock:
+            return dict(self._worker_health)
+    
+    def get_circuit_status(self) -> dict[str, dict[str, Any]]:
+        """Get status of all circuit breakers."""
+        with self._lock:
+            return {
+                wid: cb.get_stats()
+                for wid, cb in self._circuit_breakers.items()
+            }
+    
+    def reset_worker(self, worker_id: str) -> bool:
+        """Reset a worker's health state."""
+        with self._lock:
+            if worker_id in self._worker_health:
+                self._worker_health[worker_id] = WorkerHealth(
+                    worker_id=worker_id,
+                    state=WorkerState.HEALTHY,
+                    last_heartbeat=time.time(),
+                )
+                if worker_id in self._circuit_breakers:
+                    self._circuit_breakers[worker_id] = CircuitBreaker(worker_id)
+                return True
+            return False

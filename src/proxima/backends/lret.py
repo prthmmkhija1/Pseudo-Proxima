@@ -651,6 +651,565 @@ class LRETAPIVerifier:
 
 
 # ==============================================================================
+# PERFORMANCE BENCHMARKING INFRASTRUCTURE
+# ==============================================================================
+
+
+@dataclass
+class LRETPerformanceMetrics:
+    """Performance metrics specific to LRET backend.
+    
+    Captures detailed performance measurements for LRET circuit execution,
+    enabling comprehensive benchmarking and performance analysis.
+    
+    Attributes:
+        execution_time_ms: Total wall-clock execution time in milliseconds.
+        gate_execution_time_ms: Time spent executing gates.
+        measurement_time_ms: Time spent on measurements/sampling.
+        normalization_time_ms: Time spent on result normalization.
+        memory_peak_mb: Peak memory usage during execution.
+        memory_baseline_mb: Memory usage before execution.
+        throughput_shots_per_sec: Number of shots processed per second.
+        gates_per_second: Gate execution throughput.
+        qubits: Number of qubits in the circuit.
+        gate_count: Total number of gates executed.
+        circuit_depth: Depth of the circuit.
+        shots: Number of measurement shots.
+        timestamp: When the benchmark was executed.
+    """
+    
+    execution_time_ms: float = 0.0
+    gate_execution_time_ms: float = 0.0
+    measurement_time_ms: float = 0.0
+    normalization_time_ms: float = 0.0
+    memory_peak_mb: float = 0.0
+    memory_baseline_mb: float = 0.0
+    throughput_shots_per_sec: float = 0.0
+    gates_per_second: float = 0.0
+    qubits: int = 0
+    gate_count: int = 0
+    circuit_depth: int = 0
+    shots: int = 0
+    timestamp: float = field(default_factory=time.time)
+    
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary representation."""
+        return {
+            "execution_time_ms": self.execution_time_ms,
+            "gate_execution_time_ms": self.gate_execution_time_ms,
+            "measurement_time_ms": self.measurement_time_ms,
+            "normalization_time_ms": self.normalization_time_ms,
+            "memory_peak_mb": self.memory_peak_mb,
+            "memory_baseline_mb": self.memory_baseline_mb,
+            "throughput_shots_per_sec": self.throughput_shots_per_sec,
+            "gates_per_second": self.gates_per_second,
+            "qubits": self.qubits,
+            "gate_count": self.gate_count,
+            "circuit_depth": self.circuit_depth,
+            "shots": self.shots,
+            "timestamp": self.timestamp,
+        }
+    
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "LRETPerformanceMetrics":
+        """Create from dictionary."""
+        return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
+
+
+@dataclass
+class LRETBenchmarkResult:
+    """Result of an LRET performance benchmark run.
+    
+    Aggregates metrics across multiple runs for statistical analysis.
+    
+    Attributes:
+        circuit_name: Identifier for the circuit being benchmarked.
+        num_runs: Number of benchmark runs performed.
+        metrics: List of metrics from each run.
+        mean_execution_time_ms: Average execution time.
+        std_execution_time_ms: Standard deviation of execution time.
+        min_execution_time_ms: Minimum execution time.
+        max_execution_time_ms: Maximum execution time.
+        mean_throughput: Average throughput (shots/second).
+        mean_memory_mb: Average memory usage.
+        success_rate: Percentage of successful runs.
+        errors: List of errors encountered during benchmarking.
+    """
+    
+    circuit_name: str
+    num_runs: int
+    metrics: list[LRETPerformanceMetrics] = field(default_factory=list)
+    mean_execution_time_ms: float = 0.0
+    std_execution_time_ms: float = 0.0
+    min_execution_time_ms: float = 0.0
+    max_execution_time_ms: float = 0.0
+    mean_throughput: float = 0.0
+    mean_memory_mb: float = 0.0
+    success_rate: float = 0.0
+    errors: list[str] = field(default_factory=list)
+    
+    def compute_statistics(self) -> None:
+        """Compute aggregate statistics from individual run metrics."""
+        if not self.metrics:
+            return
+        
+        times = [m.execution_time_ms for m in self.metrics]
+        self.mean_execution_time_ms = sum(times) / len(times)
+        self.min_execution_time_ms = min(times)
+        self.max_execution_time_ms = max(times)
+        
+        if len(times) > 1:
+            variance = sum((t - self.mean_execution_time_ms) ** 2 for t in times) / (len(times) - 1)
+            self.std_execution_time_ms = variance ** 0.5
+        
+        throughputs = [m.throughput_shots_per_sec for m in self.metrics if m.throughput_shots_per_sec > 0]
+        if throughputs:
+            self.mean_throughput = sum(throughputs) / len(throughputs)
+        
+        memories = [m.memory_peak_mb for m in self.metrics if m.memory_peak_mb > 0]
+        if memories:
+            self.mean_memory_mb = sum(memories) / len(memories)
+        
+        self.success_rate = len(self.metrics) / self.num_runs * 100 if self.num_runs > 0 else 0.0
+    
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary representation."""
+        return {
+            "circuit_name": self.circuit_name,
+            "num_runs": self.num_runs,
+            "metrics": [m.to_dict() for m in self.metrics],
+            "mean_execution_time_ms": self.mean_execution_time_ms,
+            "std_execution_time_ms": self.std_execution_time_ms,
+            "min_execution_time_ms": self.min_execution_time_ms,
+            "max_execution_time_ms": self.max_execution_time_ms,
+            "mean_throughput": self.mean_throughput,
+            "mean_memory_mb": self.mean_memory_mb,
+            "success_rate": self.success_rate,
+            "errors": self.errors,
+        }
+
+
+class LRETPerformanceMonitor:
+    """Monitor for tracking LRET execution performance.
+    
+    Provides instrumentation for measuring execution time, memory usage,
+    and other performance metrics during LRET circuit execution.
+    """
+    
+    def __init__(self) -> None:
+        """Initialize the performance monitor."""
+        self._start_time: float = 0.0
+        self._gate_start_time: float = 0.0
+        self._measurement_start_time: float = 0.0
+        self._phase_times: dict[str, float] = {}
+        self._memory_samples: list[float] = []
+        self._baseline_memory: float = 0.0
+        self._is_running: bool = False
+    
+    def start(self) -> None:
+        """Start performance monitoring."""
+        self._start_time = time.perf_counter()
+        self._phase_times = {}
+        self._memory_samples = []
+        self._baseline_memory = self._get_current_memory()
+        self._is_running = True
+    
+    def stop(self) -> float:
+        """Stop monitoring and return total elapsed time in ms."""
+        if not self._is_running:
+            return 0.0
+        elapsed = (time.perf_counter() - self._start_time) * 1000
+        self._is_running = False
+        return elapsed
+    
+    def start_phase(self, phase_name: str) -> None:
+        """Mark the start of an execution phase."""
+        self._phase_times[f"{phase_name}_start"] = time.perf_counter()
+    
+    def end_phase(self, phase_name: str) -> float:
+        """Mark the end of an execution phase and return duration in ms."""
+        end_time = time.perf_counter()
+        start_key = f"{phase_name}_start"
+        if start_key in self._phase_times:
+            duration = (end_time - self._phase_times[start_key]) * 1000
+            self._phase_times[phase_name] = duration
+            return duration
+        return 0.0
+    
+    def sample_memory(self) -> float:
+        """Sample current memory usage in MB."""
+        mem = self._get_current_memory()
+        self._memory_samples.append(mem)
+        return mem
+    
+    def _get_current_memory(self) -> float:
+        """Get current process memory usage in MB."""
+        try:
+            import psutil
+            process = psutil.Process()
+            return process.memory_info().rss / (1024 * 1024)
+        except ImportError:
+            return 0.0
+    
+    def get_peak_memory(self) -> float:
+        """Get peak memory usage in MB."""
+        if not self._memory_samples:
+            return self._get_current_memory()
+        return max(self._memory_samples)
+    
+    def get_phase_time(self, phase_name: str) -> float:
+        """Get the duration of a specific phase in ms."""
+        return self._phase_times.get(phase_name, 0.0)
+    
+    def get_metrics(
+        self,
+        qubits: int = 0,
+        gate_count: int = 0,
+        circuit_depth: int = 0,
+        shots: int = 0,
+    ) -> LRETPerformanceMetrics:
+        """Build performance metrics from collected data."""
+        total_time = self.stop() if self._is_running else (
+            (time.perf_counter() - self._start_time) * 1000 if self._start_time > 0 else 0.0
+        )
+        
+        gate_time = self.get_phase_time("gate_execution")
+        measurement_time = self.get_phase_time("measurement")
+        normalization_time = self.get_phase_time("normalization")
+        
+        peak_memory = self.get_peak_memory()
+        
+        # Calculate throughput
+        throughput = 0.0
+        if total_time > 0 and shots > 0:
+            throughput = (shots / total_time) * 1000  # shots per second
+        
+        # Calculate gates per second
+        gates_per_sec = 0.0
+        if gate_time > 0 and gate_count > 0:
+            gates_per_sec = (gate_count / gate_time) * 1000
+        
+        return LRETPerformanceMetrics(
+            execution_time_ms=total_time,
+            gate_execution_time_ms=gate_time,
+            measurement_time_ms=measurement_time,
+            normalization_time_ms=normalization_time,
+            memory_peak_mb=peak_memory,
+            memory_baseline_mb=self._baseline_memory,
+            throughput_shots_per_sec=throughput,
+            gates_per_second=gates_per_sec,
+            qubits=qubits,
+            gate_count=gate_count,
+            circuit_depth=circuit_depth,
+            shots=shots,
+            timestamp=time.time(),
+        )
+    
+    def reset(self) -> None:
+        """Reset all monitoring state."""
+        self._start_time = 0.0
+        self._phase_times = {}
+        self._memory_samples = []
+        self._baseline_memory = 0.0
+        self._is_running = False
+
+
+class LRETBenchmarkRunner:
+    """Runner for executing LRET performance benchmarks.
+    
+    Provides methods for running single and multiple benchmark runs,
+    collecting metrics, and generating benchmark reports.
+    """
+    
+    def __init__(self, adapter: "LRETBackendAdapter") -> None:
+        """Initialize the benchmark runner.
+        
+        Args:
+            adapter: LRET backend adapter instance to use for execution.
+        """
+        self._adapter = adapter
+        self._logger = logging.getLogger("proxima.backends.lret.benchmark")
+    
+    def run_single(
+        self,
+        circuit: Any,
+        shots: int = 1024,
+        circuit_name: str = "unnamed",
+    ) -> LRETPerformanceMetrics:
+        """Run a single benchmark iteration.
+        
+        Args:
+            circuit: The quantum circuit to benchmark.
+            shots: Number of measurement shots.
+            circuit_name: Identifier for the circuit.
+            
+        Returns:
+            Performance metrics from the run.
+        """
+        monitor = LRETPerformanceMonitor()
+        
+        # Extract circuit info
+        qubits, gate_count, depth = self._extract_circuit_info(circuit)
+        
+        # Prepare for benchmark
+        self._adapter.prepare_for_benchmark(circuit, shots)
+        
+        try:
+            monitor.start()
+            monitor.sample_memory()
+            
+            # Execute the circuit
+            result = self._adapter.execute(
+                circuit=circuit,
+                shots=shots,
+                options={"benchmark_mode": True},
+            )
+            
+            monitor.sample_memory()
+            
+            return monitor.get_metrics(
+                qubits=qubits,
+                gate_count=gate_count,
+                circuit_depth=depth,
+                shots=shots,
+            )
+            
+        finally:
+            self._adapter.cleanup_after_benchmark()
+    
+    def run_benchmark(
+        self,
+        circuit: Any,
+        num_runs: int = 5,
+        shots: int = 1024,
+        circuit_name: str = "unnamed",
+        warmup_runs: int = 1,
+    ) -> LRETBenchmarkResult:
+        """Run a complete benchmark with multiple iterations.
+        
+        Args:
+            circuit: The quantum circuit to benchmark.
+            num_runs: Number of benchmark iterations.
+            shots: Number of measurement shots per iteration.
+            circuit_name: Identifier for the circuit.
+            warmup_runs: Number of warmup runs before measuring.
+            
+        Returns:
+            Aggregated benchmark results.
+        """
+        result = LRETBenchmarkResult(
+            circuit_name=circuit_name,
+            num_runs=num_runs,
+        )
+        
+        # Warmup runs (not included in results)
+        for _ in range(warmup_runs):
+            try:
+                self.run_single(circuit, shots, circuit_name)
+            except Exception as e:
+                self._logger.warning(f"Warmup run failed: {e}")
+        
+        # Benchmark runs
+        for run_idx in range(num_runs):
+            try:
+                metrics = self.run_single(circuit, shots, circuit_name)
+                result.metrics.append(metrics)
+                self._logger.debug(
+                    f"Run {run_idx + 1}/{num_runs}: {metrics.execution_time_ms:.2f}ms"
+                )
+            except Exception as e:
+                error_msg = f"Run {run_idx + 1} failed: {str(e)}"
+                result.errors.append(error_msg)
+                self._logger.error(error_msg)
+        
+        # Compute aggregate statistics
+        result.compute_statistics()
+        
+        return result
+    
+    def run_scaling_benchmark(
+        self,
+        circuit_generator: Callable[[int], Any],
+        qubit_range: list[int],
+        shots: int = 1024,
+        num_runs: int = 3,
+    ) -> list[LRETBenchmarkResult]:
+        """Run benchmarks across different circuit sizes.
+        
+        Args:
+            circuit_generator: Function that generates a circuit given qubit count.
+            qubit_range: List of qubit counts to benchmark.
+            shots: Number of measurement shots per iteration.
+            num_runs: Number of runs per circuit size.
+            
+        Returns:
+            List of benchmark results for each circuit size.
+        """
+        results = []
+        
+        for num_qubits in qubit_range:
+            circuit = circuit_generator(num_qubits)
+            circuit_name = f"circuit_{num_qubits}q"
+            
+            self._logger.info(f"Benchmarking {num_qubits} qubits...")
+            
+            result = self.run_benchmark(
+                circuit=circuit,
+                num_runs=num_runs,
+                shots=shots,
+                circuit_name=circuit_name,
+            )
+            results.append(result)
+            
+            self._logger.info(
+                f"  {num_qubits}q: {result.mean_execution_time_ms:.2f}ms "
+                f"(±{result.std_execution_time_ms:.2f}ms)"
+            )
+        
+        return results
+    
+    def run_throughput_benchmark(
+        self,
+        circuit: Any,
+        shot_counts: list[int],
+        num_runs: int = 3,
+        circuit_name: str = "throughput_test",
+    ) -> list[LRETBenchmarkResult]:
+        """Benchmark throughput across different shot counts.
+        
+        Args:
+            circuit: The quantum circuit to benchmark.
+            shot_counts: List of shot counts to test.
+            num_runs: Number of runs per shot count.
+            circuit_name: Base identifier for the circuit.
+            
+        Returns:
+            List of benchmark results for each shot count.
+        """
+        results = []
+        
+        for shots in shot_counts:
+            name = f"{circuit_name}_{shots}shots"
+            
+            self._logger.info(f"Benchmarking with {shots} shots...")
+            
+            result = self.run_benchmark(
+                circuit=circuit,
+                num_runs=num_runs,
+                shots=shots,
+                circuit_name=name,
+            )
+            results.append(result)
+            
+            self._logger.info(
+                f"  {shots} shots: {result.mean_throughput:.0f} shots/sec"
+            )
+        
+        return results
+    
+    def _extract_circuit_info(self, circuit: Any) -> tuple[int, int, int]:
+        """Extract qubit count, gate count, and depth from a circuit.
+        
+        Args:
+            circuit: The quantum circuit.
+            
+        Returns:
+            Tuple of (num_qubits, gate_count, depth).
+        """
+        num_qubits = 0
+        gate_count = 0
+        depth = 0
+        
+        try:
+            if isinstance(circuit, dict):
+                num_qubits = circuit.get("qubits", circuit.get("num_qubits", 0))
+                gates = circuit.get("gates", circuit.get("operations", []))
+                gate_count = len(gates) if gates else 0
+                depth = circuit.get("depth", gate_count)
+            elif hasattr(circuit, "num_qubits"):
+                num_qubits = circuit.num_qubits
+            elif hasattr(circuit, "qubits"):
+                qubits = circuit.qubits
+                num_qubits = len(qubits) if hasattr(qubits, "__len__") else qubits
+            
+            if hasattr(circuit, "gate_count"):
+                gate_count = circuit.gate_count
+            elif hasattr(circuit, "num_operations"):
+                gate_count = circuit.num_operations
+            elif hasattr(circuit, "gates"):
+                gate_count = len(circuit.gates)
+            
+            if hasattr(circuit, "depth"):
+                depth = circuit.depth
+            elif hasattr(circuit, "circuit_depth"):
+                depth = circuit.circuit_depth
+        except Exception:
+            pass
+        
+        return num_qubits, gate_count, depth
+    
+    def generate_report(
+        self,
+        results: list[LRETBenchmarkResult],
+        include_raw_metrics: bool = False,
+    ) -> dict[str, Any]:
+        """Generate a comprehensive benchmark report.
+        
+        Args:
+            results: List of benchmark results.
+            include_raw_metrics: Whether to include raw metrics data.
+            
+        Returns:
+            Dictionary containing the benchmark report.
+        """
+        report = {
+            "backend": "lret",
+            "version": self._adapter.get_version(),
+            "timestamp": time.time(),
+            "summary": {
+                "total_circuits": len(results),
+                "total_runs": sum(r.num_runs for r in results),
+                "successful_runs": sum(len(r.metrics) for r in results),
+                "failed_runs": sum(len(r.errors) for r in results),
+            },
+            "results": [],
+        }
+        
+        for result in results:
+            result_data = {
+                "circuit_name": result.circuit_name,
+                "num_runs": result.num_runs,
+                "mean_execution_time_ms": result.mean_execution_time_ms,
+                "std_execution_time_ms": result.std_execution_time_ms,
+                "min_execution_time_ms": result.min_execution_time_ms,
+                "max_execution_time_ms": result.max_execution_time_ms,
+                "mean_throughput_shots_per_sec": result.mean_throughput,
+                "mean_memory_mb": result.mean_memory_mb,
+                "success_rate": result.success_rate,
+            }
+            
+            if include_raw_metrics:
+                result_data["metrics"] = [m.to_dict() for m in result.metrics]
+            
+            if result.errors:
+                result_data["errors"] = result.errors
+            
+            report["results"].append(result_data)
+        
+        # Calculate overall statistics
+        if results:
+            all_times = [r.mean_execution_time_ms for r in results if r.metrics]
+            all_throughputs = [r.mean_throughput for r in results if r.mean_throughput > 0]
+            
+            report["overall"] = {
+                "avg_execution_time_ms": sum(all_times) / len(all_times) if all_times else 0,
+                "avg_throughput_shots_per_sec": sum(all_throughputs) / len(all_throughputs) if all_throughputs else 0,
+            }
+        
+        return report
+
+
+# ==============================================================================
 # LRET BACKEND ADAPTER
 # ==============================================================================
 
@@ -1301,6 +1860,268 @@ class LRETBackendAdapter(BaseBackendAdapter):
             use_mock: Whether to use mock backend instead of real LRET
         """
         self._use_mock = use_mock
+
+    # ------------------------------------------------------------------
+    # Performance Benchmarking Methods
+    # ------------------------------------------------------------------
+
+    def get_benchmark_runner(self) -> LRETBenchmarkRunner:
+        """Get a benchmark runner configured for this adapter.
+        
+        Returns:
+            LRETBenchmarkRunner instance ready for benchmarking.
+            
+        Example:
+            >>> adapter = LRETBackendAdapter()
+            >>> runner = adapter.get_benchmark_runner()
+            >>> result = runner.run_benchmark(circuit, num_runs=5)
+        """
+        return LRETBenchmarkRunner(self)
+
+    def run_performance_benchmark(
+        self,
+        circuit: Any,
+        shots: int = 1024,
+        num_runs: int = 5,
+        warmup_runs: int = 1,
+        circuit_name: str = "benchmark",
+    ) -> LRETBenchmarkResult:
+        """Run a performance benchmark on a circuit.
+        
+        Convenience method for running performance benchmarks directly
+        from the adapter without creating a separate runner.
+        
+        Args:
+            circuit: The quantum circuit to benchmark.
+            shots: Number of measurement shots per iteration.
+            num_runs: Number of benchmark iterations.
+            warmup_runs: Number of warmup runs before measuring.
+            circuit_name: Identifier for the circuit.
+            
+        Returns:
+            Aggregated benchmark results with statistics.
+            
+        Example:
+            >>> adapter = LRETBackendAdapter()
+            >>> result = adapter.run_performance_benchmark(
+            ...     circuit, shots=1024, num_runs=10
+            ... )
+            >>> print(f"Mean time: {result.mean_execution_time_ms:.2f}ms")
+        """
+        runner = self.get_benchmark_runner()
+        return runner.run_benchmark(
+            circuit=circuit,
+            num_runs=num_runs,
+            shots=shots,
+            circuit_name=circuit_name,
+            warmup_runs=warmup_runs,
+        )
+
+    def run_scaling_benchmark(
+        self,
+        circuit_generator: Callable[[int], Any],
+        qubit_range: list[int] | None = None,
+        shots: int = 1024,
+        num_runs: int = 3,
+    ) -> list[LRETBenchmarkResult]:
+        """Run benchmarks across different circuit sizes.
+        
+        Tests performance scaling as circuit size increases, useful for
+        understanding backend performance characteristics.
+        
+        Args:
+            circuit_generator: Function that generates a circuit given qubit count.
+            qubit_range: List of qubit counts to benchmark. Defaults to [2, 4, 6, 8, 10].
+            shots: Number of measurement shots per iteration.
+            num_runs: Number of runs per circuit size.
+            
+        Returns:
+            List of benchmark results for each circuit size.
+            
+        Example:
+            >>> def make_ghz(n):
+            ...     return {"qubits": n, "gates": [("H", 0)] + [("CNOT", i, i+1) for i in range(n-1)]}
+            >>> results = adapter.run_scaling_benchmark(make_ghz, [2, 4, 6, 8])
+        """
+        if qubit_range is None:
+            qubit_range = [2, 4, 6, 8, 10]
+        
+        runner = self.get_benchmark_runner()
+        return runner.run_scaling_benchmark(
+            circuit_generator=circuit_generator,
+            qubit_range=qubit_range,
+            shots=shots,
+            num_runs=num_runs,
+        )
+
+    def run_throughput_benchmark(
+        self,
+        circuit: Any,
+        shot_counts: list[int] | None = None,
+        num_runs: int = 3,
+        circuit_name: str = "throughput_test",
+    ) -> list[LRETBenchmarkResult]:
+        """Benchmark throughput across different shot counts.
+        
+        Measures how throughput (shots/second) scales with the number
+        of measurement shots.
+        
+        Args:
+            circuit: The quantum circuit to benchmark.
+            shot_counts: List of shot counts to test. Defaults to geometric progression.
+            num_runs: Number of runs per shot count.
+            circuit_name: Base identifier for the circuit.
+            
+        Returns:
+            List of benchmark results for each shot count.
+            
+        Example:
+            >>> results = adapter.run_throughput_benchmark(
+            ...     circuit, shot_counts=[100, 1000, 10000]
+            ... )
+            >>> for r in results:
+            ...     print(f"{r.circuit_name}: {r.mean_throughput:.0f} shots/sec")
+        """
+        if shot_counts is None:
+            shot_counts = [100, 500, 1000, 2000, 5000, 10000]
+        
+        runner = self.get_benchmark_runner()
+        return runner.run_throughput_benchmark(
+            circuit=circuit,
+            shot_counts=shot_counts,
+            num_runs=num_runs,
+            circuit_name=circuit_name,
+        )
+
+    def generate_benchmark_report(
+        self,
+        results: list[LRETBenchmarkResult],
+        include_raw_metrics: bool = False,
+    ) -> dict[str, Any]:
+        """Generate a comprehensive benchmark report.
+        
+        Args:
+            results: List of benchmark results.
+            include_raw_metrics: Whether to include raw metrics data.
+            
+        Returns:
+            Dictionary containing the benchmark report.
+            
+        Example:
+            >>> results = adapter.run_scaling_benchmark(make_circuit, [2, 4, 6])
+            >>> report = adapter.generate_benchmark_report(results)
+            >>> print(json.dumps(report, indent=2))
+        """
+        runner = self.get_benchmark_runner()
+        return runner.generate_report(results, include_raw_metrics)
+
+    def get_performance_profile(
+        self,
+        circuit: Any,
+        shots: int = 1024,
+    ) -> dict[str, Any]:
+        """Get a detailed performance profile for a single circuit execution.
+        
+        Provides fine-grained timing breakdown for different execution phases.
+        
+        Args:
+            circuit: The quantum circuit to profile.
+            shots: Number of measurement shots.
+            
+        Returns:
+            Dictionary with detailed performance metrics.
+            
+        Example:
+            >>> profile = adapter.get_performance_profile(circuit, shots=1000)
+            >>> print(f"Gate execution: {profile['gate_execution_time_ms']:.2f}ms")
+            >>> print(f"Measurement: {profile['measurement_time_ms']:.2f}ms")
+        """
+        monitor = LRETPerformanceMonitor()
+        
+        # Extract circuit info
+        num_qubits = self._extract_qubit_count(circuit) or 2
+        gate_count = 0
+        depth = 0
+        
+        if isinstance(circuit, dict):
+            gates = circuit.get("gates", circuit.get("operations", []))
+            gate_count = len(gates) if gates else 0
+            depth = circuit.get("depth", gate_count)
+        elif hasattr(circuit, "gate_count"):
+            gate_count = circuit.gate_count
+        elif hasattr(circuit, "gates"):
+            gate_count = len(circuit.gates) if hasattr(circuit.gates, "__len__") else 0
+        
+        if hasattr(circuit, "depth"):
+            depth = circuit.depth
+        
+        # Prepare and execute with monitoring
+        self.prepare_for_benchmark(circuit, shots)
+        
+        try:
+            monitor.start()
+            monitor.sample_memory()
+            
+            monitor.start_phase("validation")
+            validation = self.validate_circuit(circuit)
+            monitor.end_phase("validation")
+            
+            if not validation.valid:
+                raise CircuitValidationError(validation.message)
+            
+            monitor.start_phase("normalization_setup")
+            normalizer = LRETResultNormalizer(num_qubits)
+            monitor.end_phase("normalization_setup")
+            
+            monitor.start_phase("gate_execution")
+            if self.is_available() and not self._use_mock:
+                try:
+                    result = self._execute_real_lret(circuit, shots)
+                except Exception:
+                    result = self._execute_mock(circuit, shots)
+            else:
+                result = self._execute_mock(circuit, shots)
+            monitor.end_phase("gate_execution")
+            
+            monitor.start_phase("measurement")
+            # Measurement is included in execution for LRET
+            monitor.end_phase("measurement")
+            
+            monitor.start_phase("normalization")
+            _ = normalizer.normalize(result, shots=shots)
+            monitor.end_phase("normalization")
+            
+            monitor.sample_memory()
+            
+            metrics = monitor.get_metrics(
+                qubits=num_qubits,
+                gate_count=gate_count,
+                circuit_depth=depth,
+                shots=shots,
+            )
+            
+            return {
+                "backend": "lret",
+                "circuit_info": {
+                    "qubits": num_qubits,
+                    "gate_count": gate_count,
+                    "depth": depth,
+                },
+                "execution_time_ms": metrics.execution_time_ms,
+                "gate_execution_time_ms": metrics.gate_execution_time_ms,
+                "measurement_time_ms": metrics.measurement_time_ms,
+                "normalization_time_ms": metrics.normalization_time_ms,
+                "validation_time_ms": monitor.get_phase_time("validation"),
+                "memory_baseline_mb": metrics.memory_baseline_mb,
+                "memory_peak_mb": metrics.memory_peak_mb,
+                "memory_delta_mb": metrics.memory_peak_mb - metrics.memory_baseline_mb,
+                "throughput_shots_per_sec": metrics.throughput_shots_per_sec,
+                "gates_per_second": metrics.gates_per_second,
+                "shots": shots,
+            }
+            
+        finally:
+            self.cleanup_after_benchmark()
 
 
 # ==============================================================================

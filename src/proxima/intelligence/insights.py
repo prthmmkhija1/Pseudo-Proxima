@@ -1204,6 +1204,622 @@ class LLMSynthesizer:
 
 
 # =============================================================================
+# ENHANCED LLM INTEGRATION - Deeper Analysis Features
+# =============================================================================
+
+
+class EnhancedLLMAnalyzer:
+    """Enhanced LLM analyzer with deeper integration for quantum insights.
+    
+    Provides:
+    - Multi-turn contextual analysis
+    - Quantum phenomena explanation
+    - Circuit optimization suggestions
+    - Comparative analysis across runs
+    - Educational explanations
+    - Error diagnosis assistance
+    """
+    
+    # Specialized prompt templates for different analysis modes
+    PROMPT_TEMPLATES = {
+        "phenomena_explanation": """You are an expert quantum physicist. Explain the following quantum phenomenon observed in simulation results in a way that's educational yet accurate:
+
+**Observed Phenomenon:** {phenomenon}
+
+**Context:**
+- Qubits: {qubits}
+- Circuit type: {circuit_type}
+- Key statistics: Entropy={entropy:.3f}, Dominant state='{dominant_state}' at {dominant_prob:.1%}
+
+Provide:
+1. What this phenomenon represents physically
+2. Why it occurs in quantum systems
+3. Real-world applications or implications
+4. Connection to fundamental quantum principles
+
+Keep explanation accessible but scientifically accurate. Use analogies where helpful.""",
+
+        "optimization_suggestions": """As a quantum computing optimization expert, analyze this circuit simulation and suggest improvements:
+
+**Circuit Metrics:**
+- Qubits: {qubits}
+- Gate count: {gate_count}
+- Circuit depth: {depth}
+- Two-qubit gates: {two_qubit_gates}
+
+**Performance:**
+- Execution time: {execution_time}ms
+- Result entropy: {entropy:.3f} bits
+- Dominant outcome probability: {dominant_prob:.1%}
+
+**Detected Issues:**
+{issues}
+
+Provide specific, actionable optimization suggestions for:
+1. Gate reduction strategies
+2. Circuit depth optimization
+3. Noise mitigation techniques
+4. Hardware-specific improvements
+
+Be specific and quantitative where possible.""",
+
+        "comparative_analysis": """Compare these quantum simulation results across different backends/configurations:
+
+**Run A ({backend_a}):**
+{results_a}
+
+**Run B ({backend_b}):**
+{results_b}
+
+Analyze:
+1. Significant differences in output distributions
+2. Potential causes for discrepancies
+3. Which result is more trustworthy and why
+4. Recommendations for resolving differences
+
+Consider noise models, precision differences, and algorithmic variations.""",
+
+        "error_diagnosis": """As a quantum error correction expert, diagnose potential issues in this simulation:
+
+**Expected Behavior:** {expected}
+
+**Actual Results:**
+- Dominant state: '{dominant_state}' at {dominant_prob:.1%}
+- Entropy: {entropy:.3f} bits
+- Pattern detected: {pattern}
+
+**Warning Signs:**
+{warnings}
+
+Diagnose:
+1. Possible sources of error
+2. Whether errors are systematic or random
+3. Confidence level in the results
+4. Suggested verification steps
+
+Be specific about quantum error mechanisms.""",
+
+        "educational_insight": """Explain these quantum simulation results for someone learning quantum computing:
+
+**The Circuit:**
+{circuit_description}
+
+**What Happened:**
+- Most common outcome: '{dominant_state}' ({dominant_prob:.1%})
+- Number of possible states: {total_states}
+- States with significant probability: {non_zero_states}
+- Distribution type: {pattern}
+
+Create an educational explanation that:
+1. Explains what the results mean in plain language
+2. Connects to quantum concepts (superposition, entanglement, measurement)
+3. Uses helpful analogies
+4. Suggests what to try next for learning
+
+Target audience: intermediate programmer new to quantum computing.""",
+
+        "multi_turn_context": """Continue the quantum analysis conversation. Previous context:
+
+{conversation_history}
+
+New question from user: {user_question}
+
+Current simulation state:
+- Results: {summary}
+- Key findings: {key_findings}
+
+Provide a helpful, contextual response that builds on the previous analysis.""",
+    }
+    
+    def __init__(
+        self,
+        llm_callback: Callable[[str], str] | None = None,
+        conversation_history: list[dict[str, str]] | None = None,
+    ) -> None:
+        """Initialize enhanced LLM analyzer.
+        
+        Args:
+            llm_callback: Function that takes prompt and returns LLM response
+            conversation_history: Optional list of previous exchanges
+        """
+        self._llm_callback = llm_callback
+        self._conversation_history = conversation_history or []
+        self._context_cache: dict[str, Any] = {}
+    
+    @property
+    def available(self) -> bool:
+        """Check if LLM is available."""
+        return self._llm_callback is not None
+    
+    def explain_phenomenon(
+        self,
+        phenomenon: str,
+        statistics: StatisticalMetrics,
+        circuit_info: dict[str, Any] | None = None,
+    ) -> str:
+        """Generate educational explanation of a quantum phenomenon.
+        
+        Args:
+            phenomenon: Name/description of the phenomenon
+            statistics: Statistical metrics from simulation
+            circuit_info: Optional circuit information
+            
+        Returns:
+            Detailed explanation string
+        """
+        if not self._llm_callback:
+            return self._fallback_phenomenon_explanation(phenomenon)
+        
+        prompt = self.PROMPT_TEMPLATES["phenomena_explanation"].format(
+            phenomenon=phenomenon,
+            qubits=circuit_info.get("qubits", "unknown") if circuit_info else "unknown",
+            circuit_type=circuit_info.get("type", "quantum") if circuit_info else "quantum",
+            entropy=statistics.entropy,
+            dominant_state=statistics.dominant_state,
+            dominant_prob=statistics.dominant_probability,
+        )
+        
+        try:
+            response = self._llm_callback(prompt)
+            self._add_to_history("phenomenon_explanation", prompt, response)
+            return response
+        except Exception as e:
+            logger.warning(f"LLM phenomenon explanation failed: {e}")
+            return self._fallback_phenomenon_explanation(phenomenon)
+    
+    def suggest_optimizations(
+        self,
+        circuit_info: dict[str, Any],
+        statistics: StatisticalMetrics,
+        execution_time_ms: float,
+        issues: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Generate circuit optimization suggestions.
+        
+        Args:
+            circuit_info: Circuit metadata
+            statistics: Simulation statistics
+            execution_time_ms: Execution time
+            issues: Known issues
+            
+        Returns:
+            List of optimization suggestions with priorities
+        """
+        if not self._llm_callback:
+            return self._fallback_optimizations(circuit_info)
+        
+        issues_text = "\n".join(f"- {issue}" for issue in (issues or [])) or "None detected"
+        
+        prompt = self.PROMPT_TEMPLATES["optimization_suggestions"].format(
+            qubits=circuit_info.get("qubits", "unknown"),
+            gate_count=circuit_info.get("gates", "unknown"),
+            depth=circuit_info.get("depth", "unknown"),
+            two_qubit_gates=circuit_info.get("two_qubit_gates", "unknown"),
+            execution_time=execution_time_ms,
+            entropy=statistics.entropy,
+            dominant_prob=statistics.dominant_probability,
+            issues=issues_text,
+        )
+        
+        try:
+            response = self._llm_callback(prompt)
+            self._add_to_history("optimization", prompt, response)
+            return self._parse_optimization_response(response)
+        except Exception as e:
+            logger.warning(f"LLM optimization suggestion failed: {e}")
+            return self._fallback_optimizations(circuit_info)
+    
+    def compare_results(
+        self,
+        results_a: dict[str, Any],
+        results_b: dict[str, Any],
+        backend_a: str,
+        backend_b: str,
+    ) -> dict[str, Any]:
+        """Compare results from different backends or configurations.
+        
+        Args:
+            results_a: First set of results
+            results_b: Second set of results
+            backend_a: Name of first backend
+            backend_b: Name of second backend
+            
+        Returns:
+            Comparison analysis dictionary
+        """
+        if not self._llm_callback:
+            return self._fallback_comparison(results_a, results_b, backend_a, backend_b)
+        
+        prompt = self.PROMPT_TEMPLATES["comparative_analysis"].format(
+            backend_a=backend_a,
+            backend_b=backend_b,
+            results_a=self._format_results_for_prompt(results_a),
+            results_b=self._format_results_for_prompt(results_b),
+        )
+        
+        try:
+            response = self._llm_callback(prompt)
+            self._add_to_history("comparison", prompt, response)
+            return {
+                "analysis": response,
+                "backend_a": backend_a,
+                "backend_b": backend_b,
+                "recommendation": self._extract_recommendation(response),
+            }
+        except Exception as e:
+            logger.warning(f"LLM comparison failed: {e}")
+            return self._fallback_comparison(results_a, results_b, backend_a, backend_b)
+    
+    def diagnose_errors(
+        self,
+        expected: str,
+        statistics: StatisticalMetrics,
+        patterns: list[PatternInfo],
+        warnings: list[str],
+    ) -> dict[str, Any]:
+        """Diagnose potential errors or unexpected results.
+        
+        Args:
+            expected: Description of expected behavior
+            statistics: Actual statistics
+            patterns: Detected patterns
+            warnings: Warning messages
+            
+        Returns:
+            Diagnosis dictionary with findings and recommendations
+        """
+        if not self._llm_callback:
+            return self._fallback_diagnosis(expected, statistics, warnings)
+        
+        pattern_name = patterns[0].pattern_type.value if patterns else "unknown"
+        warnings_text = "\n".join(f"- {w}" for w in warnings) or "None"
+        
+        prompt = self.PROMPT_TEMPLATES["error_diagnosis"].format(
+            expected=expected,
+            dominant_state=statistics.dominant_state,
+            dominant_prob=statistics.dominant_probability,
+            entropy=statistics.entropy,
+            pattern=pattern_name,
+            warnings=warnings_text,
+        )
+        
+        try:
+            response = self._llm_callback(prompt)
+            self._add_to_history("diagnosis", prompt, response)
+            return {
+                "diagnosis": response,
+                "severity": self._estimate_error_severity(statistics, expected),
+                "confidence": self._estimate_diagnosis_confidence(response),
+                "suggested_actions": self._extract_actions(response),
+            }
+        except Exception as e:
+            logger.warning(f"LLM diagnosis failed: {e}")
+            return self._fallback_diagnosis(expected, statistics, warnings)
+    
+    def generate_educational_insight(
+        self,
+        statistics: StatisticalMetrics,
+        patterns: list[PatternInfo],
+        circuit_description: str | None = None,
+    ) -> str:
+        """Generate educational explanation for learners.
+        
+        Args:
+            statistics: Simulation statistics
+            patterns: Detected patterns
+            circuit_description: Optional circuit description
+            
+        Returns:
+            Educational explanation string
+        """
+        if not self._llm_callback:
+            return self._fallback_educational(statistics, patterns)
+        
+        pattern_name = patterns[0].pattern_type.value if patterns else "random"
+        
+        prompt = self.PROMPT_TEMPLATES["educational_insight"].format(
+            circuit_description=circuit_description or "A quantum circuit simulation",
+            dominant_state=statistics.dominant_state,
+            dominant_prob=statistics.dominant_probability,
+            total_states=statistics.total_states,
+            non_zero_states=statistics.non_zero_states,
+            pattern=pattern_name,
+        )
+        
+        try:
+            response = self._llm_callback(prompt)
+            self._add_to_history("educational", prompt, response)
+            return response
+        except Exception as e:
+            logger.warning(f"LLM educational insight failed: {e}")
+            return self._fallback_educational(statistics, patterns)
+    
+    def continue_conversation(
+        self,
+        user_question: str,
+        current_summary: str,
+        key_findings: list[str],
+    ) -> str:
+        """Continue multi-turn analysis conversation.
+        
+        Args:
+            user_question: User's follow-up question
+            current_summary: Current results summary
+            key_findings: Current key findings
+            
+        Returns:
+            Contextual response
+        """
+        if not self._llm_callback:
+            return "LLM not available for conversation continuation."
+        
+        history_text = self._format_conversation_history()
+        findings_text = "\n".join(f"- {f}" for f in key_findings)
+        
+        prompt = self.PROMPT_TEMPLATES["multi_turn_context"].format(
+            conversation_history=history_text,
+            user_question=user_question,
+            summary=current_summary,
+            key_findings=findings_text,
+        )
+        
+        try:
+            response = self._llm_callback(prompt)
+            self._add_to_history("conversation", user_question, response)
+            return response
+        except Exception as e:
+            logger.warning(f"LLM conversation failed: {e}")
+            return f"Unable to continue analysis: {e}"
+    
+    def _add_to_history(self, context_type: str, prompt: str, response: str) -> None:
+        """Add exchange to conversation history."""
+        self._conversation_history.append({
+            "type": context_type,
+            "prompt_summary": prompt[:200] + "..." if len(prompt) > 200 else prompt,
+            "response_summary": response[:300] + "..." if len(response) > 300 else response,
+        })
+        # Keep only last 10 exchanges
+        if len(self._conversation_history) > 10:
+            self._conversation_history = self._conversation_history[-10:]
+    
+    def _format_conversation_history(self) -> str:
+        """Format conversation history for context."""
+        if not self._conversation_history:
+            return "No previous conversation."
+        
+        lines = []
+        for i, exchange in enumerate(self._conversation_history[-5:], 1):
+            lines.append(f"[{i}] {exchange['type']}: {exchange['response_summary']}")
+        return "\n".join(lines)
+    
+    def _format_results_for_prompt(self, results: dict[str, Any]) -> str:
+        """Format results dictionary for LLM prompt."""
+        lines = []
+        for key, value in results.items():
+            if isinstance(value, float):
+                lines.append(f"- {key}: {value:.4f}")
+            elif isinstance(value, dict):
+                lines.append(f"- {key}: {len(value)} items")
+            else:
+                lines.append(f"- {key}: {value}")
+        return "\n".join(lines) or "No results"
+    
+    def _parse_optimization_response(self, response: str) -> list[dict[str, Any]]:
+        """Parse optimization suggestions from LLM response."""
+        suggestions = []
+        lines = response.split("\n")
+        current_suggestion = None
+        
+        for line in lines:
+            line = line.strip()
+            # Look for numbered items or bullet points
+            if line and (line[0].isdigit() or line.startswith("-") or line.startswith("•")):
+                if current_suggestion:
+                    suggestions.append(current_suggestion)
+                # Clean the line
+                clean_line = line.lstrip("0123456789.-•) ")
+                current_suggestion = {
+                    "title": clean_line[:100],
+                    "description": clean_line,
+                    "priority": len(suggestions) + 1,  # Earlier = higher priority
+                    "category": self._categorize_suggestion(clean_line),
+                }
+            elif current_suggestion and line:
+                current_suggestion["description"] += " " + line
+        
+        if current_suggestion:
+            suggestions.append(current_suggestion)
+        
+        return suggestions[:10]  # Max 10 suggestions
+    
+    def _categorize_suggestion(self, text: str) -> str:
+        """Categorize an optimization suggestion."""
+        text_lower = text.lower()
+        if any(word in text_lower for word in ["gate", "cnot", "swap", "decompos"]):
+            return "gate_optimization"
+        if any(word in text_lower for word in ["depth", "layer", "parallel"]):
+            return "depth_optimization"
+        if any(word in text_lower for word in ["noise", "error", "decoher"]):
+            return "noise_mitigation"
+        if any(word in text_lower for word in ["memory", "gpu", "hardware"]):
+            return "hardware_optimization"
+        return "general"
+    
+    def _extract_recommendation(self, response: str) -> str:
+        """Extract main recommendation from LLM response."""
+        lines = response.split("\n")
+        for line in lines:
+            if "recommend" in line.lower():
+                return line.strip()
+        # Return last substantive line
+        for line in reversed(lines):
+            if len(line.strip()) > 20:
+                return line.strip()
+        return "See full analysis for recommendations."
+    
+    def _extract_actions(self, response: str) -> list[str]:
+        """Extract suggested actions from LLM response."""
+        actions = []
+        lines = response.split("\n")
+        
+        for line in lines:
+            line_lower = line.lower()
+            if any(word in line_lower for word in ["try", "check", "verify", "run", "test", "add", "remove"]):
+                clean = line.strip().lstrip("0123456789.-•) ")
+                if len(clean) > 10:
+                    actions.append(clean)
+        
+        return actions[:5]  # Max 5 actions
+    
+    def _estimate_error_severity(self, statistics: StatisticalMetrics, expected: str) -> str:
+        """Estimate severity of error based on statistics."""
+        # High entropy when expecting concentrated = likely error
+        if statistics.entropy > 3.0 and "concentrated" in expected.lower():
+            return "high"
+        # Low dominant probability when expecting clear outcome
+        if statistics.dominant_probability < 0.3 and "clear" in expected.lower():
+            return "high"
+        if statistics.dominant_probability < 0.5:
+            return "medium"
+        return "low"
+    
+    def _estimate_diagnosis_confidence(self, response: str) -> float:
+        """Estimate confidence in diagnosis based on response."""
+        response_lower = response.lower()
+        
+        # High confidence indicators
+        if any(word in response_lower for word in ["clearly", "definitely", "certainly"]):
+            return 0.9
+        # Medium confidence
+        if any(word in response_lower for word in ["likely", "probably", "appears"]):
+            return 0.7
+        # Low confidence
+        if any(word in response_lower for word in ["possibly", "might", "unclear"]):
+            return 0.5
+        
+        return 0.6  # Default moderate confidence
+    
+    # Fallback methods when LLM is unavailable
+    
+    def _fallback_phenomenon_explanation(self, phenomenon: str) -> str:
+        """Provide fallback explanation without LLM."""
+        explanations = {
+            "entangled": "Entanglement is a quantum correlation between qubits where the state of one qubit is dependent on the state of another, even when separated.",
+            "superposition": "Superposition means the qubit exists in multiple states simultaneously until measured, collapsing to a definite state.",
+            "interference": "Quantum interference occurs when probability amplitudes add constructively or destructively, affecting measurement outcomes.",
+            "ghz": "A GHZ state is a maximally entangled state of 3+ qubits, showing non-classical correlations.",
+            "bell": "A Bell state is a maximally entangled two-qubit state demonstrating quantum non-locality.",
+        }
+        
+        for key, explanation in explanations.items():
+            if key in phenomenon.lower():
+                return explanation
+        
+        return f"'{phenomenon}' is a quantum phenomenon observed in these results. Enable LLM for detailed explanation."
+    
+    def _fallback_optimizations(self, circuit_info: dict[str, Any]) -> list[dict[str, Any]]:
+        """Provide fallback optimizations without LLM."""
+        return [
+            {
+                "title": "Reduce two-qubit gate count",
+                "description": "Consider decomposing multi-qubit gates into simpler operations",
+                "priority": 1,
+                "category": "gate_optimization",
+            },
+            {
+                "title": "Parallelize independent operations",
+                "description": "Gates on different qubits can often be parallelized to reduce depth",
+                "priority": 2,
+                "category": "depth_optimization",
+            },
+            {
+                "title": "Consider noise mitigation",
+                "description": "Apply error mitigation techniques for more accurate results",
+                "priority": 3,
+                "category": "noise_mitigation",
+            },
+        ]
+    
+    def _fallback_comparison(
+        self,
+        results_a: dict[str, Any],
+        results_b: dict[str, Any],
+        backend_a: str,
+        backend_b: str,
+    ) -> dict[str, Any]:
+        """Provide fallback comparison without LLM."""
+        return {
+            "analysis": f"Comparison of {backend_a} vs {backend_b}. Enable LLM for detailed analysis.",
+            "backend_a": backend_a,
+            "backend_b": backend_b,
+            "recommendation": "Run with LLM enabled for detailed comparison.",
+        }
+    
+    def _fallback_diagnosis(
+        self,
+        expected: str,
+        statistics: StatisticalMetrics,
+        warnings: list[str],
+    ) -> dict[str, Any]:
+        """Provide fallback diagnosis without LLM."""
+        severity = self._estimate_error_severity(statistics, expected)
+        
+        return {
+            "diagnosis": f"Results may deviate from expected ({expected}). Dominant state: '{statistics.dominant_state}'. Enable LLM for detailed diagnosis.",
+            "severity": severity,
+            "confidence": 0.5,
+            "suggested_actions": [
+                "Verify circuit construction",
+                "Check for measurement errors",
+                "Compare with another backend",
+            ],
+        }
+    
+    def _fallback_educational(
+        self,
+        statistics: StatisticalMetrics,
+        patterns: list[PatternInfo],
+    ) -> str:
+        """Provide fallback educational content without LLM."""
+        pattern_name = patterns[0].pattern_type.value if patterns else "random"
+        
+        return f"""**Simulation Results Explained**
+
+Your quantum circuit produced a {pattern_name} distribution with {statistics.non_zero_states} different outcomes.
+
+The most common result was '{statistics.dominant_state}' appearing {statistics.dominant_probability:.1%} of the time.
+
+Key concept: In quantum computing, we measure probabilities rather than certainties. The entropy of {statistics.entropy:.2f} bits tells us how "spread out" the results are.
+
+To learn more, try:
+- Modifying gate parameters to see how outcomes change
+- Adding more qubits to explore scaling
+- Comparing different quantum backends
+
+Enable LLM for more detailed educational explanations."""
+
+
+# =============================================================================
 # Main Insight Engine
 # =============================================================================
 
@@ -1216,6 +1832,11 @@ class InsightEngine:
         engine = InsightEngine()
         report = engine.analyze({"00": 0.5, "11": 0.5})
         print(report.summary)
+
+        # For deeper LLM-powered analysis:
+        engine = InsightEngine(llm_callback=my_llm_function)
+        explanation = engine.explain_phenomenon("Bell state entanglement", probabilities)
+        suggestions = engine.get_optimization_suggestions(probabilities, circuit_info)
     """
 
     def __init__(
@@ -1235,7 +1856,18 @@ class InsightEngine:
         self._recommendation_engine = RecommendationEngine()
         self._viz_recommender = VisualizationRecommender()
         self._llm_synthesizer = LLMSynthesizer(llm_callback)
+        self._enhanced_llm = EnhancedLLMAnalyzer(llm_callback)
         self._ascii_viz = ASCIIVisualizer()
+
+    @property
+    def enhanced_llm(self) -> EnhancedLLMAnalyzer:
+        """Access the enhanced LLM analyzer for deeper analysis."""
+        return self._enhanced_llm
+
+    @property
+    def llm_available(self) -> bool:
+        """Check if LLM integration is available."""
+        return self._enhanced_llm.available
 
     def analyze(
         self,
@@ -1416,6 +2048,148 @@ class InsightEngine:
             )
 
         return warnings
+
+    # =========================================================================
+    # Enhanced LLM Integration Methods
+    # =========================================================================
+
+    def explain_phenomenon(
+        self,
+        phenomenon: str,
+        probabilities: dict[str, float],
+        circuit_info: dict[str, Any] | None = None,
+    ) -> str:
+        """
+        Get an educational explanation of a quantum phenomenon.
+
+        Args:
+            phenomenon: The phenomenon to explain (e.g., "Bell state entanglement")
+            probabilities: Current simulation results
+            circuit_info: Optional circuit metadata
+
+        Returns:
+            LLM-generated explanation or fallback description
+        """
+        statistics = self._stat_analyzer.analyze(probabilities)
+        return self._enhanced_llm.explain_phenomenon(
+            phenomenon, statistics, circuit_info
+        )
+
+    def get_optimization_suggestions(
+        self,
+        probabilities: dict[str, float],
+        circuit_info: dict[str, Any] | None = None,
+    ) -> str:
+        """
+        Get circuit optimization suggestions based on results.
+
+        Args:
+            probabilities: Simulation results
+            circuit_info: Circuit metadata (gate count, depth, etc.)
+
+        Returns:
+            Optimization suggestions
+        """
+        statistics = self._stat_analyzer.analyze(probabilities)
+        patterns = self._pattern_detector.detect(probabilities)
+        return self._enhanced_llm.suggest_optimizations(
+            statistics, patterns, circuit_info or {}
+        )
+
+    def compare_results(
+        self,
+        results_a: dict[str, float],
+        results_b: dict[str, float],
+        backend_a: str = "Backend A",
+        backend_b: str = "Backend B",
+    ) -> str:
+        """
+        Compare results from two different backends or configurations.
+
+        Args:
+            results_a: First set of results
+            results_b: Second set of results
+            backend_a: Name of first backend
+            backend_b: Name of second backend
+
+        Returns:
+            Comparative analysis
+        """
+        stats_a = self._stat_analyzer.analyze(results_a)
+        stats_b = self._stat_analyzer.analyze(results_b)
+        return self._enhanced_llm.compare_results(
+            stats_a, stats_b, backend_a, backend_b
+        )
+
+    def diagnose_errors(
+        self,
+        probabilities: dict[str, float],
+        expected_behavior: str,
+        circuit_info: dict[str, Any] | None = None,
+    ) -> str:
+        """
+        Diagnose potential errors in simulation results.
+
+        Args:
+            probabilities: Actual simulation results
+            expected_behavior: Description of expected output
+            circuit_info: Optional circuit metadata
+
+        Returns:
+            Error diagnosis and suggestions
+        """
+        statistics = self._stat_analyzer.analyze(probabilities)
+        patterns = self._pattern_detector.detect(probabilities)
+        return self._enhanced_llm.diagnose_errors(
+            statistics, patterns, expected_behavior, circuit_info
+        )
+
+    def get_educational_insight(
+        self,
+        probabilities: dict[str, float],
+        circuit_info: dict[str, Any] | None = None,
+    ) -> str:
+        """
+        Get an educational explanation suitable for learners.
+
+        Args:
+            probabilities: Simulation results
+            circuit_info: Optional circuit metadata
+
+        Returns:
+            Educational explanation
+        """
+        statistics = self._stat_analyzer.analyze(probabilities)
+        patterns = self._pattern_detector.detect(probabilities)
+        return self._enhanced_llm.generate_educational_insight(
+            statistics, patterns, circuit_info
+        )
+
+    def ask_followup(
+        self,
+        question: str,
+        probabilities: dict[str, float],
+    ) -> str:
+        """
+        Ask a follow-up question about current results.
+
+        Args:
+            question: User's question
+            probabilities: Current simulation results
+
+        Returns:
+            Contextual response
+        """
+        statistics = self._stat_analyzer.analyze(probabilities)
+        patterns = self._pattern_detector.detect(probabilities)
+        key_findings = self._generate_key_findings(statistics, patterns)
+        
+        summary = self._generate_summary(statistics, patterns)
+        findings_str = "; ".join(key_findings[:3])
+        
+        return self._enhanced_llm.continue_conversation(
+            question, summary, findings_str
+        )
 
     def render_visualization(
         self,

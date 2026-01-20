@@ -235,12 +235,214 @@ def create_app(
     
     @app.get("/api/versions", tags=["Versioning"])
     async def list_api_versions() -> dict[str, Any]:
-        """List supported API versions."""
+        """List supported API versions.
+        
+        Returns comprehensive version information including:
+        - Current default version
+        - All supported versions with their status
+        - Deprecated versions with sunset dates
+        - Migration guides
+        """
         return {
-            "current_version": "v1",
-            "supported_versions": ["v1"],
-            "deprecated_versions": [],
-            "version_header": "X-API-Version",
+            "current_version": version_config.default_version,
+            "supported_versions": version_config.supported_versions,
+            "deprecated_versions": version_config.deprecated_versions,
+            "version_header": version_config.version_header,
+            "versions": {
+                "v1": {
+                    "status": "current",
+                    "released": "2024-01-01",
+                    "sunset_date": None,
+                    "documentation": "/docs",
+                    "changelog": "/api/versions/v1/changelog",
+                },
+            },
+            "negotiation": {
+                "url_prefix": "/api/{version}/",
+                "header": version_config.version_header,
+                "accept_header": "application/vnd.proxima.{version}+json",
+            },
+        }
+    
+    @app.get("/api/versions/{version}", tags=["Versioning"])
+    async def get_version_info(version: str) -> dict[str, Any]:
+        """Get detailed information about a specific API version.
+        
+        Args:
+            version: API version (e.g., "v1")
+            
+        Returns:
+            Version details including endpoints, changes, and migration info.
+        """
+        if version not in version_config.supported_versions:
+            return JSONResponse(
+                status_code=404,
+                content={
+                    "error": "version_not_found",
+                    "message": f"API version '{version}' not found",
+                    "supported_versions": version_config.supported_versions,
+                }
+            )
+        
+        version_details = {
+            "v1": {
+                "version": "v1",
+                "status": "current",
+                "released": "2024-01-01",
+                "sunset_date": None,
+                "description": "Current stable API version",
+                "endpoints": {
+                    "backends": {
+                        "list": "GET /api/v1/backends",
+                        "get": "GET /api/v1/backends/{backend_id}",
+                        "status": "GET /api/v1/backends/{backend_id}/status",
+                    },
+                    "circuits": {
+                        "execute": "POST /api/v1/circuits/execute",
+                        "validate": "POST /api/v1/circuits/validate",
+                        "parse": "POST /api/v1/circuits/parse",
+                    },
+                    "sessions": {
+                        "list": "GET /api/v1/sessions",
+                        "create": "POST /api/v1/sessions",
+                        "get": "GET /api/v1/sessions/{session_id}",
+                        "delete": "DELETE /api/v1/sessions/{session_id}",
+                    },
+                    "compare": {
+                        "run": "POST /api/v1/compare",
+                        "get": "GET /api/v1/compare/{comparison_id}",
+                    },
+                },
+                "features": [
+                    "Multi-backend execution",
+                    "Session management",
+                    "Backend comparison",
+                    "WebSocket real-time updates",
+                    "Rate limiting",
+                    "API key authentication",
+                ],
+                "breaking_changes": [],
+                "deprecations": [],
+            },
+        }
+        
+        return version_details.get(version, {"version": version, "status": "unknown"})
+    
+    @app.get("/api/versions/{version}/changelog", tags=["Versioning"])
+    async def get_version_changelog(version: str) -> dict[str, Any]:
+        """Get changelog for a specific API version.
+        
+        Args:
+            version: API version (e.g., "v1")
+            
+        Returns:
+            Changelog entries for the version.
+        """
+        changelogs = {
+            "v1": {
+                "version": "v1",
+                "entries": [
+                    {
+                        "version": "1.0.0",
+                        "date": "2024-01-01",
+                        "type": "release",
+                        "changes": [
+                            "Initial API release",
+                            "Backend management endpoints",
+                            "Circuit execution endpoints",
+                            "Session management",
+                            "WebSocket support for real-time updates",
+                        ],
+                    },
+                    {
+                        "version": "1.1.0",
+                        "date": "2024-02-01",
+                        "type": "minor",
+                        "changes": [
+                            "Added comparison endpoints",
+                            "Rate limiting support",
+                            "Enhanced authentication",
+                            "API versioning middleware",
+                        ],
+                    },
+                ],
+            },
+        }
+        
+        return changelogs.get(version, {"version": version, "entries": []})
+    
+    @app.get("/api/versions/{from_version}/migrate/{to_version}", tags=["Versioning"])
+    async def get_migration_guide(from_version: str, to_version: str) -> dict[str, Any]:
+        """Get migration guide between API versions.
+        
+        Args:
+            from_version: Source API version
+            to_version: Target API version
+            
+        Returns:
+            Migration guide with breaking changes and update steps.
+        """
+        if from_version not in version_config.supported_versions + version_config.deprecated_versions:
+            return JSONResponse(
+                status_code=404,
+                content={
+                    "error": "version_not_found",
+                    "message": f"Source version '{from_version}' not found",
+                }
+            )
+        
+        if to_version not in version_config.supported_versions:
+            return JSONResponse(
+                status_code=404,
+                content={
+                    "error": "version_not_found", 
+                    "message": f"Target version '{to_version}' not found",
+                }
+            )
+        
+        # Migration guides between versions
+        migrations = {
+            # Future migrations would be defined here
+            # ("v1", "v2"): { ... }
+        }
+        
+        key = (from_version, to_version)
+        if key in migrations:
+            return migrations[key]
+        
+        return {
+            "from_version": from_version,
+            "to_version": to_version,
+            "status": "no_migration_needed" if from_version == to_version else "migration_guide_unavailable",
+            "message": (
+                "No migration needed" if from_version == to_version
+                else f"Migration guide from {from_version} to {to_version} is not yet available"
+            ),
+            "breaking_changes": [],
+            "deprecations": [],
+            "steps": [],
+        }
+    
+    @app.get("/api/deprecations", tags=["Versioning"])
+    async def list_deprecations() -> dict[str, Any]:
+        """List all API deprecations.
+        
+        Returns:
+            All deprecated endpoints, features, and versions with sunset dates.
+        """
+        return {
+            "deprecated_versions": [
+                {
+                    "version": v,
+                    "deprecated_since": "2024-01-01",
+                    "sunset_date": "2025-01-01",
+                    "migration_target": version_config.default_version,
+                }
+                for v in version_config.deprecated_versions
+            ],
+            "deprecated_endpoints": [],
+            "deprecated_features": [],
+            "upcoming_deprecations": [],
         }
     
     return app

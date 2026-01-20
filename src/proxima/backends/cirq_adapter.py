@@ -706,6 +706,56 @@ class CircuitOptimizer:
                     optimized = self._cirq.stratified_circuit(optimized)
                 except Exception:
                     pass
+                
+                # Advanced optimization: Eject Z gates to end of circuit
+                try:
+                    if hasattr(self._cirq.optimizers, 'EjectZ'):
+                        eject_z = self._cirq.optimizers.EjectZ()
+                        eject_z.optimize_circuit(optimized)
+                except Exception:
+                    pass
+                
+                # Advanced optimization: Eject Pauli-Z gates through the circuit
+                try:
+                    if hasattr(self._cirq.optimizers, 'EjectPhasedPaulis'):
+                        eject_paulis = self._cirq.optimizers.EjectPhasedPaulis()
+                        eject_paulis.optimize_circuit(optimized)
+                except Exception:
+                    pass
+                
+                # Advanced optimization: Expand composite gates
+                try:
+                    if hasattr(self._cirq.optimizers, 'ExpandComposite'):
+                        expand_composite = self._cirq.optimizers.ExpandComposite()
+                        expand_composite.optimize_circuit(optimized)
+                except Exception:
+                    pass
+                
+                # Advanced optimization: Merge k-qubit unitaries
+                try:
+                    if hasattr(self._cirq.optimizers, 'MergeInteractions'):
+                        merge_interactions = self._cirq.optimizers.MergeInteractions()
+                        merge_interactions.optimize_circuit(optimized)
+                except Exception:
+                    pass
+                
+                # Advanced optimization: Merge single-qubit gates into PhasedXZ
+                try:
+                    if hasattr(self._cirq.optimizers, 'MergeSingleQubitGates'):
+                        merge_single = self._cirq.optimizers.MergeSingleQubitGates()
+                        merge_single.optimize_circuit(optimized)
+                except Exception:
+                    pass
+                
+                # Advanced optimization: Convert to target gateset if available
+                try:
+                    if hasattr(self._cirq, 'optimize_for_target_gateset'):
+                        optimized = self._cirq.optimize_for_target_gateset(
+                            optimized,
+                            gateset=self._cirq.CZTargetGateset(),
+                        )
+                except Exception:
+                    pass
             
             return optimized
             

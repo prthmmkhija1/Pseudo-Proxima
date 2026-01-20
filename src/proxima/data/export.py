@@ -2294,6 +2294,913 @@ Generated: {{ generated_at.strftime('%Y-%m-%d %H:%M:%S') }}
         return ["executive_summary", "technical_detail", "comparison_matrix"]
 
 
+# =============================================================================
+# User-Defined Custom Template System (Feature - 2% Gap Completion)
+# =============================================================================
+
+
+class TemplateValidationError(Exception):
+    """Error during template validation."""
+    pass
+
+
+@dataclass
+class TemplateValidationResult:
+    """Result of template validation."""
+    
+    is_valid: bool
+    errors: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+    required_variables: list[str] = field(default_factory=list)
+    used_filters: list[str] = field(default_factory=list)
+
+
+@dataclass
+class TemplateSection:
+    """A section within a template."""
+    
+    name: str
+    content: str
+    condition: str | None = None  # Jinja2 condition for showing section
+    order: int = 0
+
+
+@dataclass
+class CustomTemplateDefinition:
+    """User-defined custom template with sections and variables."""
+    
+    name: str
+    description: str
+    author: str = ""
+    version: str = "1.0.0"
+    format: ExportFormat = ExportFormat.HTML
+    
+    # Template structure
+    header: str = ""
+    footer: str = ""
+    sections: list[TemplateSection] = field(default_factory=list)
+    
+    # Styling
+    css_content: str = ""
+    inline_styles: bool = True
+    
+    # Variables
+    variables: list[TemplateVariable] = field(default_factory=list)
+    default_context: dict[str, Any] = field(default_factory=dict)
+    
+    # Metadata
+    tags: list[str] = field(default_factory=list)
+    created_at: datetime = field(default_factory=datetime.now)
+    
+    def to_export_template(self) -> ExportTemplate:
+        """Convert to ExportTemplate for rendering."""
+        # Build complete template from sections
+        sorted_sections = sorted(self.sections, key=lambda s: s.order)
+        
+        section_content = []
+        for section in sorted_sections:
+            if section.condition:
+                section_content.append(f"{{% if {section.condition} %}}")
+                section_content.append(section.content)
+                section_content.append("{% endif %}")
+            else:
+                section_content.append(section.content)
+        
+        full_template = self.header + "\n".join(section_content) + self.footer
+        
+        return ExportTemplate(
+            name=self.name,
+            description=self.description,
+            format=self.format,
+            template_content=full_template,
+            variables=self.variables,
+            css_content=self.css_content,
+        )
+    
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to dictionary."""
+        return {
+            "name": self.name,
+            "description": self.description,
+            "author": self.author,
+            "version": self.version,
+            "format": self.format.value,
+            "header": self.header,
+            "footer": self.footer,
+            "sections": [
+                {"name": s.name, "content": s.content, "condition": s.condition, "order": s.order}
+                for s in self.sections
+            ],
+            "css_content": self.css_content,
+            "inline_styles": self.inline_styles,
+            "variables": [
+                {"name": v.name, "type": v.type, "description": v.description, 
+                 "default": v.default, "required": v.required}
+                for v in self.variables
+            ],
+            "default_context": self.default_context,
+            "tags": self.tags,
+            "created_at": self.created_at.isoformat(),
+        }
+    
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "CustomTemplateDefinition":
+        """Deserialize from dictionary."""
+        sections = [
+            TemplateSection(
+                name=s["name"],
+                content=s["content"],
+                condition=s.get("condition"),
+                order=s.get("order", 0),
+            )
+            for s in data.get("sections", [])
+        ]
+        
+        variables = [
+            TemplateVariable(
+                name=v["name"],
+                type=v["type"],
+                description=v.get("description", ""),
+                default=v.get("default"),
+                required=v.get("required", False),
+            )
+            for v in data.get("variables", [])
+        ]
+        
+        return cls(
+            name=data["name"],
+            description=data.get("description", ""),
+            author=data.get("author", ""),
+            version=data.get("version", "1.0.0"),
+            format=ExportFormat(data.get("format", "html")),
+            header=data.get("header", ""),
+            footer=data.get("footer", ""),
+            sections=sections,
+            css_content=data.get("css_content", ""),
+            inline_styles=data.get("inline_styles", True),
+            variables=variables,
+            default_context=data.get("default_context", {}),
+            tags=data.get("tags", []),
+            created_at=datetime.fromisoformat(data["created_at"]) if "created_at" in data else datetime.now(),
+        )
+
+
+class TemplateValidator:
+    """Validates custom templates for syntax and required variables."""
+    
+    # Standard available variables in templates
+    STANDARD_VARIABLES = {
+        "data", "title", "summary", "raw_results", "comparison",
+        "insights", "metadata", "generated_at", "css", "custom_sections",
+    }
+    
+    # Standard available filters
+    STANDARD_FILTERS = {
+        "format_time", "format_percent", "json_pretty", "default",
+        "length", "first", "last", "join", "upper", "lower", "title",
+        "replace", "safe", "escape", "int", "float", "string", "list",
+        "sort", "reverse", "unique", "batch", "slice", "truncate",
+    }
+    
+    def validate(self, template: CustomTemplateDefinition) -> TemplateValidationResult:
+        """Validate a custom template.
+        
+        Checks:
+        - Jinja2 syntax validity
+        - Required variables are defined
+        - Used filters are available
+        - Section conditions are valid
+        
+        Args:
+            template: Template to validate
+            
+        Returns:
+            TemplateValidationResult with validation details
+        """
+        errors: list[str] = []
+        warnings: list[str] = []
+        required_vars: set[str] = set()
+        used_filters: set[str] = set()
+        
+        if not HAS_JINJA2:
+            return TemplateValidationResult(
+                is_valid=False,
+                errors=["jinja2 is required for template validation"],
+            )
+        
+        from jinja2 import Environment, TemplateSyntaxError, meta
+        
+        env = Environment()
+        
+        # Validate main template content
+        full_template = template.to_export_template().template_content
+        
+        try:
+            ast = env.parse(full_template)
+            
+            # Find undefined variables
+            undefined = meta.find_undeclared_variables(ast)
+            for var in undefined:
+                root_var = var.split(".")[0] if "." in var else var
+                if root_var not in self.STANDARD_VARIABLES:
+                    # Check if it's a user-defined variable
+                    user_var_names = {v.name for v in template.variables}
+                    if root_var not in user_var_names:
+                        warnings.append(f"Variable '{var}' may be undefined")
+                required_vars.add(root_var)
+            
+        except TemplateSyntaxError as e:
+            errors.append(f"Template syntax error: {e.message} at line {e.lineno}")
+        
+        # Validate individual sections
+        for section in template.sections:
+            try:
+                env.parse(section.content)
+            except TemplateSyntaxError as e:
+                errors.append(f"Syntax error in section '{section.name}': {e.message}")
+            
+            # Validate condition if present
+            if section.condition:
+                try:
+                    env.parse(f"{{% if {section.condition} %}}test{{% endif %}}")
+                except TemplateSyntaxError as e:
+                    errors.append(f"Invalid condition in section '{section.name}': {e.message}")
+        
+        # Extract used filters
+        import re
+        filter_pattern = r'\|\s*(\w+)'
+        for match in re.finditer(filter_pattern, full_template):
+            filter_name = match.group(1)
+            used_filters.add(filter_name)
+            if filter_name not in self.STANDARD_FILTERS:
+                warnings.append(f"Custom filter '{filter_name}' used - ensure it's registered")
+        
+        # Check required variables
+        for var in template.variables:
+            if var.required and var.default is None:
+                required_vars.add(var.name)
+        
+        # Validate template name
+        if not template.name or not template.name.replace("_", "").replace("-", "").isalnum():
+            errors.append("Template name must be alphanumeric (with underscores/hyphens)")
+        
+        return TemplateValidationResult(
+            is_valid=len(errors) == 0,
+            errors=errors,
+            warnings=warnings,
+            required_variables=list(required_vars),
+            used_filters=list(used_filters),
+        )
+
+
+class CustomTemplateManager:
+    """Manages user-defined custom templates.
+    
+    Provides:
+    - Template creation and registration
+    - Template persistence (save/load)
+    - Template validation
+    - Template cloning and modification
+    - Template import/export
+    """
+    
+    def __init__(self, templates_dir: Path | None = None) -> None:
+        """Initialize template manager.
+        
+        Args:
+            templates_dir: Directory for storing templates
+        """
+        self._templates: dict[str, CustomTemplateDefinition] = {}
+        self._templates_dir = templates_dir or Path.home() / ".proxima" / "templates"
+        self._validator = TemplateValidator()
+        
+        # Load built-in templates as starting point
+        self._load_builtin_templates()
+    
+    def _load_builtin_templates(self) -> None:
+        """Load built-in templates from TemplateLibrary."""
+        for name in TemplateLibrary.list_templates():
+            template = TemplateLibrary.get_template(name)
+            if template:
+                self._templates[name] = CustomTemplateDefinition(
+                    name=name,
+                    description=template.description,
+                    format=template.format,
+                    header=template.template_content,
+                    footer="",
+                    css_content=template.css_content,
+                    tags=["builtin"],
+                )
+    
+    def create_template(
+        self,
+        name: str,
+        description: str = "",
+        format: ExportFormat = ExportFormat.HTML,
+        author: str = "",
+    ) -> CustomTemplateDefinition:
+        """Create a new empty template.
+        
+        Args:
+            name: Template name (unique identifier)
+            description: Template description
+            format: Output format
+            author: Template author
+            
+        Returns:
+            New CustomTemplateDefinition
+        """
+        template = CustomTemplateDefinition(
+            name=name,
+            description=description,
+            format=format,
+            author=author,
+        )
+        return template
+    
+    def create_from_builtin(
+        self,
+        builtin_name: str,
+        new_name: str,
+    ) -> CustomTemplateDefinition | None:
+        """Create a new template based on a built-in one.
+        
+        Args:
+            builtin_name: Name of built-in template to clone
+            new_name: Name for the new template
+            
+        Returns:
+            New template or None if builtin not found
+        """
+        builtin = TemplateLibrary.get_template(builtin_name)
+        if not builtin:
+            return None
+        
+        return CustomTemplateDefinition(
+            name=new_name,
+            description=f"Based on {builtin_name}: {builtin.description}",
+            format=builtin.format,
+            header=builtin.template_content,
+            css_content=builtin.css_content,
+            variables=list(builtin.variables),
+            tags=["custom", f"based_on:{builtin_name}"],
+        )
+    
+    def add_section(
+        self,
+        template: CustomTemplateDefinition,
+        name: str,
+        content: str,
+        condition: str | None = None,
+        order: int | None = None,
+    ) -> CustomTemplateDefinition:
+        """Add a section to a template.
+        
+        Args:
+            template: Template to modify
+            name: Section name
+            content: Section content (Jinja2 template)
+            condition: Optional condition for showing section
+            order: Optional order (defaults to last)
+            
+        Returns:
+            Modified template
+        """
+        if order is None:
+            order = max((s.order for s in template.sections), default=-1) + 1
+        
+        template.sections.append(TemplateSection(
+            name=name,
+            content=content,
+            condition=condition,
+            order=order,
+        ))
+        return template
+    
+    def add_variable(
+        self,
+        template: CustomTemplateDefinition,
+        name: str,
+        var_type: str,
+        description: str = "",
+        default: Any = None,
+        required: bool = False,
+    ) -> CustomTemplateDefinition:
+        """Add a variable definition to a template.
+        
+        Args:
+            template: Template to modify
+            name: Variable name
+            var_type: Variable type ('string', 'number', 'list', 'dict', 'date')
+            description: Variable description
+            default: Default value
+            required: Whether variable is required
+            
+        Returns:
+            Modified template
+        """
+        template.variables.append(TemplateVariable(
+            name=name,
+            type=var_type,
+            description=description,
+            default=default,
+            required=required,
+        ))
+        return template
+    
+    def register(self, template: CustomTemplateDefinition, validate: bool = True) -> TemplateValidationResult | None:
+        """Register a template for use.
+        
+        Args:
+            template: Template to register
+            validate: Whether to validate before registering
+            
+        Returns:
+            Validation result if validate=True, None otherwise
+        """
+        result = None
+        if validate:
+            result = self._validator.validate(template)
+            if not result.is_valid:
+                return result
+        
+        self._templates[template.name] = template
+        return result
+    
+    def get(self, name: str) -> CustomTemplateDefinition | None:
+        """Get a registered template by name."""
+        return self._templates.get(name)
+    
+    def list_templates(self, tags: list[str] | None = None) -> list[CustomTemplateDefinition]:
+        """List registered templates, optionally filtered by tags.
+        
+        Args:
+            tags: Optional tag filter
+            
+        Returns:
+            List of matching templates
+        """
+        templates = list(self._templates.values())
+        
+        if tags:
+            templates = [t for t in templates if any(tag in t.tags for tag in tags)]
+        
+        return sorted(templates, key=lambda t: t.name)
+    
+    def save_template(self, name: str) -> bool:
+        """Save a template to disk.
+        
+        Args:
+            name: Template name to save
+            
+        Returns:
+            True if successful
+        """
+        template = self._templates.get(name)
+        if not template:
+            return False
+        
+        try:
+            self._templates_dir.mkdir(parents=True, exist_ok=True)
+            
+            file_path = self._templates_dir / f"{name}.json"
+            file_path.write_text(
+                json.dumps(template.to_dict(), indent=2, default=str),
+                encoding="utf-8",
+            )
+            return True
+        except Exception:
+            return False
+    
+    def load_template(self, file_path: Path) -> CustomTemplateDefinition | None:
+        """Load a template from file.
+        
+        Args:
+            file_path: Path to template file
+            
+        Returns:
+            Loaded template or None if failed
+        """
+        try:
+            data = json.loads(file_path.read_text(encoding="utf-8"))
+            template = CustomTemplateDefinition.from_dict(data)
+            self._templates[template.name] = template
+            return template
+        except Exception:
+            return None
+    
+    def load_all_templates(self) -> int:
+        """Load all templates from templates directory.
+        
+        Returns:
+            Number of templates loaded
+        """
+        count = 0
+        if not self._templates_dir.exists():
+            return count
+        
+        for file_path in self._templates_dir.glob("*.json"):
+            if self.load_template(file_path):
+                count += 1
+        
+        return count
+    
+    def delete(self, name: str, delete_file: bool = False) -> bool:
+        """Remove a template.
+        
+        Args:
+            name: Template name
+            delete_file: Also delete saved file
+            
+        Returns:
+            True if template was removed
+        """
+        if name not in self._templates:
+            return False
+        
+        # Don't allow deleting built-in templates
+        if "builtin" in self._templates[name].tags:
+            return False
+        
+        del self._templates[name]
+        
+        if delete_file:
+            file_path = self._templates_dir / f"{name}.json"
+            if file_path.exists():
+                file_path.unlink()
+        
+        return True
+    
+    def export_template(self, name: str) -> str | None:
+        """Export a template as JSON string.
+        
+        Args:
+            name: Template name
+            
+        Returns:
+            JSON string or None if not found
+        """
+        template = self._templates.get(name)
+        if not template:
+            return None
+        
+        return json.dumps(template.to_dict(), indent=2, default=str)
+    
+    def import_template(self, json_content: str, new_name: str | None = None) -> CustomTemplateDefinition | None:
+        """Import a template from JSON string.
+        
+        Args:
+            json_content: JSON string
+            new_name: Optional new name for template
+            
+        Returns:
+            Imported template or None if failed
+        """
+        try:
+            data = json.loads(json_content)
+            if new_name:
+                data["name"] = new_name
+            
+            template = CustomTemplateDefinition.from_dict(data)
+            self._templates[template.name] = template
+            return template
+        except Exception:
+            return None
+    
+    def render(
+        self,
+        template_name: str,
+        data: ReportData,
+        context: dict[str, Any] | None = None,
+    ) -> str | None:
+        """Render a template with data.
+        
+        Args:
+            template_name: Name of registered template
+            data: Report data to render
+            context: Additional context variables
+            
+        Returns:
+            Rendered content or None if template not found
+        """
+        template = self._templates.get(template_name)
+        if not template:
+            return None
+        
+        export_template = template.to_export_template()
+        
+        # Merge default context with provided context
+        full_context = dict(template.default_context)
+        if context:
+            full_context.update(context)
+        
+        return export_template.render(data, full_context)
+
+
+# Built-in custom template presets
+class TemplatePresets:
+    """Pre-built custom template presets for common use cases."""
+    
+    @staticmethod
+    def minimal_report() -> CustomTemplateDefinition:
+        """Create a minimal report template."""
+        template = CustomTemplateDefinition(
+            name="minimal_report",
+            description="Minimal clean report with just essential info",
+            format=ExportFormat.HTML,
+            author="Proxima",
+            tags=["preset", "minimal"],
+        )
+        
+        template.header = """<!DOCTYPE html>
+<html>
+<head>
+    <title>{{ title }}</title>
+    <style>
+        body { font-family: system-ui; margin: 40px; max-width: 800px; }
+        h1 { color: #2c3e50; }
+        .metric { font-size: 24px; color: #3498db; }
+        ul { line-height: 1.8; }
+    </style>
+</head>
+<body>
+    <h1>{{ title }}</h1>
+    <p><small>Generated: {{ generated_at.strftime('%Y-%m-%d %H:%M') }}</small></p>
+"""
+        
+        template.sections = [
+            TemplateSection(
+                name="summary",
+                content="""
+    {% if summary %}
+    <h2>Summary</h2>
+    <ul>
+    {% for key, value in summary.items() %}
+        <li><strong>{{ key }}:</strong> <span class="metric">{{ value }}</span></li>
+    {% endfor %}
+    </ul>
+    {% endif %}
+""",
+                order=1,
+            ),
+            TemplateSection(
+                name="insights",
+                content="""
+    {% if insights %}
+    <h2>Insights</h2>
+    <ul>
+    {% for insight in insights %}
+        <li>{{ insight }}</li>
+    {% endfor %}
+    </ul>
+    {% endif %}
+""",
+                condition="insights",
+                order=2,
+            ),
+        ]
+        
+        template.footer = """
+</body>
+</html>"""
+        
+        return template
+    
+    @staticmethod
+    def detailed_benchmark() -> CustomTemplateDefinition:
+        """Create a detailed benchmark report template."""
+        template = CustomTemplateDefinition(
+            name="detailed_benchmark",
+            description="Comprehensive benchmark analysis report",
+            format=ExportFormat.HTML,
+            author="Proxima",
+            tags=["preset", "benchmark", "detailed"],
+        )
+        
+        template.variables = [
+            TemplateVariable(name="show_raw_data", type="bool", default=False),
+            TemplateVariable(name="highlight_best", type="bool", default=True),
+        ]
+        
+        template.css_content = """
+            body { font-family: 'Segoe UI', system-ui; margin: 0; padding: 20px; background: #f5f7fa; }
+            .container { max-width: 1200px; margin: 0 auto; }
+            .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+                      color: white; padding: 30px; border-radius: 12px; margin-bottom: 20px; }
+            .card { background: white; border-radius: 8px; padding: 20px; margin: 15px 0; 
+                    box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+            .metric-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; }
+            .metric-box { text-align: center; padding: 20px; background: #f8f9fa; border-radius: 8px; }
+            .metric-value { font-size: 28px; font-weight: bold; color: #667eea; }
+            .metric-label { font-size: 12px; color: #666; margin-top: 5px; }
+            table { width: 100%; border-collapse: collapse; }
+            th, td { padding: 12px; text-align: left; border-bottom: 1px solid #eee; }
+            th { background: #f8f9fa; font-weight: 600; }
+            .best { background: #d4edda; }
+            .insight-list { list-style: none; padding: 0; }
+            .insight-list li { padding: 10px 15px; margin: 8px 0; background: #e3f2fd; 
+                               border-left: 4px solid #2196f3; border-radius: 4px; }
+        """
+        
+        template.header = """<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ title }} - Benchmark Report</title>
+    <style>{{ css }}</style>
+</head>
+<body>
+<div class="container">
+    <div class="header">
+        <h1>{{ title }}</h1>
+        <p>Benchmark Analysis Report • {{ generated_at.strftime('%B %d, %Y at %H:%M') }}</p>
+    </div>
+"""
+        
+        template.sections = [
+            TemplateSection(
+                name="metrics_overview",
+                content="""
+    <div class="card">
+        <h2>Performance Overview</h2>
+        <div class="metric-grid">
+            {% if comparison.fastest_backend %}
+            <div class="metric-box">
+                <div class="metric-value">{{ comparison.fastest_backend }}</div>
+                <div class="metric-label">Fastest Backend</div>
+            </div>
+            {% endif %}
+            {% if summary.total_executions %}
+            <div class="metric-box">
+                <div class="metric-value">{{ summary.total_executions }}</div>
+                <div class="metric-label">Total Runs</div>
+            </div>
+            {% endif %}
+            {% if summary.average_execution_time %}
+            <div class="metric-box">
+                <div class="metric-value">{{ "%.2f"|format(summary.average_execution_time) }}ms</div>
+                <div class="metric-label">Avg Execution Time</div>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+""",
+                order=1,
+            ),
+            TemplateSection(
+                name="comparison_table",
+                content="""
+    {% if comparison.execution_times %}
+    <div class="card">
+        <h2>Backend Comparison</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Backend</th>
+                    <th>Execution Time (ms)</th>
+                    <th>Memory (MB)</th>
+                    <th>Relative Speed</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for backend, time in comparison.execution_times.items() %}
+                <tr{% if backend == comparison.fastest_backend %} class="best"{% endif %}>
+                    <td>{{ backend }}</td>
+                    <td>{{ "%.2f"|format(time) }}</td>
+                    <td>{{ "%.2f"|format(comparison.memory_peaks.get(backend, 0)) }}</td>
+                    <td>{{ "%.2fx"|format(comparison.time_ratios.get(backend, 1)) }}</td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
+""",
+                order=2,
+            ),
+            TemplateSection(
+                name="insights",
+                content="""
+    {% if insights %}
+    <div class="card">
+        <h2>Analysis Insights</h2>
+        <ul class="insight-list">
+        {% for insight in insights %}
+            <li>{{ insight }}</li>
+        {% endfor %}
+        </ul>
+    </div>
+    {% endif %}
+""",
+                order=3,
+            ),
+        ]
+        
+        template.footer = """
+    <div class="card" style="text-align: center; opacity: 0.7;">
+        <small>Generated by Proxima Export Engine</small>
+    </div>
+</div>
+</body>
+</html>"""
+        
+        return template
+    
+    @staticmethod
+    def markdown_documentation() -> CustomTemplateDefinition:
+        """Create a markdown documentation template."""
+        template = CustomTemplateDefinition(
+            name="markdown_documentation",
+            description="Documentation-style markdown report",
+            format=ExportFormat.MARKDOWN,
+            author="Proxima",
+            tags=["preset", "markdown", "docs"],
+        )
+        
+        template.header = """# {{ title }}
+
+> Generated: {{ generated_at.strftime('%Y-%m-%d %H:%M:%S') }}
+
+---
+
+"""
+        
+        template.sections = [
+            TemplateSection(
+                name="toc",
+                content="""## Table of Contents
+
+- [Summary](#summary)
+- [Results](#results)
+- [Comparison](#comparison)
+- [Insights](#insights)
+- [Metadata](#metadata)
+
+---
+
+""",
+                order=0,
+            ),
+            TemplateSection(
+                name="summary",
+                content="""## Summary
+
+{% if summary %}
+| Metric | Value |
+|--------|-------|
+{% for key, value in summary.items() %}| {{ key }} | {{ value }} |
+{% endfor %}
+{% else %}
+No summary data available.
+{% endif %}
+
+""",
+                order=1,
+            ),
+            TemplateSection(
+                name="comparison",
+                content="""## Comparison
+
+{% if comparison.execution_times %}
+### Execution Times
+
+| Backend | Time (ms) | Relative |
+|---------|-----------|----------|
+{% for backend, time in comparison.execution_times.items() %}| {{ backend }} | {{ "%.2f"|format(time) }} | {{ "%.2fx"|format(comparison.time_ratios.get(backend, 1)) }} |
+{% endfor %}
+
+**Fastest Backend:** {{ comparison.fastest_backend }}
+{% endif %}
+
+""",
+                order=2,
+            ),
+            TemplateSection(
+                name="insights",
+                content="""## Insights
+
+{% if insights %}
+{% for insight in insights %}
+- {{ insight }}
+{% endfor %}
+{% else %}
+No insights generated.
+{% endif %}
+
+""",
+                order=3,
+            ),
+        ]
+        
+        template.footer = """---
+
+*Report generated by Proxima*
+"""
+        
+        return template
+
+
 class TemplateExporter(BaseExporter):
     """Exporter that uses custom templates."""
     

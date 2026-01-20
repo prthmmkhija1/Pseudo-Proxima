@@ -1166,3 +1166,965 @@ _session_events = SessionEventHook()
 def get_session_event_hook() -> SessionEventHook:
     """Get the global session event hook."""
     return _session_events
+
+
+# =============================================================================
+# CONCURRENT SESSION EDGE CASES (5% Gap Coverage)
+# Race condition handling, deadlock detection, and distributed locking
+# =============================================================================
+
+
+class LockState(Enum):
+    """State of a session lock."""
+    
+    UNLOCKED = "unlocked"
+    LOCKED = "locked"
+    WAITING = "waiting"
+    TIMED_OUT = "timed_out"
+    DEADLOCKED = "deadlocked"
+
+
+@dataclass
+class LockAcquisitionAttempt:
+    """Record of a lock acquisition attempt."""
+    
+    session_id: str
+    resource_id: str
+    attempt_time: float
+    acquired: bool
+    wait_time: float
+    
+    holder_session: str | None = None  # Who held the lock
+    timeout_occurred: bool = False
+    deadlock_detected: bool = False
+    
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary."""
+        return {
+            "session_id": self.session_id,
+            "resource_id": self.resource_id,
+            "attempt_time": self.attempt_time,
+            "acquired": self.acquired,
+            "wait_time": self.wait_time,
+            "holder_session": self.holder_session,
+            "timeout_occurred": self.timeout_occurred,
+            "deadlock_detected": self.deadlock_detected,
+        }
+
+
+@dataclass
+class SessionConflict:
+    """A conflict between concurrent sessions."""
+    
+    conflict_id: str
+    conflict_type: str  # "lock", "data", "state", "resource"
+    sessions_involved: list[str]
+    resource_id: str
+    detected_at: float
+    
+    resolution: str | None = None
+    resolved: bool = False
+    resolved_at: float | None = None
+    
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary."""
+        return {
+            "conflict_id": self.conflict_id,
+            "conflict_type": self.conflict_type,
+            "sessions_involved": self.sessions_involved,
+            "resource_id": self.resource_id,
+            "detected_at": self.detected_at,
+            "resolution": self.resolution,
+            "resolved": self.resolved,
+        }
+
+
+class DistributedLock:
+    """A distributed lock for cross-process session coordination.
+    
+    Uses a combination of file locks and atomic operations
+    for cross-process safety.
+    """
+    
+    def __init__(
+        self,
+        lock_name: str,
+        lock_dir: Path | None = None,
+        default_timeout: float = 30.0,
+        heartbeat_interval: float = 5.0,
+    ) -> None:
+        """Initialize distributed lock.
+        
+        Args:
+            lock_name: Name of the lock
+            lock_dir: Directory for lock files
+            default_timeout: Default lock timeout in seconds
+            heartbeat_interval: Interval for lock heartbeat
+        """
+        self._name = lock_name
+        self._lock_dir = lock_dir or Path.home() / ".proxima" / "locks"
+        self._lock_dir.mkdir(parents=True, exist_ok=True)
+        
+        self._lock_file = self._lock_dir / f"{lock_name}.lock"
+        self._meta_file = self._lock_dir / f"{lock_name}.meta"
+        
+        self._default_timeout = default_timeout
+        self._heartbeat_interval = heartbeat_interval
+        
+        self._local_lock = threading.Lock()
+        self._owned = False
+        self._owner_id = str(uuid.uuid4())
+        
+        # Heartbeat thread
+        self._heartbeat_thread: threading.Thread | None = None
+        self._stop_heartbeat = threading.Event()
+    
+    def acquire(
+        self,
+        timeout: float | None = None,
+        session_id: str | None = None,
+    ) -> LockAcquisitionAttempt:
+        """Acquire the distributed lock.
+        
+        Args:
+            timeout: Optional timeout in seconds
+            session_id: Optional session ID for tracking
+            
+        Returns:
+            LockAcquisitionAttempt with result
+        """
+        timeout = timeout if timeout is not None else self._default_timeout
+        start_time = time.time()
+        session_id = session_id or self._owner_id
+        
+        with self._local_lock:
+            if self._owned:
+                return LockAcquisitionAttempt(
+                    session_id=session_id,
+                    resource_id=self._name,
+                    attempt_time=start_time,
+                    acquired=True,
+                    wait_time=0.0,
+                )
+            
+            # Try to acquire lock with timeout
+            end_time = start_time + timeout
+            holder = None
+            
+            while time.time() < end_time:
+                try:
+                    # Try to create lock file atomically
+                    if self._try_acquire_file():
+                        self._owned = True
+                        self._write_meta(session_id)
+                        self._start_heartbeat()
+                        
+                        return LockAcquisitionAttempt(
+                            session_id=session_id,
+                            resource_id=self._name,
+                            attempt_time=start_time,
+                            acquired=True,
+                            wait_time=time.time() - start_time,
+                        )
+                    
+                    # Check if lock is stale
+                    if self._is_lock_stale():
+                        self._force_release()
+                        continue
+                    
+                    holder = self._get_holder()
+                    time.sleep(0.1)
+                    
+                except Exception:
+                    time.sleep(0.1)
+            
+            # Timeout
+            return LockAcquisitionAttempt(
+                session_id=session_id,
+                resource_id=self._name,
+                attempt_time=start_time,
+                acquired=False,
+                wait_time=time.time() - start_time,
+                holder_session=holder,
+                timeout_occurred=True,
+            )
+    
+    def _try_acquire_file(self) -> bool:
+        """Try to acquire the lock file atomically."""
+        try:
+            # Use exclusive create mode
+            fd = os.open(
+                str(self._lock_file),
+                os.O_CREAT | os.O_EXCL | os.O_WRONLY,
+                0o644
+            )
+            os.close(fd)
+            return True
+        except FileExistsError:
+            return False
+        except OSError:
+            return False
+    
+    def _write_meta(self, session_id: str) -> None:
+        """Write lock metadata."""
+        meta = {
+            "owner_id": self._owner_id,
+            "session_id": session_id,
+            "acquired_at": time.time(),
+            "last_heartbeat": time.time(),
+            "pid": os.getpid(),
+        }
+        try:
+            with open(self._meta_file, "w") as f:
+                json.dump(meta, f)
+        except Exception:
+            pass
+    
+    def _is_lock_stale(self) -> bool:
+        """Check if the lock is stale (no recent heartbeat)."""
+        try:
+            if not self._meta_file.exists():
+                return True
+            
+            with open(self._meta_file) as f:
+                meta = json.load(f)
+            
+            last_heartbeat = meta.get("last_heartbeat", 0)
+            if time.time() - last_heartbeat > self._heartbeat_interval * 3:
+                return True
+            
+            # Check if owner process still exists
+            owner_pid = meta.get("pid", 0)
+            if owner_pid:
+                try:
+                    # On Unix, sending signal 0 checks process existence
+                    os.kill(owner_pid, 0)
+                except OSError:
+                    return True  # Process doesn't exist
+            
+            return False
+        except Exception:
+            return True
+    
+    def _get_holder(self) -> str | None:
+        """Get the current lock holder's session ID."""
+        try:
+            if self._meta_file.exists():
+                with open(self._meta_file) as f:
+                    meta = json.load(f)
+                return meta.get("session_id")
+        except Exception:
+            pass
+        return None
+    
+    def _force_release(self) -> None:
+        """Force release a stale lock."""
+        try:
+            self._lock_file.unlink(missing_ok=True)
+            self._meta_file.unlink(missing_ok=True)
+        except Exception:
+            pass
+    
+    def _start_heartbeat(self) -> None:
+        """Start heartbeat thread."""
+        self._stop_heartbeat.clear()
+        
+        def heartbeat():
+            while not self._stop_heartbeat.is_set():
+                try:
+                    if self._meta_file.exists():
+                        with open(self._meta_file) as f:
+                            meta = json.load(f)
+                        meta["last_heartbeat"] = time.time()
+                        with open(self._meta_file, "w") as f:
+                            json.dump(meta, f)
+                except Exception:
+                    pass
+                
+                self._stop_heartbeat.wait(self._heartbeat_interval)
+        
+        self._heartbeat_thread = threading.Thread(target=heartbeat, daemon=True)
+        self._heartbeat_thread.start()
+    
+    def release(self) -> bool:
+        """Release the distributed lock.
+        
+        Returns:
+            True if lock was released
+        """
+        with self._local_lock:
+            if not self._owned:
+                return False
+            
+            self._stop_heartbeat.set()
+            if self._heartbeat_thread:
+                self._heartbeat_thread.join(timeout=1.0)
+                self._heartbeat_thread = None
+            
+            try:
+                self._lock_file.unlink(missing_ok=True)
+                self._meta_file.unlink(missing_ok=True)
+            except Exception:
+                pass
+            
+            self._owned = False
+            return True
+    
+    def is_locked(self) -> bool:
+        """Check if the lock is currently held."""
+        return self._lock_file.exists() and not self._is_lock_stale()
+    
+    def __enter__(self) -> "DistributedLock":
+        """Context manager entry."""
+        result = self.acquire()
+        if not result.acquired:
+            raise TimeoutError(f"Failed to acquire lock: {self._name}")
+        return self
+    
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        """Context manager exit."""
+        self.release()
+
+
+class SessionDeadlockDetector:
+    """Detects deadlocks between sessions waiting for resources.
+    
+    Uses wait-for graph analysis to find cycles.
+    """
+    
+    def __init__(self) -> None:
+        """Initialize deadlock detector."""
+        self._lock = threading.Lock()
+        
+        # Wait-for graph: session -> set of sessions it waits for
+        self._wait_graph: dict[str, set[str]] = {}
+        
+        # Resource holdings: session -> set of resources held
+        self._holdings: dict[str, set[str]] = {}
+        
+        # Resource waiters: resource -> session waiting for it
+        self._waiters: dict[str, str] = {}
+        
+        # Deadlock history
+        self._deadlock_history: list[dict[str, Any]] = []
+    
+    def register_session(self, session_id: str) -> None:
+        """Register a session for tracking.
+        
+        Args:
+            session_id: Session ID
+        """
+        with self._lock:
+            self._wait_graph[session_id] = set()
+            self._holdings[session_id] = set()
+    
+    def unregister_session(self, session_id: str) -> None:
+        """Unregister a session.
+        
+        Args:
+            session_id: Session ID
+        """
+        with self._lock:
+            self._wait_graph.pop(session_id, None)
+            held = self._holdings.pop(session_id, set())
+            
+            # Remove from waiters
+            for resource in list(self._waiters.keys()):
+                if self._waiters[resource] == session_id:
+                    del self._waiters[resource]
+            
+            # Update wait graph
+            for waits in self._wait_graph.values():
+                waits.discard(session_id)
+    
+    def acquire_resource(
+        self,
+        session_id: str,
+        resource_id: str,
+    ) -> None:
+        """Record that a session acquired a resource.
+        
+        Args:
+            session_id: Session ID
+            resource_id: Resource ID
+        """
+        with self._lock:
+            if session_id in self._holdings:
+                self._holdings[session_id].add(resource_id)
+            
+            # Remove from waiters
+            if resource_id in self._waiters:
+                del self._waiters[resource_id]
+    
+    def release_resource(
+        self,
+        session_id: str,
+        resource_id: str,
+    ) -> None:
+        """Record that a session released a resource.
+        
+        Args:
+            session_id: Session ID
+            resource_id: Resource ID
+        """
+        with self._lock:
+            if session_id in self._holdings:
+                self._holdings[session_id].discard(resource_id)
+    
+    def wait_for_resource(
+        self,
+        session_id: str,
+        resource_id: str,
+        holder_session: str,
+    ) -> bool:
+        """Record that a session is waiting for a resource.
+        
+        Args:
+            session_id: Waiting session
+            resource_id: Resource being waited for
+            holder_session: Session holding the resource
+            
+        Returns:
+            True if waiting creates a deadlock
+        """
+        with self._lock:
+            if session_id not in self._wait_graph:
+                return False
+            
+            # Record wait relationship
+            self._wait_graph[session_id].add(holder_session)
+            self._waiters[resource_id] = session_id
+            
+            # Check for deadlock
+            return self._detect_deadlock(session_id)
+    
+    def stop_waiting(
+        self,
+        session_id: str,
+        resource_id: str,
+    ) -> None:
+        """Record that a session stopped waiting.
+        
+        Args:
+            session_id: Session ID
+            resource_id: Resource ID
+        """
+        with self._lock:
+            if resource_id in self._waiters:
+                del self._waiters[resource_id]
+            
+            # Clear wait relationships for this session
+            if session_id in self._wait_graph:
+                self._wait_graph[session_id].clear()
+    
+    def _detect_deadlock(self, start_session: str) -> bool:
+        """Detect if there's a cycle involving the session.
+        
+        Args:
+            start_session: Session to check from
+            
+        Returns:
+            True if deadlock detected
+        """
+        visited = set()
+        rec_stack = set()
+        path = []
+        
+        def dfs(session: str) -> bool:
+            visited.add(session)
+            rec_stack.add(session)
+            path.append(session)
+            
+            for waiting_for in self._wait_graph.get(session, set()):
+                if waiting_for not in visited:
+                    if dfs(waiting_for):
+                        return True
+                elif waiting_for in rec_stack:
+                    # Found cycle
+                    cycle_start = path.index(waiting_for)
+                    cycle = path[cycle_start:] + [waiting_for]
+                    
+                    self._deadlock_history.append({
+                        "detected_at": time.time(),
+                        "cycle": cycle,
+                        "start_session": start_session,
+                    })
+                    
+                    return True
+            
+            path.pop()
+            rec_stack.remove(session)
+            return False
+        
+        return dfs(start_session)
+    
+    def get_deadlock_history(self) -> list[dict[str, Any]]:
+        """Get deadlock history.
+        
+        Returns:
+            List of detected deadlocks
+        """
+        with self._lock:
+            return self._deadlock_history.copy()
+    
+    def get_wait_graph(self) -> dict[str, list[str]]:
+        """Get current wait-for graph.
+        
+        Returns:
+            Dictionary of session -> sessions it waits for
+        """
+        with self._lock:
+            return {
+                session: list(waits)
+                for session, waits in self._wait_graph.items()
+            }
+
+
+class SessionConflictResolver:
+    """Resolves conflicts between concurrent sessions.
+    
+    Strategies:
+    - First-wins: First session to acquire wins
+    - Priority-based: Higher priority session wins
+    - Merge: Attempt to merge conflicting changes
+    - Abort-younger: Abort the more recently started session
+    """
+    
+    def __init__(
+        self,
+        default_strategy: str = "first_wins",
+    ) -> None:
+        """Initialize conflict resolver.
+        
+        Args:
+            default_strategy: Default resolution strategy
+        """
+        self._strategy = default_strategy
+        self._lock = threading.Lock()
+        
+        # Session metadata for priority/age resolution
+        self._session_meta: dict[str, dict[str, Any]] = {}
+        
+        # Conflict history
+        self._conflicts: list[SessionConflict] = []
+        self._conflict_counter = 0
+    
+    def register_session(
+        self,
+        session_id: str,
+        priority: int = 0,
+        start_time: float | None = None,
+    ) -> None:
+        """Register a session.
+        
+        Args:
+            session_id: Session ID
+            priority: Session priority (higher = more important)
+            start_time: Session start time
+        """
+        with self._lock:
+            self._session_meta[session_id] = {
+                "priority": priority,
+                "start_time": start_time or time.time(),
+            }
+    
+    def unregister_session(self, session_id: str) -> None:
+        """Unregister a session.
+        
+        Args:
+            session_id: Session ID
+        """
+        with self._lock:
+            self._session_meta.pop(session_id, None)
+    
+    def resolve_conflict(
+        self,
+        conflict_type: str,
+        sessions: list[str],
+        resource_id: str,
+        strategy: str | None = None,
+    ) -> SessionConflict:
+        """Resolve a conflict between sessions.
+        
+        Args:
+            conflict_type: Type of conflict
+            sessions: Sessions involved
+            resource_id: Conflicting resource
+            strategy: Resolution strategy (or use default)
+            
+        Returns:
+            SessionConflict with resolution
+        """
+        strategy = strategy or self._strategy
+        
+        with self._lock:
+            self._conflict_counter += 1
+            conflict_id = f"conflict_{self._conflict_counter}"
+            
+            conflict = SessionConflict(
+                conflict_id=conflict_id,
+                conflict_type=conflict_type,
+                sessions_involved=sessions,
+                resource_id=resource_id,
+                detected_at=time.time(),
+            )
+            
+            # Resolve based on strategy
+            winner = self._resolve_by_strategy(sessions, strategy)
+            
+            if winner:
+                conflict.resolution = f"Session '{winner}' wins by {strategy}"
+                conflict.resolved = True
+                conflict.resolved_at = time.time()
+            else:
+                conflict.resolution = "Unable to resolve automatically"
+            
+            self._conflicts.append(conflict)
+            return conflict
+    
+    def _resolve_by_strategy(
+        self,
+        sessions: list[str],
+        strategy: str,
+    ) -> str | None:
+        """Resolve using specified strategy.
+        
+        Args:
+            sessions: Sessions to choose from
+            strategy: Resolution strategy
+            
+        Returns:
+            Winning session ID or None
+        """
+        if not sessions:
+            return None
+        
+        if strategy == "first_wins":
+            # First session in list wins (assuming order of arrival)
+            return sessions[0]
+        
+        elif strategy == "priority":
+            # Higher priority wins
+            def get_priority(s: str) -> int:
+                return self._session_meta.get(s, {}).get("priority", 0)
+            
+            return max(sessions, key=get_priority)
+        
+        elif strategy == "abort_younger":
+            # Older session wins
+            def get_start(s: str) -> float:
+                return self._session_meta.get(s, {}).get("start_time", time.time())
+            
+            return min(sessions, key=get_start)
+        
+        elif strategy == "abort_older":
+            # Younger session wins
+            def get_start(s: str) -> float:
+                return self._session_meta.get(s, {}).get("start_time", 0)
+            
+            return max(sessions, key=get_start)
+        
+        # Default to first
+        return sessions[0]
+    
+    def get_conflicts(
+        self,
+        session_id: str | None = None,
+        unresolved_only: bool = False,
+    ) -> list[SessionConflict]:
+        """Get recorded conflicts.
+        
+        Args:
+            session_id: Optional filter by session
+            unresolved_only: Only return unresolved conflicts
+            
+        Returns:
+            List of conflicts
+        """
+        with self._lock:
+            result = self._conflicts.copy()
+            
+            if session_id:
+                result = [c for c in result if session_id in c.sessions_involved]
+            
+            if unresolved_only:
+                result = [c for c in result if not c.resolved]
+            
+            return result
+
+
+class ConcurrentSessionManager:
+    """Manages concurrent session access with edge case handling.
+    
+    Combines:
+    - Distributed locking
+    - Deadlock detection
+    - Conflict resolution
+    - Race condition prevention
+    """
+    
+    def __init__(
+        self,
+        lock_dir: Path | None = None,
+        conflict_strategy: str = "priority",
+    ) -> None:
+        """Initialize concurrent session manager.
+        
+        Args:
+            lock_dir: Directory for lock files
+            conflict_strategy: Default conflict resolution strategy
+        """
+        self._lock_dir = lock_dir or Path.home() / ".proxima" / "session_locks"
+        self._lock_dir.mkdir(parents=True, exist_ok=True)
+        
+        self._lock = threading.Lock()
+        
+        # Subsystems
+        self._deadlock_detector = SessionDeadlockDetector()
+        self._conflict_resolver = SessionConflictResolver(conflict_strategy)
+        
+        # Active locks
+        self._active_locks: dict[str, dict[str, DistributedLock]] = {}  # session -> {resource -> lock}
+        
+        # Session registry
+        self._sessions: dict[str, dict[str, Any]] = {}
+        
+        # Acquisition log
+        self._acquisition_log: list[LockAcquisitionAttempt] = []
+    
+    def register_session(
+        self,
+        session_id: str,
+        priority: int = 0,
+    ) -> None:
+        """Register a session for concurrent access.
+        
+        Args:
+            session_id: Session ID
+            priority: Session priority
+        """
+        with self._lock:
+            self._sessions[session_id] = {
+                "priority": priority,
+                "start_time": time.time(),
+                "resources": [],
+            }
+            self._active_locks[session_id] = {}
+        
+        self._deadlock_detector.register_session(session_id)
+        self._conflict_resolver.register_session(session_id, priority)
+    
+    def unregister_session(self, session_id: str) -> None:
+        """Unregister a session, releasing all its locks.
+        
+        Args:
+            session_id: Session ID
+        """
+        # Release all locks
+        with self._lock:
+            locks = self._active_locks.pop(session_id, {})
+            self._sessions.pop(session_id, None)
+        
+        for lock in locks.values():
+            try:
+                lock.release()
+            except Exception:
+                pass
+        
+        self._deadlock_detector.unregister_session(session_id)
+        self._conflict_resolver.unregister_session(session_id)
+    
+    def acquire_resource(
+        self,
+        session_id: str,
+        resource_id: str,
+        timeout: float = 30.0,
+        on_conflict: str = "wait",  # "wait", "fail", "force"
+    ) -> LockAcquisitionAttempt:
+        """Acquire a resource for a session.
+        
+        Args:
+            session_id: Session ID
+            resource_id: Resource to acquire
+            timeout: Acquisition timeout
+            on_conflict: Conflict handling mode
+            
+        Returns:
+            LockAcquisitionAttempt with result
+        """
+        # Get or create lock
+        with self._lock:
+            if session_id not in self._active_locks:
+                self._active_locks[session_id] = {}
+            
+            if resource_id in self._active_locks[session_id]:
+                # Already hold the lock
+                return LockAcquisitionAttempt(
+                    session_id=session_id,
+                    resource_id=resource_id,
+                    attempt_time=time.time(),
+                    acquired=True,
+                    wait_time=0.0,
+                )
+        
+        lock = DistributedLock(
+            lock_name=f"resource_{resource_id}",
+            lock_dir=self._lock_dir,
+            default_timeout=timeout,
+        )
+        
+        # Check for potential deadlock before waiting
+        holder = lock._get_holder()
+        if holder:
+            is_deadlock = self._deadlock_detector.wait_for_resource(
+                session_id, resource_id, holder
+            )
+            
+            if is_deadlock:
+                attempt = LockAcquisitionAttempt(
+                    session_id=session_id,
+                    resource_id=resource_id,
+                    attempt_time=time.time(),
+                    acquired=False,
+                    wait_time=0.0,
+                    holder_session=holder,
+                    deadlock_detected=True,
+                )
+                
+                with self._lock:
+                    self._acquisition_log.append(attempt)
+                
+                return attempt
+        
+        # Attempt acquisition
+        result = lock.acquire(timeout=timeout, session_id=session_id)
+        
+        if result.acquired:
+            with self._lock:
+                self._active_locks[session_id][resource_id] = lock
+            
+            self._deadlock_detector.acquire_resource(session_id, resource_id)
+            self._deadlock_detector.stop_waiting(session_id, resource_id)
+        
+        with self._lock:
+            self._acquisition_log.append(result)
+        
+        return result
+    
+    def release_resource(
+        self,
+        session_id: str,
+        resource_id: str,
+    ) -> bool:
+        """Release a resource held by a session.
+        
+        Args:
+            session_id: Session ID
+            resource_id: Resource to release
+            
+        Returns:
+            True if released
+        """
+        with self._lock:
+            session_locks = self._active_locks.get(session_id, {})
+            lock = session_locks.pop(resource_id, None)
+        
+        if lock:
+            lock.release()
+            self._deadlock_detector.release_resource(session_id, resource_id)
+            return True
+        
+        return False
+    
+    def get_session_resources(self, session_id: str) -> list[str]:
+        """Get resources held by a session.
+        
+        Args:
+            session_id: Session ID
+            
+        Returns:
+            List of resource IDs
+        """
+        with self._lock:
+            return list(self._active_locks.get(session_id, {}).keys())
+    
+    def check_resource_available(self, resource_id: str) -> tuple[bool, str | None]:
+        """Check if a resource is available.
+        
+        Args:
+            resource_id: Resource to check
+            
+        Returns:
+            Tuple of (is_available, holder_session_id)
+        """
+        lock = DistributedLock(
+            lock_name=f"resource_{resource_id}",
+            lock_dir=self._lock_dir,
+        )
+        
+        is_locked = lock.is_locked()
+        holder = lock._get_holder() if is_locked else None
+        
+        return (not is_locked, holder)
+    
+    def get_deadlock_status(self) -> dict[str, Any]:
+        """Get deadlock detection status.
+        
+        Returns:
+            Deadlock status information
+        """
+        history = self._deadlock_detector.get_deadlock_history()
+        wait_graph = self._deadlock_detector.get_wait_graph()
+        
+        return {
+            "deadlocks_detected": len(history),
+            "recent_deadlocks": history[-5:],
+            "current_wait_graph": wait_graph,
+            "active_sessions": len(wait_graph),
+        }
+    
+    def get_conflict_status(self) -> dict[str, Any]:
+        """Get conflict resolution status.
+        
+        Returns:
+            Conflict status information
+        """
+        conflicts = self._conflict_resolver.get_conflicts()
+        unresolved = self._conflict_resolver.get_conflicts(unresolved_only=True)
+        
+        return {
+            "total_conflicts": len(conflicts),
+            "unresolved_conflicts": len(unresolved),
+            "recent_conflicts": [c.to_dict() for c in conflicts[-5:]],
+        }
+    
+    def get_acquisition_statistics(self) -> dict[str, Any]:
+        """Get lock acquisition statistics.
+        
+        Returns:
+            Acquisition statistics
+        """
+        with self._lock:
+            total = len(self._acquisition_log)
+            successful = len([a for a in self._acquisition_log if a.acquired])
+            timeouts = len([a for a in self._acquisition_log if a.timeout_occurred])
+            deadlocks = len([a for a in self._acquisition_log if a.deadlock_detected])
+            
+            if self._acquisition_log:
+                wait_times = [a.wait_time for a in self._acquisition_log]
+                avg_wait = sum(wait_times) / len(wait_times)
+                max_wait = max(wait_times)
+            else:
+                avg_wait = 0.0
+                max_wait = 0.0
+            
+            return {
+                "total_attempts": total,
+                "successful": successful,
+                "success_rate": successful / total * 100 if total > 0 else 0,
+                "timeouts": timeouts,
+                "deadlocks": deadlocks,
+                "average_wait_time": avg_wait,
+                "max_wait_time": max_wait,
+            }
+

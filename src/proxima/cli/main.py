@@ -14,7 +14,9 @@ This CLI provides comprehensive quantum circuit simulation capabilities with:
 - Shell completion scripts
 """
 
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional
 
 import typer
 
@@ -39,6 +41,423 @@ from proxima.cli.interactive import (
 )
 from proxima.config.settings import config_service
 from proxima.utils.logging import configure_from_settings
+
+
+# =============================================================================
+# Command Alias System
+# =============================================================================
+
+
+class AliasConflictError(Exception):
+    """Raised when an alias conflicts with an existing command or alias."""
+
+    def __init__(self, alias: str, existing: str, message: Optional[str] = None):
+        self.alias = alias
+        self.existing = existing
+        super().__init__(
+            message or f"Alias '{alias}' conflicts with existing command/alias '{existing}'"
+        )
+
+
+@dataclass
+class AliasDefinition:
+    """Definition of a command alias.
+
+    Attributes:
+        alias: Short alias name.
+        target: Full command this aliases to.
+        description: Description of the alias.
+        hidden: Whether to hide from help.
+        category: Category for grouping.
+        arguments: Default arguments to pass.
+    """
+
+    alias: str
+    target: str
+    description: str = ""
+    hidden: bool = True
+    category: str = "general"
+    arguments: Dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize to dictionary."""
+        return {
+            "alias": self.alias,
+            "target": self.target,
+            "description": self.description,
+            "hidden": self.hidden,
+            "category": self.category,
+            "arguments": self.arguments,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "AliasDefinition":
+        """Create from dictionary."""
+        return cls(
+            alias=data["alias"],
+            target=data["target"],
+            description=data.get("description", ""),
+            hidden=data.get("hidden", True),
+            category=data.get("category", "general"),
+            arguments=data.get("arguments", {}),
+        )
+
+
+class AliasRegistry:
+    """Registry for command aliases.
+
+    Manages registration, lookup, and conflict detection
+    for command aliases.
+
+    Example:
+        >>> registry = AliasRegistry()
+        >>> registry.register("r", "run", "Short for run command")
+        >>> registry.expand("r demo") == "run demo"
+        True
+    """
+
+    # Built-in aliases (cannot be overwritten without force)
+    BUILTIN_ALIASES: Dict[str, str] = {
+        # Run aliases
+        "r": "run",
+        "exec": "run",
+        # Compare aliases
+        "cmp": "compare",
+        "diff": "compare",
+        # Backends aliases
+        "be": "backends list",
+        "ls": "backends list",
+        # Config aliases
+        "cfg": "config show",
+        # History aliases
+        "hist": "history list",
+        "h": "history",
+        # Session aliases
+        "sess": "session list",
+        "s": "session",
+        # Agent aliases
+        "a": "agent run",
+        # Quick circuit shortcuts
+        "bell": "run 'create bell state'",
+        "qft": "run 'quantum fourier transform'",
+        "ghz": "run 'create ghz state'",
+    }
+
+    def __init__(self) -> None:
+        """Initialize the registry."""
+        self._aliases: Dict[str, AliasDefinition] = {}
+        self._categories: Dict[str, List[str]] = {}
+        self._reserved: set = set()
+        self._load_builtins()
+
+    def _load_builtins(self) -> None:
+        """Load built-in aliases."""
+        builtin_categories = {
+            "run": ["r", "exec"],
+            "compare": ["cmp", "diff"],
+            "backends": ["be", "ls"],
+            "config": ["cfg"],
+            "history": ["hist", "h"],
+            "session": ["sess", "s"],
+            "agent": ["a"],
+            "quick": ["bell", "qft", "ghz"],
+        }
+
+        for alias, target in self.BUILTIN_ALIASES.items():
+            category = "general"
+            for cat, aliases in builtin_categories.items():
+                if alias in aliases:
+                    category = cat
+                    break
+
+            self._aliases[alias] = AliasDefinition(
+                alias=alias,
+                target=target,
+                description=f"Alias for '{target}'",
+                category=category,
+            )
+
+            if category not in self._categories:
+                self._categories[category] = []
+            self._categories[category].append(alias)
+
+    def register(
+        self,
+        alias: str,
+        target: str,
+        description: str = "",
+        hidden: bool = True,
+        category: str = "custom",
+        arguments: Optional[Dict[str, Any]] = None,
+        overwrite: bool = False,
+    ) -> None:
+        """Register a new alias.
+
+        Args:
+            alias: Alias name.
+            target: Target command.
+            description: Alias description.
+            hidden: Whether to hide from help.
+            category: Category for grouping.
+            arguments: Default arguments.
+            overwrite: Whether to overwrite existing.
+
+        Raises:
+            AliasConflictError: If alias conflicts and overwrite is False.
+        """
+        # Check for conflicts
+        if alias in self._reserved:
+            raise AliasConflictError(alias, alias, f"'{alias}' is a reserved command")
+
+        if alias in self._aliases and not overwrite:
+            existing = self._aliases[alias]
+            if alias in self.BUILTIN_ALIASES:
+                raise AliasConflictError(
+                    alias, existing.target,
+                    f"Cannot overwrite built-in alias '{alias}' → '{existing.target}'"
+                )
+            raise AliasConflictError(alias, existing.target)
+
+        # Register alias
+        definition = AliasDefinition(
+            alias=alias,
+            target=target,
+            description=description or f"Alias for '{target}'",
+            hidden=hidden,
+            category=category,
+            arguments=arguments or {},
+        )
+
+        self._aliases[alias] = definition
+
+        if category not in self._categories:
+            self._categories[category] = []
+        if alias not in self._categories[category]:
+            self._categories[category].append(alias)
+
+    def unregister(self, alias: str) -> bool:
+        """Unregister an alias.
+
+        Args:
+            alias: Alias to remove.
+
+        Returns:
+            True if alias was removed.
+
+        Raises:
+            ValueError: If trying to remove built-in alias.
+        """
+        if alias in self.BUILTIN_ALIASES:
+            raise ValueError(f"Cannot remove built-in alias '{alias}'")
+
+        if alias in self._aliases:
+            definition = self._aliases.pop(alias)
+            if definition.category in self._categories:
+                self._categories[definition.category].remove(alias)
+            return True
+        return False
+
+    def get(self, alias: str) -> Optional[AliasDefinition]:
+        """Get alias definition."""
+        return self._aliases.get(alias)
+
+    def expand(self, command_line: str) -> str:
+        """Expand alias in a command line.
+
+        Args:
+            command_line: Full command line to expand.
+
+        Returns:
+            Command line with alias expanded.
+
+        Example:
+            >>> expand("r demo --backend cirq")
+            "run demo --backend cirq"
+        """
+        parts = command_line.strip().split(maxsplit=1)
+        if not parts:
+            return command_line
+
+        first_word = parts[0]
+        rest = parts[1] if len(parts) > 1 else ""
+
+        if first_word in self._aliases:
+            definition = self._aliases[first_word]
+            expanded = definition.target
+
+            # Add default arguments
+            if definition.arguments:
+                for key, value in definition.arguments.items():
+                    if f"--{key}" not in rest:
+                        expanded += f" --{key} {value}"
+
+            if rest:
+                expanded += f" {rest}"
+
+            return expanded
+
+        return command_line
+
+    def is_alias(self, word: str) -> bool:
+        """Check if a word is a registered alias."""
+        return word in self._aliases
+
+    def list_aliases(
+        self,
+        category: Optional[str] = None,
+        include_hidden: bool = False,
+    ) -> List[AliasDefinition]:
+        """List registered aliases.
+
+        Args:
+            category: Filter by category.
+            include_hidden: Include hidden aliases.
+
+        Returns:
+            List of alias definitions.
+        """
+        aliases = list(self._aliases.values())
+
+        if category:
+            aliases = [a for a in aliases if a.category == category]
+
+        if not include_hidden:
+            aliases = [a for a in aliases if not a.hidden]
+
+        return sorted(aliases, key=lambda a: a.alias)
+
+    def list_categories(self) -> List[str]:
+        """Get list of alias categories."""
+        return sorted(self._categories.keys())
+
+    def get_by_category(self) -> Dict[str, List[AliasDefinition]]:
+        """Get aliases grouped by category."""
+        result: Dict[str, List[AliasDefinition]] = {}
+        for category, alias_names in self._categories.items():
+            result[category] = [
+                self._aliases[name]
+                for name in alias_names
+                if name in self._aliases
+            ]
+        return result
+
+    def add_reserved(self, *commands: str) -> None:
+        """Mark commands as reserved (cannot be used as aliases)."""
+        self._reserved.update(commands)
+
+    def check_conflicts(
+        self,
+        alias: str,
+    ) -> Optional[str]:
+        """Check if alias would conflict.
+
+        Args:
+            alias: Alias to check.
+
+        Returns:
+            Conflicting command/alias name if conflict exists, None otherwise.
+        """
+        if alias in self._reserved:
+            return alias
+        if alias in self._aliases:
+            return self._aliases[alias].target
+        return None
+
+    def format_help(self) -> str:
+        """Format alias help text."""
+        lines = ["COMMAND ALIASES:", ""]
+
+        by_category = self.get_by_category()
+        for category in sorted(by_category.keys()):
+            aliases = by_category[category]
+            if not aliases:
+                continue
+
+            lines.append(f"  {category.upper()}:")
+            for alias_def in aliases:
+                lines.append(
+                    f"    {alias_def.alias:10} → {alias_def.target}"
+                )
+            lines.append("")
+
+        return "\n".join(lines)
+
+    def load_from_config(self, config_path: Path) -> int:
+        """Load custom aliases from config file.
+
+        Args:
+            config_path: Path to YAML config file.
+
+        Returns:
+            Number of aliases loaded.
+        """
+        import yaml
+
+        if not config_path.exists():
+            return 0
+
+        with open(config_path, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+
+        aliases_data = data.get("aliases", {})
+        count = 0
+
+        for alias, value in aliases_data.items():
+            try:
+                if isinstance(value, str):
+                    self.register(alias, value, category="custom")
+                elif isinstance(value, dict):
+                    self.register(
+                        alias=alias,
+                        target=value.get("target", ""),
+                        description=value.get("description", ""),
+                        hidden=value.get("hidden", True),
+                        category=value.get("category", "custom"),
+                        arguments=value.get("arguments", {}),
+                        overwrite=value.get("overwrite", False),
+                    )
+                count += 1
+            except AliasConflictError:
+                continue
+
+        return count
+
+    def save_to_config(self, config_path: Path) -> None:
+        """Save custom aliases to config file.
+
+        Args:
+            config_path: Path to YAML config file.
+        """
+        import yaml
+
+        # Only save non-builtin aliases
+        custom_aliases = {
+            alias: defn.to_dict()
+            for alias, defn in self._aliases.items()
+            if alias not in self.BUILTIN_ALIASES
+        }
+
+        data = {}
+        if config_path.exists():
+            with open(config_path, "r", encoding="utf-8") as f:
+                data = yaml.safe_load(f) or {}
+
+        data["aliases"] = custom_aliases
+
+        with open(config_path, "w", encoding="utf-8") as f:
+            yaml.dump(data, f, default_flow_style=False)
+
+
+# Global alias registry
+alias_registry = AliasRegistry()
+
+# Mark existing commands as reserved
+alias_registry.add_reserved(
+    "run", "compare", "backends", "config", "history",
+    "session", "benchmark", "agent", "ui", "shell",
+    "version", "init", "interactive", "completion",
+    "status", "export", "doctor", "help",
+)
 
 app = typer.Typer(
     name="proxima",
@@ -315,6 +734,202 @@ def quick_ghz(
     run_task(f"create ghz state with {qubits} qubits", backend=backend, shots=shots)
 
 
+# ==============================================================================
+# Alias Management Commands
+# ==============================================================================
+
+
+@app.command("aliases")
+def list_aliases_cmd(
+    category: Optional[str] = typer.Option(
+        None, "--category", "-c", help="Filter by category"
+    ),
+    all_aliases: bool = typer.Option(
+        False, "--all", "-a", help="Show all aliases including hidden"
+    ),
+    json_output: bool = typer.Option(
+        False, "--json", help="Output as JSON"
+    ),
+):
+    """List all registered command aliases.
+
+    \b
+    Shows all command shortcuts and their target commands,
+    organized by category.
+
+    \b
+    CATEGORIES:
+      run      - Run command shortcuts (r, exec)
+      compare  - Compare command shortcuts (cmp, diff)
+      backends - Backend command shortcuts (be, ls)
+      config   - Configuration shortcuts (cfg)
+      history  - History shortcuts (hist, h)
+      session  - Session shortcuts (sess, s)
+      quick    - Quick circuit commands (bell, qft, ghz)
+      custom   - User-defined aliases
+
+    \b
+    EXAMPLES:
+      proxima aliases
+      proxima aliases --category run
+      proxima aliases --all
+      proxima aliases --json
+    """
+    import json
+
+    if json_output:
+        aliases = alias_registry.list_aliases(category=category, include_hidden=all_aliases)
+        data = {
+            "count": len(aliases),
+            "aliases": [a.to_dict() for a in aliases],
+        }
+        typer.echo(json.dumps(data, indent=2))
+        return
+
+    typer.echo("\n" + "=" * 60)
+    typer.echo("COMMAND ALIASES")
+    typer.echo("=" * 60)
+
+    by_category = alias_registry.get_by_category()
+
+    if category:
+        if category not in by_category:
+            typer.echo(f"\nUnknown category: {category}", err=True)
+            typer.echo(f"Available: {', '.join(alias_registry.list_categories())}")
+            raise typer.Exit(1)
+        by_category = {category: by_category[category]}
+
+    for cat in sorted(by_category.keys()):
+        aliases = by_category[cat]
+        if not aliases:
+            continue
+
+        visible = [a for a in aliases if not a.hidden or all_aliases]
+        if not visible:
+            continue
+
+        typer.echo(f"\n{cat.upper()}:")
+        for alias_def in visible:
+            marker = " (hidden)" if alias_def.hidden else ""
+            typer.echo(f"  {alias_def.alias:12} → {alias_def.target}{marker}")
+
+    typer.echo()
+
+
+@app.command("alias")
+def manage_alias(
+    action: str = typer.Argument(
+        ..., help="Action: add, remove, show"
+    ),
+    name: Optional[str] = typer.Argument(
+        None, help="Alias name"
+    ),
+    target: Optional[str] = typer.Argument(
+        None, help="Target command (for add action)"
+    ),
+    description: str = typer.Option(
+        "", "--desc", "-d", help="Alias description"
+    ),
+    category: str = typer.Option(
+        "custom", "--category", "-c", help="Alias category"
+    ),
+):
+    """Manage command aliases.
+
+    \b
+    ACTIONS:
+      add     - Add a new alias
+      remove  - Remove a custom alias
+      show    - Show details of an alias
+
+    \b
+    EXAMPLES:
+      proxima alias add q quick           # Add alias 'q' for 'quick'
+      proxima alias add rb "run bell" -d "Run bell state"
+      proxima alias remove q              # Remove alias 'q'
+      proxima alias show r                # Show details of alias 'r'
+    """
+    action = action.lower()
+
+    if action == "add":
+        if not name or not target:
+            typer.echo("Usage: proxima alias add <name> <target>", err=True)
+            raise typer.Exit(1)
+
+        try:
+            alias_registry.register(
+                alias=name,
+                target=target,
+                description=description,
+                category=category,
+            )
+            typer.echo(f"✓ Added alias: {name} → {target}")
+        except AliasConflictError as e:
+            typer.echo(f"✗ Error: {e}", err=True)
+            raise typer.Exit(1)
+
+    elif action == "remove":
+        if not name:
+            typer.echo("Usage: proxima alias remove <name>", err=True)
+            raise typer.Exit(1)
+
+        try:
+            if alias_registry.unregister(name):
+                typer.echo(f"✓ Removed alias: {name}")
+            else:
+                typer.echo(f"Alias not found: {name}", err=True)
+                raise typer.Exit(1)
+        except ValueError as e:
+            typer.echo(f"✗ Error: {e}", err=True)
+            raise typer.Exit(1)
+
+    elif action == "show":
+        if not name:
+            typer.echo("Usage: proxima alias show <name>", err=True)
+            raise typer.Exit(1)
+
+        definition = alias_registry.get(name)
+        if not definition:
+            typer.echo(f"Alias not found: {name}", err=True)
+            raise typer.Exit(1)
+
+        typer.echo(f"\nAlias: {definition.alias}")
+        typer.echo(f"Target: {definition.target}")
+        typer.echo(f"Description: {definition.description}")
+        typer.echo(f"Category: {definition.category}")
+        typer.echo(f"Hidden: {definition.hidden}")
+        if definition.arguments:
+            typer.echo(f"Default Args: {definition.arguments}")
+        typer.echo()
+
+    else:
+        typer.echo(f"Unknown action: {action}", err=True)
+        typer.echo("Available actions: add, remove, show")
+        raise typer.Exit(1)
+
+
+@app.command("expand")
+def expand_alias_cmd(
+    command_line: str = typer.Argument(..., help="Command line to expand"),
+):
+    """Expand aliases in a command line.
+
+    \b
+    Shows how aliases would be expanded without executing.
+
+    \b
+    EXAMPLES:
+      proxima expand "r demo --backend cirq"
+      proxima expand "cmp bell --all"
+    """
+    expanded = alias_registry.expand(command_line)
+
+    if expanded == command_line:
+        typer.echo(f"No expansion: {command_line}")
+    else:
+        typer.echo(f"Original: {command_line}")
+        typer.echo(f"Expanded: {expanded}")
+
 
 # ==============================================================================
 # Additional Commands and Aliases for 100% Coverage
@@ -557,6 +1172,151 @@ def alias_diff(
     from proxima.cli.commands.compare import compare
     ctx.invoke(compare, task=task)
 
+
+# ==============================================================================
+# Rich Help Command with Examples
+# ==============================================================================
+
+
+@app.command("help")
+def show_help(
+    command: Optional[str] = typer.Argument(
+        None, help="Command to show help for"
+    ),
+    all_examples: bool = typer.Option(
+        False, "--all", "-a", help="Show all examples"
+    ),
+    tags: Optional[str] = typer.Option(
+        None, "--tags", "-t", help="Filter examples by tags (comma-separated)"
+    ),
+    search: Optional[str] = typer.Option(
+        None, "--search", "-s", help="Search examples"
+    ),
+):
+    """Show detailed help with examples.
+
+    \b
+    Shows rich help content with practical examples for commands.
+    More detailed than the standard --help flag.
+
+    \b
+    FEATURES:
+    - Detailed command descriptions
+    - Multiple practical examples per command
+    - Related commands and documentation links
+    - Example search functionality
+    - Tag-based filtering
+
+    \b
+    EXAMPLES:
+      proxima help                  # List all commands with help
+      proxima help run              # Show help for 'run' command
+      proxima help run --all        # Show all examples for 'run'
+      proxima help --search bell    # Search examples for 'bell'
+      proxima help run --tags basic # Show only basic examples
+    """
+    from proxima.cli.commands import help_registry
+
+    # Search mode
+    if search:
+        typer.echo(f"\nSearching examples for: {search}\n")
+        results = help_registry.search_examples(search)
+
+        if not results:
+            typer.echo("No matching examples found.")
+            return
+
+        typer.echo(f"Found {len(results)} matching example(s):\n")
+        for cmd, example in results:
+            typer.echo(f"[{cmd}]")
+            typer.echo(example.format())
+            typer.echo()
+        return
+
+    # List all commands
+    if not command:
+        typer.echo("\n" + "=" * 60)
+        typer.echo("PROXIMA COMMAND HELP")
+        typer.echo("=" * 60)
+        typer.echo("\nAvailable commands with detailed help:\n")
+
+        for cmd in help_registry.list_commands():
+            help_content = help_registry.get(cmd)
+            if help_content:
+                typer.echo(f"  {cmd:15} {help_content.summary}")
+
+        typer.echo("\n" + "-" * 60)
+        typer.echo("Use 'proxima help <command>' for detailed help with examples.")
+        typer.echo("Use 'proxima help --search <query>' to search examples.")
+        typer.echo()
+        return
+
+    # Show help for specific command
+    tag_list = tags.split(",") if tags else None
+
+    if tag_list:
+        # Filter by tags
+        examples = help_registry.get_examples(command, tags=tag_list)
+        if not examples:
+            typer.echo(f"No examples with tags [{tags}] for '{command}'")
+            return
+
+        typer.echo(f"\nExamples for '{command}' with tags [{tags}]:\n")
+        for example in examples:
+            typer.echo(example.format())
+            typer.echo()
+        return
+
+    # Full help
+    help_text = help_registry.format_command_help(command, include_all=all_examples)
+    typer.echo("\n" + help_text)
+
+
+@app.command("examples")
+def show_examples(
+    command: Optional[str] = typer.Argument(
+        None, help="Command to show examples for"
+    ),
+    count: int = typer.Option(
+        5, "--count", "-n", help="Number of examples"
+    ),
+):
+    """Show usage examples for commands.
+
+    \b
+    Quick way to see practical examples for any command.
+
+    \b
+    EXAMPLES:
+      proxima examples           # Show random examples
+      proxima examples run       # Show examples for 'run'
+      proxima examples run -n 10 # Show 10 examples for 'run'
+    """
+    from proxima.cli.commands import help_registry
+
+    if command:
+        examples = help_registry.get_examples(command, max_examples=count)
+        if not examples:
+            typer.echo(f"No examples available for '{command}'")
+            return
+
+        typer.echo(f"\nExamples for '{command}':\n")
+        for example in examples:
+            typer.echo(example.format())
+            typer.echo()
+    else:
+        # Show examples from multiple commands
+        typer.echo("\nExample commands:\n")
+        shown = 0
+        for cmd in help_registry.list_commands():
+            examples = help_registry.get_examples(cmd, max_examples=1)
+            for example in examples:
+                typer.echo(f"[{cmd}]")
+                typer.echo(example.format())
+                typer.echo()
+                shown += 1
+                if shown >= count:
+                    return
 
 
 if __name__ == "__main__":

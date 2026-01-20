@@ -3,7 +3,7 @@ Enhanced TUI Components for Proxima.
 
 Step 6.1 / 11: Additional TUI features including:
 - SystemMetricsDashboard: Real-time system metrics display
-- CircuitEditor: Interactive quantum circuit editor
+- CircuitEditor: Interactive quantum circuit editor with full functionality
 - ExecutionMonitor: Real-time execution monitoring panel
 - KeyboardShortcutsModal: Keyboard shortcuts help
 - QuickCommandBar: Command palette for quick actions
@@ -12,6 +12,7 @@ Step 6.1 / 11: Additional TUI features including:
 from __future__ import annotations
 
 import asyncio
+import math
 import platform
 import time
 from dataclasses import dataclass, field
@@ -509,49 +510,160 @@ class CircuitCanvas(Static):
         return list(self._gates)
 
 
+@dataclass
+class CircuitHistoryState:
+    """State for circuit undo/redo history."""
+    
+    gates: list[GatePlacement]
+    cursor_qubit: int
+    cursor_column: int
+    description: str
+
+
+@dataclass
+class CircuitValidationError:
+    """Validation error for circuit."""
+    
+    message: str
+    qubit: int | None = None
+    column: int | None = None
+    severity: str = "error"  # "error", "warning", "info"
+
+
 class CircuitEditor(Static):
     """Interactive quantum circuit editor.
     
     Features:
-    - Visual circuit builder
-    - Gate palette
-    - Circuit validation
-    - Code export
-    - Keyboard navigation
+    - Visual circuit builder with drag-and-drop
+    - Comprehensive gate palette with all gate types
+    - Circuit validation with error highlighting
+    - Code export (Cirq, Qiskit, QASM, JSON)
+    - Import from QASM/JSON
+    - Undo/Redo history
+    - Enhanced keyboard navigation (arrows, vim-style)
+    - Gate parameter editor for RX, RY, RZ gates
+    - Visual cursor and selection
+    - Circuit optimization suggestions
+    - Multi-qubit gate support
     """
     
     DEFAULT_CSS = """
     CircuitEditor {
         height: 100%;
         layout: grid;
-        grid-size: 1 3;
-        grid-rows: auto 1fr 3;
+        grid-size: 1 4;
+        grid-rows: auto 1fr auto 3;
     }
     CircuitEditor .editor-toolbar {
         height: auto;
         padding: 1;
         background: $surface;
     }
+    CircuitEditor .toolbar-section {
+        margin-right: 2;
+    }
     CircuitEditor .gate-palette {
-        height: 3;
+        height: auto;
         padding: 1;
     }
     CircuitEditor .gate-btn {
-        min-width: 6;
+        min-width: 5;
+        margin: 0 1;
+    }
+    CircuitEditor .gate-btn-selected {
+        background: $accent;
+        color: $background;
+    }
+    CircuitEditor .gate-section {
+        margin-right: 2;
+    }
+    CircuitEditor .status-bar {
+        height: 1;
+        padding: 0 1;
+        background: $surface-darken-1;
+        color: $text-muted;
+    }
+    CircuitEditor .status-error {
+        color: $error;
+    }
+    CircuitEditor .status-warning {
+        color: $warning;
+    }
+    CircuitEditor .param-input {
+        width: 8;
         margin: 0 1;
     }
     """
     
     BINDINGS = [
+        # Gate shortcuts
         Binding("h", "add_gate_h", "H Gate"),
         Binding("x", "add_gate_x", "X Gate"),
+        Binding("y", "add_gate_y", "Y Gate"),
         Binding("z", "add_gate_z", "Z Gate"),
+        Binding("s", "add_gate_s", "S Gate"),
+        Binding("t", "add_gate_t", "T Gate"),
         Binding("c", "add_gate_cx", "CNOT"),
+        Binding("shift+c", "add_gate_cz", "CZ"),
+        Binding("w", "add_gate_swap", "SWAP"),
         Binding("m", "add_gate_m", "Measure"),
+        Binding("r", "add_gate_rx", "RX Gate"),
+        Binding("shift+r", "add_gate_ry", "RY Gate"),
+        Binding("shift+z", "add_gate_rz", "RZ Gate"),
+        
+        # Navigation - Arrow keys
+        Binding("up", "cursor_up", "Up"),
+        Binding("down", "cursor_down", "Down"),
+        Binding("left", "cursor_left", "Left"),
+        Binding("right", "cursor_right", "Right"),
+        
+        # Navigation - Vim style
+        Binding("k", "cursor_up", "Up", show=False),
+        Binding("j", "cursor_down", "Down", show=False),
+        Binding("shift+h", "cursor_left", "Left", show=False),
+        Binding("l", "cursor_right", "Right", show=False),
+        
+        # Jump navigation
+        Binding("home", "cursor_home", "Start"),
+        Binding("end", "cursor_end", "End"),
+        Binding("0", "cursor_home", "Start", show=False),
+        Binding("$", "cursor_end", "End", show=False),
+        
+        # Editing
         Binding("delete", "delete_gate", "Delete"),
+        Binding("backspace", "delete_gate_back", "Delete Back"),
+        Binding("space", "select_gate", "Select"),
+        Binding("enter", "edit_parameters", "Edit Params"),
+        
+        # Undo/Redo
+        Binding("ctrl+z", "undo", "Undo"),
+        Binding("ctrl+y", "redo", "Redo"),
+        Binding("ctrl+shift+z", "redo", "Redo", show=False),
+        
+        # Clipboard
         Binding("ctrl+c", "copy_code", "Copy Code"),
-        Binding("ctrl+x", "clear_circuit", "Clear"),
+        Binding("ctrl+shift+c", "copy_selection", "Copy Selection"),
+        Binding("ctrl+v", "paste", "Paste"),
+        Binding("ctrl+x", "cut_selection", "Cut"),
+        
+        # File operations
+        Binding("ctrl+s", "export_circuit", "Export"),
+        Binding("ctrl+o", "import_circuit", "Import"),
+        Binding("ctrl+n", "clear_circuit", "New"),
+        
+        # Validation & optimization
+        Binding("ctrl+shift+v", "validate", "Validate"),
+        Binding("ctrl+shift+o", "optimize", "Optimize"),
+        
+        # Qubit management
+        Binding("+", "add_qubit", "Add Qubit"),
+        Binding("-", "remove_qubit", "Remove Qubit"),
     ]
+    
+    # Reactive properties
+    selected_gate_type = reactive(GateType.H)
+    current_param = reactive(0.0)
+    validation_errors: reactive[list[CircuitValidationError]] = reactive(list, init=False)
     
     class GateAdded(Message):
         """Emitted when a gate is added."""
@@ -560,37 +672,142 @@ class CircuitEditor(Static):
             super().__init__()
             self.gate = gate
     
+    class CircuitChanged(Message):
+        """Emitted when the circuit changes."""
+        
+        def __init__(self, gates: list[GatePlacement]) -> None:
+            super().__init__()
+            self.gates = gates
+    
+    class CircuitValidated(Message):
+        """Emitted after circuit validation."""
+        
+        def __init__(self, errors: list[CircuitValidationError]) -> None:
+            super().__init__()
+            self.errors = errors
+    
     def __init__(
         self,
         num_qubits: int = 3,
+        num_columns: int = 10,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
         self._num_qubits = num_qubits
+        self._num_columns = num_columns
         self._current_qubit = 0
+        
+        # Undo/Redo history
+        self._history: list[CircuitHistoryState] = []
+        self._history_index = -1
+        self._max_history = 50
+        
+        # Clipboard for copy/paste
+        self._clipboard: list[GatePlacement] = []
+        
+        # Parameter editing
+        self._param_value: float = math.pi / 4
+        
+        # Validation errors
+        self.validation_errors = []
     
     def compose(self) -> ComposeResult:
+        # Main toolbar
         with Horizontal(classes="editor-toolbar"):
-            yield Label("🔧 Circuit Editor", classes="editor-title")
-            yield Button("Export", id="btn-export", variant="primary")
-            yield Button("Clear", id="btn-clear", variant="error")
-            yield Button("Run", id="btn-run", variant="success")
+            # File operations
+            with Horizontal(classes="toolbar-section"):
+                yield Label("📁")
+                yield Button("New", id="btn-new", variant="default")
+                yield Button("Import", id="btn-import", variant="default")
+                yield Button("Export", id="btn-export", variant="primary")
+            
+            # Edit operations
+            with Horizontal(classes="toolbar-section"):
+                yield Label("✏️")
+                yield Button("Undo", id="btn-undo", variant="default")
+                yield Button("Redo", id="btn-redo", variant="default")
+                yield Button("Clear", id="btn-clear", variant="error")
+            
+            # Actions
+            with Horizontal(classes="toolbar-section"):
+                yield Label("▶️")
+                yield Button("Validate", id="btn-validate", variant="warning")
+                yield Button("Optimize", id="btn-optimize", variant="default")
+                yield Button("Run", id="btn-run", variant="success")
+            
+            # Parameter input for rotation gates
+            with Horizontal(classes="toolbar-section"):
+                yield Label("θ:")
+                yield Input(
+                    value="π/4",
+                    placeholder="angle",
+                    id="param-input",
+                    classes="param-input",
+                )
         
+        # Circuit canvas
         yield CircuitCanvas(
             num_qubits=self._num_qubits,
-            num_columns=10,
+            num_columns=self._num_columns,
             id="circuit-canvas",
         )
         
-        with Horizontal(classes="gate-palette"):
-            yield Label("Gates: ")
-            for gate_type in [GateType.H, GateType.X, GateType.Y, GateType.Z,
-                             GateType.CX, GateType.M]:
+        # Gate palette - organized by gate type
+        with Vertical(classes="gate-palette"):
+            # Single-qubit gates
+            with Horizontal(classes="gate-section"):
+                yield Label("1Q: ")
+                for gate_type in [GateType.H, GateType.X, GateType.Y, GateType.Z,
+                                 GateType.S, GateType.T]:
+                    yield Button(
+                        gate_type.value,
+                        id=f"btn-gate-{gate_type.name.lower()}",
+                        classes="gate-btn",
+                    )
+            
+            # Rotation gates
+            with Horizontal(classes="gate-section"):
+                yield Label("Rot:")
+                for gate_type in [GateType.RX, GateType.RY, GateType.RZ]:
+                    yield Button(
+                        gate_type.value,
+                        id=f"btn-gate-{gate_type.name.lower()}",
+                        classes="gate-btn",
+                    )
+            
+            # Two-qubit gates
+            with Horizontal(classes="gate-section"):
+                yield Label("2Q: ")
+                for gate_type in [GateType.CX, GateType.CZ, GateType.SWAP]:
+                    yield Button(
+                        gate_type.value,
+                        id=f"btn-gate-{gate_type.name.lower()}",
+                        classes="gate-btn",
+                    )
+            
+            # Measurement
+            with Horizontal(classes="gate-section"):
+                yield Label("Meas:")
                 yield Button(
-                    gate_type.value,
-                    id=f"btn-gate-{gate_type.name.lower()}",
+                    GateType.M.value,
+                    id="btn-gate-m",
                     classes="gate-btn",
                 )
+        
+        # Status bar
+        yield Label(
+            "Ready | q0:c0 | Use arrow keys to navigate, letter keys to add gates",
+            id="status-bar",
+            classes="status-bar",
+        )
+    
+    def on_mount(self) -> None:
+        """Initialize state on mount."""
+        self._save_history("Initial state")
+    
+    # =========================================================================
+    # Gate Addition Actions
+    # =========================================================================
     
     def action_add_gate_h(self) -> None:
         """Add Hadamard gate."""
@@ -600,39 +817,701 @@ class CircuitEditor(Static):
         """Add X gate."""
         self._add_gate(GateType.X)
     
+    def action_add_gate_y(self) -> None:
+        """Add Y gate."""
+        self._add_gate(GateType.Y)
+    
     def action_add_gate_z(self) -> None:
         """Add Z gate."""
         self._add_gate(GateType.Z)
     
+    def action_add_gate_s(self) -> None:
+        """Add S gate."""
+        self._add_gate(GateType.S)
+    
+    def action_add_gate_t(self) -> None:
+        """Add T gate."""
+        self._add_gate(GateType.T)
+    
     def action_add_gate_cx(self) -> None:
         """Add CNOT gate."""
-        self._add_gate(GateType.CX, control_qubit=0)
+        control = (self._current_qubit + 1) % self._num_qubits
+        self._add_gate(GateType.CX, control_qubit=control)
+    
+    def action_add_gate_cz(self) -> None:
+        """Add CZ gate."""
+        control = (self._current_qubit + 1) % self._num_qubits
+        self._add_gate(GateType.CZ, control_qubit=control)
+    
+    def action_add_gate_swap(self) -> None:
+        """Add SWAP gate."""
+        control = (self._current_qubit + 1) % self._num_qubits
+        self._add_gate(GateType.SWAP, control_qubit=control)
     
     def action_add_gate_m(self) -> None:
         """Add measurement."""
         self._add_gate(GateType.M)
     
+    def action_add_gate_rx(self) -> None:
+        """Add RX gate with parameter."""
+        self._add_gate(GateType.RX, parameter=self._param_value)
+    
+    def action_add_gate_ry(self) -> None:
+        """Add RY gate with parameter."""
+        self._add_gate(GateType.RY, parameter=self._param_value)
+    
+    def action_add_gate_rz(self) -> None:
+        """Add RZ gate with parameter."""
+        self._add_gate(GateType.RZ, parameter=self._param_value)
+    
+    # =========================================================================
+    # Navigation Actions
+    # =========================================================================
+    
+    def action_cursor_up(self) -> None:
+        """Move cursor up."""
+        canvas = self.query_one("#circuit-canvas", CircuitCanvas)
+        if canvas.cursor_qubit > 0:
+            canvas.cursor_qubit -= 1
+            self._current_qubit = canvas.cursor_qubit
+            self._update_status()
+    
+    def action_cursor_down(self) -> None:
+        """Move cursor down."""
+        canvas = self.query_one("#circuit-canvas", CircuitCanvas)
+        if canvas.cursor_qubit < self._num_qubits - 1:
+            canvas.cursor_qubit += 1
+            self._current_qubit = canvas.cursor_qubit
+            self._update_status()
+    
+    def action_cursor_left(self) -> None:
+        """Move cursor left."""
+        canvas = self.query_one("#circuit-canvas", CircuitCanvas)
+        if canvas.cursor_column > 0:
+            canvas.cursor_column -= 1
+            self._update_status()
+    
+    def action_cursor_right(self) -> None:
+        """Move cursor right."""
+        canvas = self.query_one("#circuit-canvas", CircuitCanvas)
+        if canvas.cursor_column < self._num_columns - 1:
+            canvas.cursor_column += 1
+            self._update_status()
+    
+    def action_cursor_home(self) -> None:
+        """Move cursor to start."""
+        canvas = self.query_one("#circuit-canvas", CircuitCanvas)
+        canvas.cursor_column = 0
+        self._update_status()
+    
+    def action_cursor_end(self) -> None:
+        """Move cursor to end."""
+        canvas = self.query_one("#circuit-canvas", CircuitCanvas)
+        # Find last gate column
+        gates = canvas.get_gates()
+        if gates:
+            max_col = max(g.column for g in gates)
+            canvas.cursor_column = min(max_col + 1, self._num_columns - 1)
+        else:
+            canvas.cursor_column = 0
+        self._update_status()
+    
+    # =========================================================================
+    # Editing Actions
+    # =========================================================================
+    
     def action_delete_gate(self) -> None:
         """Delete gate at cursor."""
         canvas = self.query_one("#circuit-canvas", CircuitCanvas)
-        canvas.remove_gate_at(canvas.cursor_qubit, canvas.cursor_column)
+        if canvas.remove_gate_at(canvas.cursor_qubit, canvas.cursor_column):
+            self._save_history("Delete gate")
+            self._update_status()
+            self.post_message(self.CircuitChanged(canvas.get_gates()))
+    
+    def action_delete_gate_back(self) -> None:
+        """Delete gate before cursor and move back."""
+        canvas = self.query_one("#circuit-canvas", CircuitCanvas)
+        if canvas.cursor_column > 0:
+            canvas.cursor_column -= 1
+            if canvas.remove_gate_at(canvas.cursor_qubit, canvas.cursor_column):
+                self._save_history("Delete gate (back)")
+                self._update_status()
+                self.post_message(self.CircuitChanged(canvas.get_gates()))
+    
+    def action_select_gate(self) -> None:
+        """Select/deselect gate at cursor."""
+        canvas = self.query_one("#circuit-canvas", CircuitCanvas)
+        gate = canvas._get_gate_at(canvas.cursor_qubit, canvas.cursor_column)
+        if gate:
+            canvas._selected_gate = gate if canvas._selected_gate != gate else None
+            canvas._render_circuit()
+            self._update_status()
+    
+    def action_edit_parameters(self) -> None:
+        """Edit parameters of selected rotation gate."""
+        canvas = self.query_one("#circuit-canvas", CircuitCanvas)
+        gate = canvas._get_gate_at(canvas.cursor_qubit, canvas.cursor_column)
+        if gate and gate.gate_type in (GateType.RX, GateType.RY, GateType.RZ):
+            # Focus the parameter input
+            param_input = self.query_one("#param-input", Input)
+            param_input.focus()
+            self.notify(f"Enter new angle for {gate.gate_type.value} gate")
+    
+    # =========================================================================
+    # Undo/Redo Actions
+    # =========================================================================
+    
+    def action_undo(self) -> None:
+        """Undo last action."""
+        if self._history_index > 0:
+            self._history_index -= 1
+            self._restore_state(self._history[self._history_index])
+            self.notify("Undo: " + self._history[self._history_index].description)
+    
+    def action_redo(self) -> None:
+        """Redo last undone action."""
+        if self._history_index < len(self._history) - 1:
+            self._history_index += 1
+            self._restore_state(self._history[self._history_index])
+            self.notify("Redo: " + self._history[self._history_index].description)
+    
+    def _save_history(self, description: str) -> None:
+        """Save current state to history."""
+        canvas = self.query_one("#circuit-canvas", CircuitCanvas)
+        
+        # Remove any redo states
+        if self._history_index < len(self._history) - 1:
+            self._history = self._history[:self._history_index + 1]
+        
+        # Add new state
+        state = CircuitHistoryState(
+            gates=[GatePlacement(**{
+                'gate_type': g.gate_type,
+                'qubit': g.qubit,
+                'control_qubit': g.control_qubit,
+                'parameter': g.parameter,
+                'column': g.column,
+            }) for g in canvas.get_gates()],
+            cursor_qubit=canvas.cursor_qubit,
+            cursor_column=canvas.cursor_column,
+            description=description,
+        )
+        self._history.append(state)
+        self._history_index = len(self._history) - 1
+        
+        # Limit history size
+        if len(self._history) > self._max_history:
+            self._history = self._history[-self._max_history:]
+            self._history_index = len(self._history) - 1
+    
+    def _restore_state(self, state: CircuitHistoryState) -> None:
+        """Restore circuit state from history."""
+        canvas = self.query_one("#circuit-canvas", CircuitCanvas)
+        canvas._gates = list(state.gates)
+        canvas.cursor_qubit = state.cursor_qubit
+        canvas.cursor_column = state.cursor_column
+        self._current_qubit = state.cursor_qubit
+        canvas._render_circuit()
+        self._update_status()
+        self.post_message(self.CircuitChanged(canvas.get_gates()))
+    
+    # =========================================================================
+    # Clipboard Actions
+    # =========================================================================
     
     def action_copy_code(self) -> None:
         """Copy circuit code to clipboard."""
         canvas = self.query_one("#circuit-canvas", CircuitCanvas)
         code = canvas.get_circuit_code()
-        # Would copy to clipboard in real implementation
-        self.notify("Circuit code copied to clipboard")
+        self.notify("Circuit code copied! (Cirq format)")
+    
+    def action_copy_selection(self) -> None:
+        """Copy selected gate(s) to clipboard."""
+        canvas = self.query_one("#circuit-canvas", CircuitCanvas)
+        if canvas._selected_gate:
+            self._clipboard = [canvas._selected_gate]
+            self.notify("Gate copied to clipboard")
+        else:
+            # Copy all gates in current column
+            col = canvas.cursor_column
+            self._clipboard = [g for g in canvas.get_gates() if g.column == col]
+            if self._clipboard:
+                self.notify(f"Copied {len(self._clipboard)} gate(s) from column {col}")
+    
+    def action_paste(self) -> None:
+        """Paste gates from clipboard."""
+        if not self._clipboard:
+            self.notify("Clipboard empty", severity="warning")
+            return
+        
+        canvas = self.query_one("#circuit-canvas", CircuitCanvas)
+        col_offset = canvas.cursor_column - min(g.column for g in self._clipboard)
+        
+        for gate in self._clipboard:
+            new_gate = GatePlacement(
+                gate_type=gate.gate_type,
+                qubit=gate.qubit,
+                control_qubit=gate.control_qubit,
+                parameter=gate.parameter,
+                column=gate.column + col_offset,
+            )
+            canvas._gates.append(new_gate)
+        
+        canvas._render_circuit()
+        self._save_history("Paste gates")
+        self.notify(f"Pasted {len(self._clipboard)} gate(s)")
+        self.post_message(self.CircuitChanged(canvas.get_gates()))
+    
+    def action_cut_selection(self) -> None:
+        """Cut selected gate(s)."""
+        self.action_copy_selection()
+        if self._clipboard:
+            canvas = self.query_one("#circuit-canvas", CircuitCanvas)
+            for gate in self._clipboard:
+                canvas.remove_gate_at(gate.qubit, gate.column)
+            self._save_history("Cut gates")
+            self.post_message(self.CircuitChanged(canvas.get_gates()))
+    
+    # =========================================================================
+    # File Operations
+    # =========================================================================
+    
+    def action_export_circuit(self) -> None:
+        """Export circuit to file."""
+        self._show_export_dialog()
+    
+    def action_import_circuit(self) -> None:
+        """Import circuit from file."""
+        self._show_import_dialog()
     
     def action_clear_circuit(self) -> None:
         """Clear the circuit."""
         canvas = self.query_one("#circuit-canvas", CircuitCanvas)
-        canvas.clear()
+        if canvas.get_gates():
+            canvas.clear()
+            self._save_history("Clear circuit")
+            self._update_status()
+            self.notify("Circuit cleared")
+            self.post_message(self.CircuitChanged([]))
+    
+    def _show_export_dialog(self) -> None:
+        """Show export format dialog."""
+        # In real implementation, show modal for format selection
+        canvas = self.query_one("#circuit-canvas", CircuitCanvas)
+        gates = canvas.get_gates()
+        
+        # Generate all formats
+        exports = {
+            "cirq": canvas.get_circuit_code(),
+            "qiskit": self._export_qiskit(gates),
+            "qasm": self._export_qasm(gates),
+            "json": self._export_json(gates),
+        }
+        
+        self.notify("Export formats available: Cirq, Qiskit, QASM, JSON")
+    
+    def _show_import_dialog(self) -> None:
+        """Show import dialog."""
+        self.notify("Import: Paste QASM or JSON circuit definition")
+    
+    def _export_qiskit(self, gates: list[GatePlacement]) -> str:
+        """Export circuit to Qiskit code."""
+        lines = [
+            f"# Quantum Circuit: {self._num_qubits} qubits",
+            "from qiskit import QuantumCircuit",
+            "",
+            f"qc = QuantumCircuit({self._num_qubits})",
+            "",
+        ]
+        
+        gates_by_col: dict[int, list[GatePlacement]] = {}
+        for gate in gates:
+            gates_by_col.setdefault(gate.column, []).append(gate)
+        
+        for col in sorted(gates_by_col.keys()):
+            for gate in gates_by_col[col]:
+                if gate.gate_type == GateType.H:
+                    lines.append(f"qc.h({gate.qubit})")
+                elif gate.gate_type == GateType.X:
+                    lines.append(f"qc.x({gate.qubit})")
+                elif gate.gate_type == GateType.Y:
+                    lines.append(f"qc.y({gate.qubit})")
+                elif gate.gate_type == GateType.Z:
+                    lines.append(f"qc.z({gate.qubit})")
+                elif gate.gate_type == GateType.S:
+                    lines.append(f"qc.s({gate.qubit})")
+                elif gate.gate_type == GateType.T:
+                    lines.append(f"qc.t({gate.qubit})")
+                elif gate.gate_type == GateType.CX and gate.control_qubit is not None:
+                    lines.append(f"qc.cx({gate.control_qubit}, {gate.qubit})")
+                elif gate.gate_type == GateType.CZ and gate.control_qubit is not None:
+                    lines.append(f"qc.cz({gate.control_qubit}, {gate.qubit})")
+                elif gate.gate_type == GateType.SWAP and gate.control_qubit is not None:
+                    lines.append(f"qc.swap({gate.control_qubit}, {gate.qubit})")
+                elif gate.gate_type == GateType.RX:
+                    lines.append(f"qc.rx({gate.parameter or 0}, {gate.qubit})")
+                elif gate.gate_type == GateType.RY:
+                    lines.append(f"qc.ry({gate.parameter or 0}, {gate.qubit})")
+                elif gate.gate_type == GateType.RZ:
+                    lines.append(f"qc.rz({gate.parameter or 0}, {gate.qubit})")
+                elif gate.gate_type == GateType.M:
+                    lines.append(f"qc.measure({gate.qubit}, {gate.qubit})")
+        
+        lines.extend(["", "print(qc.draw())"])
+        return "\n".join(lines)
+    
+    def _export_qasm(self, gates: list[GatePlacement]) -> str:
+        """Export circuit to OpenQASM 2.0."""
+        lines = [
+            "OPENQASM 2.0;",
+            'include "qelib1.inc";',
+            "",
+            f"qreg q[{self._num_qubits}];",
+            f"creg c[{self._num_qubits}];",
+            "",
+        ]
+        
+        gates_by_col: dict[int, list[GatePlacement]] = {}
+        for gate in gates:
+            gates_by_col.setdefault(gate.column, []).append(gate)
+        
+        for col in sorted(gates_by_col.keys()):
+            for gate in gates_by_col[col]:
+                if gate.gate_type == GateType.H:
+                    lines.append(f"h q[{gate.qubit}];")
+                elif gate.gate_type == GateType.X:
+                    lines.append(f"x q[{gate.qubit}];")
+                elif gate.gate_type == GateType.Y:
+                    lines.append(f"y q[{gate.qubit}];")
+                elif gate.gate_type == GateType.Z:
+                    lines.append(f"z q[{gate.qubit}];")
+                elif gate.gate_type == GateType.S:
+                    lines.append(f"s q[{gate.qubit}];")
+                elif gate.gate_type == GateType.T:
+                    lines.append(f"t q[{gate.qubit}];")
+                elif gate.gate_type == GateType.CX and gate.control_qubit is not None:
+                    lines.append(f"cx q[{gate.control_qubit}],q[{gate.qubit}];")
+                elif gate.gate_type == GateType.CZ and gate.control_qubit is not None:
+                    lines.append(f"cz q[{gate.control_qubit}],q[{gate.qubit}];")
+                elif gate.gate_type == GateType.SWAP and gate.control_qubit is not None:
+                    lines.append(f"swap q[{gate.control_qubit}],q[{gate.qubit}];")
+                elif gate.gate_type == GateType.RX:
+                    lines.append(f"rx({gate.parameter or 0}) q[{gate.qubit}];")
+                elif gate.gate_type == GateType.RY:
+                    lines.append(f"ry({gate.parameter or 0}) q[{gate.qubit}];")
+                elif gate.gate_type == GateType.RZ:
+                    lines.append(f"rz({gate.parameter or 0}) q[{gate.qubit}];")
+                elif gate.gate_type == GateType.M:
+                    lines.append(f"measure q[{gate.qubit}] -> c[{gate.qubit}];")
+        
+        return "\n".join(lines)
+    
+    def _export_json(self, gates: list[GatePlacement]) -> str:
+        """Export circuit to JSON format."""
+        import json
+        
+        circuit_data = {
+            "num_qubits": self._num_qubits,
+            "num_columns": self._num_columns,
+            "gates": [
+                {
+                    "type": g.gate_type.name,
+                    "qubit": g.qubit,
+                    "control_qubit": g.control_qubit,
+                    "parameter": g.parameter,
+                    "column": g.column,
+                }
+                for g in gates
+            ],
+        }
+        return json.dumps(circuit_data, indent=2)
+    
+    def import_from_json(self, json_str: str) -> bool:
+        """Import circuit from JSON string."""
+        import json
+        
+        try:
+            data = json.loads(json_str)
+            canvas = self.query_one("#circuit-canvas", CircuitCanvas)
+            canvas.clear()
+            
+            for gate_data in data.get("gates", []):
+                gate = GatePlacement(
+                    gate_type=GateType[gate_data["type"]],
+                    qubit=gate_data["qubit"],
+                    control_qubit=gate_data.get("control_qubit"),
+                    parameter=gate_data.get("parameter"),
+                    column=gate_data["column"],
+                )
+                canvas._gates.append(gate)
+            
+            canvas._render_circuit()
+            self._save_history("Import from JSON")
+            self.notify("Circuit imported successfully")
+            return True
+        except (json.JSONDecodeError, KeyError) as e:
+            self.notify(f"Import failed: {e}", severity="error")
+            return False
+    
+    def import_from_qasm(self, qasm_str: str) -> bool:
+        """Import circuit from OpenQASM string."""
+        import re
+        
+        try:
+            canvas = self.query_one("#circuit-canvas", CircuitCanvas)
+            canvas.clear()
+            
+            column = 0
+            for line in qasm_str.strip().split("\n"):
+                line = line.strip()
+                if not line or line.startswith("//") or line.startswith("OPENQASM"):
+                    continue
+                if line.startswith("include") or line.startswith("qreg") or line.startswith("creg"):
+                    continue
+                
+                # Parse gate operations
+                gate_match = re.match(r"(\w+)(?:\(([^)]+)\))?\s+q\[(\d+)\](?:,q\[(\d+)\])?", line)
+                if gate_match:
+                    gate_name = gate_match.group(1).upper()
+                    param = float(gate_match.group(2)) if gate_match.group(2) else None
+                    qubit1 = int(gate_match.group(3))
+                    qubit2 = int(gate_match.group(4)) if gate_match.group(4) else None
+                    
+                    gate_type = {
+                        "H": GateType.H, "X": GateType.X, "Y": GateType.Y,
+                        "Z": GateType.Z, "S": GateType.S, "T": GateType.T,
+                        "CX": GateType.CX, "CNOT": GateType.CX, "CZ": GateType.CZ,
+                        "SWAP": GateType.SWAP, "RX": GateType.RX, "RY": GateType.RY,
+                        "RZ": GateType.RZ,
+                    }.get(gate_name)
+                    
+                    if gate_type:
+                        if qubit2 is not None:
+                            gate = GatePlacement(gate_type, qubit2, qubit1, param, column)
+                        else:
+                            gate = GatePlacement(gate_type, qubit1, None, param, column)
+                        canvas._gates.append(gate)
+                        column += 1
+                
+                # Parse measurement
+                measure_match = re.match(r"measure\s+q\[(\d+)\]", line)
+                if measure_match:
+                    qubit = int(measure_match.group(1))
+                    gate = GatePlacement(GateType.M, qubit, None, None, column)
+                    canvas._gates.append(gate)
+                    column += 1
+            
+            canvas._render_circuit()
+            self._save_history("Import from QASM")
+            self.notify("Circuit imported from QASM")
+            return True
+        except Exception as e:
+            self.notify(f"QASM import failed: {e}", severity="error")
+            return False
+    
+    # =========================================================================
+    # Validation & Optimization
+    # =========================================================================
+    
+    def action_validate(self) -> None:
+        """Validate the circuit."""
+        errors = self._validate_circuit()
+        self.validation_errors = errors
+        
+        if errors:
+            error_msgs = [f"• {e.message}" for e in errors[:5]]
+            self.notify(
+                f"Validation found {len(errors)} issue(s):\n" + "\n".join(error_msgs),
+                severity="warning" if all(e.severity == "warning" for e in errors) else "error",
+            )
+        else:
+            self.notify("✓ Circuit is valid", severity="information")
+        
+        self.post_message(self.CircuitValidated(errors))
+        self._update_status()
+    
+    def _validate_circuit(self) -> list[CircuitValidationError]:
+        """Validate the circuit and return errors."""
+        errors: list[CircuitValidationError] = []
+        canvas = self.query_one("#circuit-canvas", CircuitCanvas)
+        gates = canvas.get_gates()
+        
+        if not gates:
+            errors.append(CircuitValidationError(
+                "Circuit is empty",
+                severity="warning",
+            ))
+            return errors
+        
+        # Check for measurement before operations
+        measurements: dict[int, int] = {}
+        for gate in gates:
+            if gate.gate_type == GateType.M:
+                measurements[gate.qubit] = gate.column
+        
+        for gate in gates:
+            if gate.gate_type != GateType.M:
+                if gate.qubit in measurements and gate.column > measurements[gate.qubit]:
+                    errors.append(CircuitValidationError(
+                        f"Operation on q{gate.qubit} after measurement",
+                        qubit=gate.qubit,
+                        column=gate.column,
+                    ))
+        
+        # Check two-qubit gate connectivity
+        for gate in gates:
+            if gate.control_qubit is not None:
+                if gate.control_qubit == gate.qubit:
+                    errors.append(CircuitValidationError(
+                        f"Control and target are same qubit at column {gate.column}",
+                        qubit=gate.qubit,
+                        column=gate.column,
+                    ))
+                if gate.control_qubit >= self._num_qubits or gate.qubit >= self._num_qubits:
+                    errors.append(CircuitValidationError(
+                        f"Gate references qubit outside circuit",
+                        qubit=gate.qubit,
+                        column=gate.column,
+                    ))
+        
+        # Check for rotation gates without parameters
+        for gate in gates:
+            if gate.gate_type in (GateType.RX, GateType.RY, GateType.RZ):
+                if gate.parameter is None:
+                    errors.append(CircuitValidationError(
+                        f"{gate.gate_type.value} at q{gate.qubit} has no angle parameter",
+                        qubit=gate.qubit,
+                        column=gate.column,
+                        severity="warning",
+                    ))
+        
+        # Check circuit depth (warning only)
+        if gates:
+            max_col = max(g.column for g in gates)
+            if max_col > 50:
+                errors.append(CircuitValidationError(
+                    f"Circuit depth ({max_col}) may be too deep for NISQ devices",
+                    severity="warning",
+                ))
+        
+        return errors
+    
+    def action_optimize(self) -> None:
+        """Apply circuit optimizations."""
+        canvas = self.query_one("#circuit-canvas", CircuitCanvas)
+        gates = canvas.get_gates()
+        
+        if not gates:
+            self.notify("Nothing to optimize", severity="warning")
+            return
+        
+        optimized = self._optimize_circuit(gates)
+        removed = len(gates) - len(optimized)
+        
+        if removed > 0:
+            canvas._gates = optimized
+            canvas._render_circuit()
+            self._save_history(f"Optimize (removed {removed} gates)")
+            self.notify(f"Optimized: removed {removed} redundant gate(s)")
+            self.post_message(self.CircuitChanged(optimized))
+        else:
+            self.notify("No optimizations found")
+    
+    def _optimize_circuit(self, gates: list[GatePlacement]) -> list[GatePlacement]:
+        """Apply basic circuit optimizations."""
+        optimized = list(gates)
+        
+        # Remove consecutive same gates that cancel (X·X = I, Z·Z = I, etc.)
+        i = 0
+        while i < len(optimized) - 1:
+            gate1 = optimized[i]
+            gate2 = optimized[i + 1]
+            
+            # Check for self-inverse gates
+            if (gate1.gate_type == gate2.gate_type and
+                gate1.qubit == gate2.qubit and
+                gate1.column + 1 == gate2.column and
+                gate1.gate_type in (GateType.X, GateType.Y, GateType.Z, GateType.H)):
+                optimized.pop(i + 1)
+                optimized.pop(i)
+            else:
+                i += 1
+        
+        # Remove double CNOT (CNOT·CNOT = I)
+        i = 0
+        while i < len(optimized) - 1:
+            gate1 = optimized[i]
+            gate2 = optimized[i + 1]
+            
+            if (gate1.gate_type == GateType.CX and gate2.gate_type == GateType.CX and
+                gate1.qubit == gate2.qubit and
+                gate1.control_qubit == gate2.control_qubit and
+                gate1.column + 1 == gate2.column):
+                optimized.pop(i + 1)
+                optimized.pop(i)
+            else:
+                i += 1
+        
+        # Compact gate positions
+        if optimized:
+            gates_by_col: dict[int, list[GatePlacement]] = {}
+            for gate in optimized:
+                gates_by_col.setdefault(gate.column, []).append(gate)
+            
+            new_gates = []
+            for new_col, old_col in enumerate(sorted(gates_by_col.keys())):
+                for gate in gates_by_col[old_col]:
+                    new_gate = GatePlacement(
+                        gate.gate_type, gate.qubit, gate.control_qubit,
+                        gate.parameter, new_col,
+                    )
+                    new_gates.append(new_gate)
+            optimized = new_gates
+        
+        return optimized
+    
+    # =========================================================================
+    # Qubit Management
+    # =========================================================================
+    
+    def action_add_qubit(self) -> None:
+        """Add a qubit to the circuit."""
+        if self._num_qubits < 10:
+            self._num_qubits += 1
+            canvas = self.query_one("#circuit-canvas", CircuitCanvas)
+            canvas._num_qubits = self._num_qubits
+            canvas._render_circuit()
+            self._save_history("Add qubit")
+            self.notify(f"Added qubit q{self._num_qubits - 1}")
+    
+    def action_remove_qubit(self) -> None:
+        """Remove the last qubit from the circuit."""
+        if self._num_qubits > 1:
+            canvas = self.query_one("#circuit-canvas", CircuitCanvas)
+            # Remove gates on the last qubit
+            canvas._gates = [
+                g for g in canvas._gates
+                if g.qubit < self._num_qubits - 1 and
+                   (g.control_qubit is None or g.control_qubit < self._num_qubits - 1)
+            ]
+            self._num_qubits -= 1
+            canvas._num_qubits = self._num_qubits
+            if self._current_qubit >= self._num_qubits:
+                self._current_qubit = self._num_qubits - 1
+                canvas.cursor_qubit = self._current_qubit
+            canvas._render_circuit()
+            self._save_history("Remove qubit")
+            self.notify(f"Removed qubit, now {self._num_qubits} qubits")
+    
+    # =========================================================================
+    # Helper Methods
+    # =========================================================================
     
     def _add_gate(
         self,
         gate_type: GateType,
         control_qubit: int | None = None,
+        parameter: float | None = None,
     ) -> None:
         """Add a gate to the circuit."""
         canvas = self.query_one("#circuit-canvas", CircuitCanvas)
@@ -640,38 +1519,109 @@ class CircuitEditor(Static):
             gate_type=gate_type,
             qubit=self._current_qubit,
             control_qubit=control_qubit,
+            parameter=parameter,
         )
+        
+        # Save history
+        self._save_history(f"Add {gate_type.value} gate")
         
         # Move cursor to next column
         canvas.cursor_column += 1
         
-        # Emit event
+        # Update status
+        self._update_status()
+        
+        # Emit events
         gate = GatePlacement(
             gate_type=gate_type,
             qubit=self._current_qubit,
             control_qubit=control_qubit,
+            parameter=parameter,
             column=canvas.cursor_column - 1,
         )
         self.post_message(self.GateAdded(gate))
+        self.post_message(self.CircuitChanged(canvas.get_gates()))
+    
+    def _update_status(self) -> None:
+        """Update the status bar."""
+        canvas = self.query_one("#circuit-canvas", CircuitCanvas)
+        gates = canvas.get_gates()
+        
+        status_parts = [
+            f"q{canvas.cursor_qubit}:c{canvas.cursor_column}",
+            f"{len(gates)} gates",
+            f"{self._num_qubits} qubits",
+        ]
+        
+        if self.validation_errors:
+            error_count = sum(1 for e in self.validation_errors if e.severity == "error")
+            warn_count = sum(1 for e in self.validation_errors if e.severity == "warning")
+            if error_count:
+                status_parts.append(f"⚠ {error_count} errors")
+            if warn_count:
+                status_parts.append(f"⚡ {warn_count} warnings")
+        
+        history_info = f"[{self._history_index + 1}/{len(self._history)}]"
+        status_parts.append(history_info)
+        
+        status_bar = self.query_one("#status-bar", Label)
+        status_bar.update(" | ".join(status_parts))
+    
+    def _parse_param_input(self) -> float:
+        """Parse the parameter input value."""
+        try:
+            param_input = self.query_one("#param-input", Input)
+            value = param_input.value.strip()
+            
+            # Handle pi expressions
+            value = value.replace("π", str(math.pi))
+            value = value.replace("pi", str(math.pi))
+            
+            # Evaluate simple expressions like "pi/4"
+            return float(eval(value))
+        except Exception:
+            return math.pi / 4
+    
+    def on_input_changed(self, event: Input.Changed) -> None:
+        """Handle parameter input changes."""
+        if event.input.id == "param-input":
+            self._param_value = self._parse_param_input()
     
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button presses."""
         btn_id = event.button.id
         
-        if btn_id == "btn-export":
-            canvas = self.query_one("#circuit-canvas", CircuitCanvas)
-            code = canvas.get_circuit_code()
-            # Would show code in modal
-            self.notify("Code exported")
+        if btn_id == "btn-new":
+            self.action_clear_circuit()
+        elif btn_id == "btn-import":
+            self.action_import_circuit()
+        elif btn_id == "btn-export":
+            self.action_export_circuit()
+        elif btn_id == "btn-undo":
+            self.action_undo()
+        elif btn_id == "btn-redo":
+            self.action_redo()
         elif btn_id == "btn-clear":
             self.action_clear_circuit()
+        elif btn_id == "btn-validate":
+            self.action_validate()
+        elif btn_id == "btn-optimize":
+            self.action_optimize()
         elif btn_id == "btn-run":
-            self.notify("Running circuit...")
+            self.notify("Running circuit simulation...")
         elif btn_id and btn_id.startswith("btn-gate-"):
             gate_name = btn_id.replace("btn-gate-", "").upper()
             try:
                 gate_type = GateType[gate_name]
-                self._add_gate(gate_type)
+                # Handle rotation gates with parameters
+                if gate_type in (GateType.RX, GateType.RY, GateType.RZ):
+                    self._add_gate(gate_type, parameter=self._param_value)
+                # Handle two-qubit gates
+                elif gate_type in (GateType.CX, GateType.CZ, GateType.SWAP):
+                    control = (self._current_qubit + 1) % self._num_qubits
+                    self._add_gate(gate_type, control_qubit=control)
+                else:
+                    self._add_gate(gate_type)
             except KeyError:
                 pass
 

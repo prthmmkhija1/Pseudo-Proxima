@@ -14,17 +14,28 @@ from __future__ import annotations
 
 import json
 import os
+import random
+import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Generator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
-from typing import Any, Literal, Protocol
+from typing import Any, Literal, Protocol, TypeVar
 
 import httpx
 
 from proxima.config.settings import Settings, config_service
 
-ProviderName = Literal["openai", "anthropic", "ollama", "lmstudio", "llama_cpp", "none"]
+# Type variable for generic retry handler
+T = TypeVar("T")
+
+# Extended provider support
+ProviderName = Literal[
+    "openai", "anthropic", "ollama", "lmstudio", "llama_cpp",
+    "together", "groq", "mistral", "azure_openai", "cohere", "none"
+]
 
 # Default ports for local LLM servers
 DEFAULT_PORTS: dict[str, int] = {
@@ -40,6 +51,22 @@ DEFAULT_MODELS: dict[str, str] = {
     "ollama": "llama2",
     "lmstudio": "local-model",
     "llama_cpp": "local-model",
+    # Extended providers
+    "together": "mistralai/Mixtral-8x7B-Instruct-v0.1",
+    "groq": "mixtral-8x7b-32768",
+    "mistral": "mistral-large-latest",
+    "azure_openai": "gpt-4",
+    "cohere": "command-r-plus",
+}
+
+# API base URLs for cloud providers
+API_BASES: dict[str, str] = {
+    "openai": "https://api.openai.com/v1",
+    "anthropic": "https://api.anthropic.com/v1",
+    "together": "https://api.together.xyz/v1",
+    "groq": "https://api.groq.com/openai/v1",
+    "mistral": "https://api.mistral.ai/v1",
+    "cohere": "https://api.cohere.ai/v1",
 }
 
 
@@ -1149,30 +1176,1593 @@ class LlamaCppProvider(_BaseProvider):
         self._endpoint = endpoint
 
 
+# =============================================================================
+# EXTENDED PROVIDER INTEGRATIONS
+# =============================================================================
+
+
+class TogetherProvider(_BaseProvider):
+    """Together AI provider for open-source models at scale.
+    
+    Supports models like:
+    - Mixtral-8x7B-Instruct
+    - Llama-2-70B-chat
+    - CodeLlama-34B
+    - Falcon-180B
+    """
+
+    name: ProviderName = "together"
+    is_local: bool = False
+    requires_api_key: bool = True
+
+    def __init__(self, timeout: float = 60.0):
+        super().__init__(DEFAULT_MODELS["together"], timeout)
+        self._api_base = API_BASES["together"]
+
+    def send(self, request: LLMRequest, api_key: str | None) -> LLMResponse:
+        """Send a request to Together AI API."""
+        start = time.perf_counter()
+
+        if not api_key:
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=request.model or self.default_model,
+                latency_ms=0,
+                error="API key required for Together AI",
+            )
+
+        model = request.model or self.default_model
+        messages = []
+
+        if request.system_prompt:
+            messages.append({"role": "system", "content": request.system_prompt})
+        messages.append({"role": "user", "content": request.prompt})
+
+        payload: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "temperature": request.temperature,
+        }
+
+        if request.max_tokens:
+            payload["max_tokens"] = request.max_tokens
+
+        try:
+            client = self._get_client()
+            response = client.post(
+                f"{self._api_base}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            elapsed = (time.perf_counter() - start) * 1000
+            choice = data["choices"][0]
+            text = choice["message"].get("content", "")
+            tokens = data.get("usage", {}).get("total_tokens", 0)
+
+            return LLMResponse(
+                text=text,
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                tokens_used=tokens,
+                raw=data,
+            )
+        except httpx.HTTPStatusError as e:
+            elapsed = (time.perf_counter() - start) * 1000
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                error=f"HTTP {e.response.status_code}: {e.response.text[:200]}",
+            )
+        except Exception as e:
+            elapsed = (time.perf_counter() - start) * 1000
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                error=str(e),
+            )
+
+    def health_check(self, endpoint: str | None = None) -> bool:
+        """Check if Together AI API is reachable."""
+        try:
+            client = self._get_client()
+            response = client.get(
+                f"{self._api_base}/models",
+                headers={"Authorization": "Bearer test"},
+                timeout=5.0,
+            )
+            return response.status_code in (200, 401)
+        except Exception:
+            return False
+
+
+class GroqProvider(_BaseProvider):
+    """Groq provider for ultra-fast LLM inference.
+    
+    Known for extremely low latency inference using custom LPU hardware.
+    Supports:
+    - Mixtral-8x7B
+    - Llama-2-70B
+    - Gemma-7B
+    """
+
+    name: ProviderName = "groq"
+    is_local: bool = False
+    requires_api_key: bool = True
+
+    def __init__(self, timeout: float = 30.0):  # Lower timeout for fast inference
+        super().__init__(DEFAULT_MODELS["groq"], timeout)
+        self._api_base = API_BASES["groq"]
+
+    def send(self, request: LLMRequest, api_key: str | None) -> LLMResponse:
+        """Send a request to Groq API."""
+        start = time.perf_counter()
+
+        if not api_key:
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=request.model or self.default_model,
+                latency_ms=0,
+                error="API key required for Groq",
+            )
+
+        model = request.model or self.default_model
+        messages = []
+
+        if request.system_prompt:
+            messages.append({"role": "system", "content": request.system_prompt})
+        messages.append({"role": "user", "content": request.prompt})
+
+        payload: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "temperature": request.temperature,
+        }
+
+        if request.max_tokens:
+            payload["max_tokens"] = request.max_tokens
+
+        # Add tool support (Groq uses OpenAI-compatible format)
+        if request.tools:
+            payload["tools"] = request.tools
+            if request.tool_choice:
+                payload["tool_choice"] = request.tool_choice
+
+        try:
+            client = self._get_client()
+            response = client.post(
+                f"{self._api_base}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            elapsed = (time.perf_counter() - start) * 1000
+            choice = data["choices"][0]
+            message = choice["message"]
+            text = message.get("content", "")
+            tokens = data.get("usage", {}).get("total_tokens", 0)
+            finish_reason = choice.get("finish_reason")
+
+            # Parse tool calls
+            tool_calls: list[FunctionCall] = []
+            if "tool_calls" in message:
+                for tc in message["tool_calls"]:
+                    if tc.get("type") == "function":
+                        fn = tc["function"]
+                        try:
+                            args = json.loads(fn.get("arguments", "{}"))
+                        except json.JSONDecodeError:
+                            args = {"raw": fn.get("arguments", "")}
+                        tool_calls.append(FunctionCall(
+                            name=fn.get("name", ""),
+                            arguments=args,
+                            id=tc.get("id"),
+                        ))
+
+            return LLMResponse(
+                text=text,
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                tokens_used=tokens,
+                raw=data,
+                tool_calls=tool_calls,
+                finish_reason=finish_reason,
+            )
+        except httpx.HTTPStatusError as e:
+            elapsed = (time.perf_counter() - start) * 1000
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                error=f"HTTP {e.response.status_code}: {e.response.text[:200]}",
+            )
+        except Exception as e:
+            elapsed = (time.perf_counter() - start) * 1000
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                error=str(e),
+            )
+
+    def health_check(self, endpoint: str | None = None) -> bool:
+        """Check if Groq API is reachable."""
+        try:
+            client = self._get_client()
+            response = client.get(
+                f"{self._api_base}/models",
+                headers={"Authorization": "Bearer test"},
+                timeout=5.0,
+            )
+            return response.status_code in (200, 401)
+        except Exception:
+            return False
+
+    def stream_send(
+        self,
+        request: LLMRequest,
+        api_key: str | None,
+        callback: Callable[[str], None] | None = None,
+    ) -> LLMResponse:
+        """Send a streaming request to Groq API."""
+        start = time.perf_counter()
+
+        if not api_key:
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=request.model or self.default_model,
+                latency_ms=0,
+                error="API key required for Groq",
+            )
+
+        model = request.model or self.default_model
+        messages = []
+
+        if request.system_prompt:
+            messages.append({"role": "system", "content": request.system_prompt})
+        messages.append({"role": "user", "content": request.prompt})
+
+        payload: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "temperature": request.temperature,
+            "stream": True,
+        }
+
+        if request.max_tokens:
+            payload["max_tokens"] = request.max_tokens
+
+        try:
+            chunks: list[str] = []
+            with httpx.Client(timeout=self.timeout) as client:
+                with client.stream(
+                    "POST",
+                    f"{self._api_base}/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json=payload,
+                ) as response:
+                    response.raise_for_status()
+                    for line in response.iter_lines():
+                        if line.startswith("data: "):
+                            data_str = line[6:]
+                            if data_str.strip() == "[DONE]":
+                                break
+                            try:
+                                data = json.loads(data_str)
+                                delta = data.get("choices", [{}])[0].get("delta", {})
+                                content = delta.get("content", "")
+                                if content:
+                                    chunks.append(content)
+                                    if callback:
+                                        callback(content)
+                            except json.JSONDecodeError:
+                                continue
+
+            elapsed = (time.perf_counter() - start) * 1000
+            full_text = "".join(chunks)
+
+            return LLMResponse(
+                text=full_text,
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                is_streaming=True,
+                stream_chunks=chunks,
+            )
+        except Exception as e:
+            elapsed = (time.perf_counter() - start) * 1000
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                error=str(e),
+            )
+
+
+class MistralProvider(_BaseProvider):
+    """Mistral AI provider for state-of-the-art open-weight models.
+    
+    Supports:
+    - mistral-large-latest
+    - mistral-medium-latest
+    - mistral-small-latest
+    - codestral-latest
+    """
+
+    name: ProviderName = "mistral"
+    is_local: bool = False
+    requires_api_key: bool = True
+
+    def __init__(self, timeout: float = 60.0):
+        super().__init__(DEFAULT_MODELS["mistral"], timeout)
+        self._api_base = API_BASES["mistral"]
+
+    def send(self, request: LLMRequest, api_key: str | None) -> LLMResponse:
+        """Send a request to Mistral AI API."""
+        start = time.perf_counter()
+
+        if not api_key:
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=request.model or self.default_model,
+                latency_ms=0,
+                error="API key required for Mistral AI",
+            )
+
+        model = request.model or self.default_model
+        messages = []
+
+        if request.system_prompt:
+            messages.append({"role": "system", "content": request.system_prompt})
+        messages.append({"role": "user", "content": request.prompt})
+
+        payload: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "temperature": request.temperature,
+        }
+
+        if request.max_tokens:
+            payload["max_tokens"] = request.max_tokens
+
+        # Mistral supports tool calling
+        if request.tools:
+            payload["tools"] = request.tools
+            if request.tool_choice:
+                payload["tool_choice"] = request.tool_choice
+
+        try:
+            client = self._get_client()
+            response = client.post(
+                f"{self._api_base}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            elapsed = (time.perf_counter() - start) * 1000
+            choice = data["choices"][0]
+            message = choice["message"]
+            text = message.get("content", "")
+            tokens = data.get("usage", {}).get("total_tokens", 0)
+            finish_reason = choice.get("finish_reason")
+
+            # Parse tool calls
+            tool_calls: list[FunctionCall] = []
+            if "tool_calls" in message:
+                for tc in message["tool_calls"]:
+                    if tc.get("type") == "function":
+                        fn = tc["function"]
+                        try:
+                            args = json.loads(fn.get("arguments", "{}"))
+                        except json.JSONDecodeError:
+                            args = {"raw": fn.get("arguments", "")}
+                        tool_calls.append(FunctionCall(
+                            name=fn.get("name", ""),
+                            arguments=args,
+                            id=tc.get("id"),
+                        ))
+
+            return LLMResponse(
+                text=text,
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                tokens_used=tokens,
+                raw=data,
+                tool_calls=tool_calls,
+                finish_reason=finish_reason,
+            )
+        except httpx.HTTPStatusError as e:
+            elapsed = (time.perf_counter() - start) * 1000
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                error=f"HTTP {e.response.status_code}: {e.response.text[:200]}",
+            )
+        except Exception as e:
+            elapsed = (time.perf_counter() - start) * 1000
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                error=str(e),
+            )
+
+    def health_check(self, endpoint: str | None = None) -> bool:
+        """Check if Mistral AI API is reachable."""
+        try:
+            client = self._get_client()
+            response = client.get(
+                f"{self._api_base}/models",
+                headers={"Authorization": "Bearer test"},
+                timeout=5.0,
+            )
+            return response.status_code in (200, 401)
+        except Exception:
+            return False
+
+
+class AzureOpenAIProvider(_BaseProvider):
+    """Azure OpenAI provider for enterprise deployments.
+    
+    Requires:
+    - Azure OpenAI endpoint
+    - Deployment name
+    - API key or Azure AD authentication
+    """
+
+    name: ProviderName = "azure_openai"
+    is_local: bool = False
+    requires_api_key: bool = True
+
+    def __init__(
+        self,
+        endpoint: str | None = None,
+        deployment: str | None = None,
+        api_version: str = "2024-02-15-preview",
+        timeout: float = 60.0,
+    ):
+        super().__init__(DEFAULT_MODELS["azure_openai"], timeout)
+        self._endpoint = endpoint or os.getenv("AZURE_OPENAI_ENDPOINT", "")
+        self._deployment = deployment or os.getenv("AZURE_OPENAI_DEPLOYMENT", "gpt-4")
+        self._api_version = api_version
+
+    def send(self, request: LLMRequest, api_key: str | None) -> LLMResponse:
+        """Send a request to Azure OpenAI API."""
+        start = time.perf_counter()
+
+        if not api_key:
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=request.model or self._deployment,
+                latency_ms=0,
+                error="API key required for Azure OpenAI",
+            )
+
+        if not self._endpoint:
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=request.model or self._deployment,
+                latency_ms=0,
+                error="Azure OpenAI endpoint not configured",
+            )
+
+        deployment = request.model or self._deployment
+        messages = []
+
+        if request.system_prompt:
+            messages.append({"role": "system", "content": request.system_prompt})
+        messages.append({"role": "user", "content": request.prompt})
+
+        payload: dict[str, Any] = {
+            "messages": messages,
+            "temperature": request.temperature,
+        }
+
+        if request.max_tokens:
+            payload["max_tokens"] = request.max_tokens
+
+        # Azure OpenAI supports tool calling
+        if request.tools:
+            payload["tools"] = request.tools
+            if request.tool_choice:
+                payload["tool_choice"] = request.tool_choice
+
+        url = (
+            f"{self._endpoint.rstrip('/')}/openai/deployments/{deployment}"
+            f"/chat/completions?api-version={self._api_version}"
+        )
+
+        try:
+            client = self._get_client()
+            response = client.post(
+                url,
+                headers={
+                    "api-key": api_key,
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            elapsed = (time.perf_counter() - start) * 1000
+            choice = data["choices"][0]
+            message = choice["message"]
+            text = message.get("content", "")
+            tokens = data.get("usage", {}).get("total_tokens", 0)
+            finish_reason = choice.get("finish_reason")
+
+            # Parse tool calls
+            tool_calls: list[FunctionCall] = []
+            if "tool_calls" in message:
+                for tc in message["tool_calls"]:
+                    if tc.get("type") == "function":
+                        fn = tc["function"]
+                        try:
+                            args = json.loads(fn.get("arguments", "{}"))
+                        except json.JSONDecodeError:
+                            args = {"raw": fn.get("arguments", "")}
+                        tool_calls.append(FunctionCall(
+                            name=fn.get("name", ""),
+                            arguments=args,
+                            id=tc.get("id"),
+                        ))
+
+            return LLMResponse(
+                text=text,
+                provider=self.name,
+                model=deployment,
+                latency_ms=elapsed,
+                tokens_used=tokens,
+                raw=data,
+                tool_calls=tool_calls,
+                finish_reason=finish_reason,
+            )
+        except httpx.HTTPStatusError as e:
+            elapsed = (time.perf_counter() - start) * 1000
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=deployment,
+                latency_ms=elapsed,
+                error=f"HTTP {e.response.status_code}: {e.response.text[:200]}",
+            )
+        except Exception as e:
+            elapsed = (time.perf_counter() - start) * 1000
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=deployment,
+                latency_ms=elapsed,
+                error=str(e),
+            )
+
+    def health_check(self, endpoint: str | None = None) -> bool:
+        """Check if Azure OpenAI is reachable."""
+        check_endpoint = endpoint or self._endpoint
+        if not check_endpoint:
+            return False
+        try:
+            client = self._get_client()
+            # Azure uses a different health check endpoint
+            response = client.get(
+                f"{check_endpoint.rstrip('/')}/openai/deployments?api-version={self._api_version}",
+                headers={"api-key": "test"},
+                timeout=5.0,
+            )
+            return response.status_code in (200, 401, 403)
+        except Exception:
+            return False
+
+    def set_endpoint(self, endpoint: str) -> None:
+        """Set the Azure OpenAI endpoint."""
+        self._endpoint = endpoint
+
+    def set_deployment(self, deployment: str) -> None:
+        """Set the Azure OpenAI deployment name."""
+        self._deployment = deployment
+
+
+class CohereProvider(_BaseProvider):
+    """Cohere provider for enterprise NLP and RAG applications.
+    
+    Supports:
+    - command-r-plus (most capable)
+    - command-r (balanced)
+    - command-light (fast)
+    
+    Features:
+    - Native RAG support
+    - Multi-language support
+    - Tool/Function calling
+    """
+
+    name: ProviderName = "cohere"
+    is_local: bool = False
+    requires_api_key: bool = True
+
+    def __init__(self, timeout: float = 60.0):
+        super().__init__(DEFAULT_MODELS["cohere"], timeout)
+        self._api_base = API_BASES["cohere"]
+
+    def send(self, request: LLMRequest, api_key: str | None) -> LLMResponse:
+        """Send a request to Cohere API."""
+        start = time.perf_counter()
+
+        if not api_key:
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=request.model or self.default_model,
+                latency_ms=0,
+                error="API key required for Cohere",
+            )
+
+        model = request.model or self.default_model
+
+        # Cohere uses a different message format
+        chat_history = []
+        if request.system_prompt:
+            # Cohere uses preamble for system prompt
+            preamble = request.system_prompt
+        else:
+            preamble = None
+
+        payload: dict[str, Any] = {
+            "model": model,
+            "message": request.prompt,
+            "temperature": request.temperature,
+        }
+
+        if preamble:
+            payload["preamble"] = preamble
+
+        if request.max_tokens:
+            payload["max_tokens"] = request.max_tokens
+
+        # Cohere tool support
+        if request.tools:
+            # Convert OpenAI tool format to Cohere format
+            cohere_tools = []
+            for tool in request.tools:
+                if tool.get("type") == "function":
+                    fn = tool["function"]
+                    cohere_tools.append({
+                        "name": fn.get("name", ""),
+                        "description": fn.get("description", ""),
+                        "parameter_definitions": fn.get("parameters", {}).get("properties", {}),
+                    })
+            if cohere_tools:
+                payload["tools"] = cohere_tools
+
+        try:
+            client = self._get_client()
+            response = client.post(
+                f"{self._api_base}/chat",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            elapsed = (time.perf_counter() - start) * 1000
+            text = data.get("text", "")
+            
+            # Cohere uses different token counting
+            tokens = (
+                data.get("meta", {}).get("billed_units", {}).get("input_tokens", 0) +
+                data.get("meta", {}).get("billed_units", {}).get("output_tokens", 0)
+            )
+            finish_reason = data.get("finish_reason", "COMPLETE")
+
+            # Parse tool calls from Cohere format
+            tool_calls: list[FunctionCall] = []
+            if "tool_calls" in data:
+                for tc in data["tool_calls"]:
+                    tool_calls.append(FunctionCall(
+                        name=tc.get("name", ""),
+                        arguments=tc.get("parameters", {}),
+                        id=tc.get("id"),
+                    ))
+
+            return LLMResponse(
+                text=text,
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                tokens_used=tokens,
+                raw=data,
+                tool_calls=tool_calls,
+                finish_reason=finish_reason,
+            )
+        except httpx.HTTPStatusError as e:
+            elapsed = (time.perf_counter() - start) * 1000
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                error=f"HTTP {e.response.status_code}: {e.response.text[:200]}",
+            )
+        except Exception as e:
+            elapsed = (time.perf_counter() - start) * 1000
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                error=str(e),
+            )
+
+    def health_check(self, endpoint: str | None = None) -> bool:
+        """Check if Cohere API is reachable."""
+        try:
+            client = self._get_client()
+            # Cohere uses a different endpoint structure
+            response = client.get(
+                f"{self._api_base}/models",
+                headers={"Authorization": "Bearer test"},
+                timeout=5.0,
+            )
+            return response.status_code in (200, 401)
+        except Exception:
+            return False
+
+    def stream_send(
+        self,
+        request: LLMRequest,
+        api_key: str | None,
+        callback: Callable[[str], None] | None = None,
+    ) -> LLMResponse:
+        """Send a streaming request to Cohere API."""
+        start = time.perf_counter()
+
+        if not api_key:
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=request.model or self.default_model,
+                latency_ms=0,
+                error="API key required for Cohere",
+            )
+
+        model = request.model or self.default_model
+
+        payload: dict[str, Any] = {
+            "model": model,
+            "message": request.prompt,
+            "temperature": request.temperature,
+            "stream": True,
+        }
+
+        if request.system_prompt:
+            payload["preamble"] = request.system_prompt
+
+        if request.max_tokens:
+            payload["max_tokens"] = request.max_tokens
+
+        try:
+            chunks: list[str] = []
+            with httpx.Client(timeout=self.timeout) as client:
+                with client.stream(
+                    "POST",
+                    f"{self._api_base}/chat",
+                    headers={
+                        "Authorization": f"Bearer {api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json=payload,
+                ) as response:
+                    response.raise_for_status()
+                    for line in response.iter_lines():
+                        if line:
+                            try:
+                                data = json.loads(line)
+                                if data.get("event_type") == "text-generation":
+                                    content = data.get("text", "")
+                                    if content:
+                                        chunks.append(content)
+                                        if callback:
+                                            callback(content)
+                            except json.JSONDecodeError:
+                                continue
+
+            elapsed = (time.perf_counter() - start) * 1000
+            full_text = "".join(chunks)
+
+            return LLMResponse(
+                text=full_text,
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                is_streaming=True,
+                stream_chunks=chunks,
+            )
+        except Exception as e:
+            elapsed = (time.perf_counter() - start) * 1000
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                error=str(e),
+            )
+
+
+# ==============================================================================
+# ADDITIONAL PROVIDERS (2% Gap Coverage)
+# ==============================================================================
+
+
+class PerplexityProvider(_BaseProvider):
+    """Perplexity AI API provider with online search capabilities."""
+
+    name: ProviderName = "perplexity"  # type: ignore
+    is_local: bool = False
+    requires_api_key: bool = True
+
+    def __init__(self, timeout: float = 60.0):
+        super().__init__("sonar-medium-online", timeout)
+        self._api_base = "https://api.perplexity.ai"
+
+    def send(self, request: LLMRequest, api_key: str | None) -> LLMResponse:
+        """Send a request to Perplexity API."""
+        start = time.perf_counter()
+
+        if not api_key:
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=request.model or self.default_model,
+                latency_ms=0,
+                error="API key required for Perplexity",
+            )
+
+        model = request.model or self.default_model
+
+        # Perplexity uses OpenAI-compatible format
+        messages: list[dict[str, str]] = []
+        if request.system_prompt:
+            messages.append({"role": "system", "content": request.system_prompt})
+        messages.append({"role": "user", "content": request.prompt})
+
+        payload: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "temperature": request.temperature,
+        }
+
+        if request.max_tokens:
+            payload["max_tokens"] = request.max_tokens
+
+        try:
+            client = self._get_client()
+            response = client.post(
+                f"{self._api_base}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            elapsed = (time.perf_counter() - start) * 1000
+            text = data["choices"][0]["message"]["content"]
+            tokens = data.get("usage", {}).get("total_tokens", 0)
+
+            return LLMResponse(
+                text=text,
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                tokens_used=tokens,
+                raw=data,
+            )
+        except Exception as e:
+            elapsed = (time.perf_counter() - start) * 1000
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                error=str(e),
+            )
+
+    def health_check(self, endpoint: str | None = None) -> bool:
+        """Check if Perplexity API is reachable."""
+        try:
+            client = self._get_client()
+            response = client.get(
+                f"{self._api_base}/models",
+                headers={"Authorization": "Bearer test"},
+                timeout=5.0,
+            )
+            return response.status_code in (200, 401)
+        except Exception:
+            return False
+
+
+class DeepSeekProvider(_BaseProvider):
+    """DeepSeek AI API provider for advanced reasoning."""
+
+    name: ProviderName = "deepseek"  # type: ignore
+    is_local: bool = False
+    requires_api_key: bool = True
+
+    def __init__(self, timeout: float = 60.0):
+        super().__init__("deepseek-chat", timeout)
+        self._api_base = "https://api.deepseek.com/v1"
+
+    def send(self, request: LLMRequest, api_key: str | None) -> LLMResponse:
+        """Send a request to DeepSeek API."""
+        start = time.perf_counter()
+
+        if not api_key:
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=request.model or self.default_model,
+                latency_ms=0,
+                error="API key required for DeepSeek",
+            )
+
+        model = request.model or self.default_model
+
+        messages: list[dict[str, str]] = []
+        if request.system_prompt:
+            messages.append({"role": "system", "content": request.system_prompt})
+        messages.append({"role": "user", "content": request.prompt})
+
+        payload: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "temperature": request.temperature,
+        }
+
+        if request.max_tokens:
+            payload["max_tokens"] = request.max_tokens
+
+        try:
+            client = self._get_client()
+            response = client.post(
+                f"{self._api_base}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            elapsed = (time.perf_counter() - start) * 1000
+            text = data["choices"][0]["message"]["content"]
+            tokens = data.get("usage", {}).get("total_tokens", 0)
+
+            return LLMResponse(
+                text=text,
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                tokens_used=tokens,
+                raw=data,
+            )
+        except Exception as e:
+            elapsed = (time.perf_counter() - start) * 1000
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                error=str(e),
+            )
+
+    def stream_send(
+        self,
+        request: LLMRequest,
+        api_key: str | None,
+        callback: Callable[[str], None] | None = None,
+    ) -> LLMResponse:
+        """Send a streaming request to DeepSeek API."""
+        start = time.perf_counter()
+
+        if not api_key:
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=request.model or self.default_model,
+                latency_ms=0,
+                error="API key required for DeepSeek",
+            )
+
+        model = request.model or self.default_model
+
+        messages: list[dict[str, str]] = []
+        if request.system_prompt:
+            messages.append({"role": "system", "content": request.system_prompt})
+        messages.append({"role": "user", "content": request.prompt})
+
+        payload: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "temperature": request.temperature,
+            "stream": True,
+        }
+
+        if request.max_tokens:
+            payload["max_tokens"] = request.max_tokens
+
+        try:
+            chunks: list[str] = []
+            with httpx.Client(timeout=self.timeout) as client:
+                with client.stream(
+                    "POST",
+                    f"{self._api_base}/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json=payload,
+                ) as response:
+                    response.raise_for_status()
+                    for line in response.iter_lines():
+                        if line.startswith("data: "):
+                            data_str = line[6:]
+                            if data_str == "[DONE]":
+                                break
+                            try:
+                                data = json.loads(data_str)
+                                delta = data["choices"][0].get("delta", {})
+                                content = delta.get("content", "")
+                                if content:
+                                    chunks.append(content)
+                                    if callback:
+                                        callback(content)
+                            except json.JSONDecodeError:
+                                continue
+
+            elapsed = (time.perf_counter() - start) * 1000
+            full_text = "".join(chunks)
+
+            return LLMResponse(
+                text=full_text,
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                is_streaming=True,
+                stream_chunks=chunks,
+            )
+        except Exception as e:
+            elapsed = (time.perf_counter() - start) * 1000
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                error=str(e),
+            )
+
+
+class FireworksProvider(_BaseProvider):
+    """Fireworks AI API provider for fast inference."""
+
+    name: ProviderName = "fireworks"  # type: ignore
+    is_local: bool = False
+    requires_api_key: bool = True
+
+    def __init__(self, timeout: float = 60.0):
+        super().__init__("accounts/fireworks/models/llama-v3p1-70b-instruct", timeout)
+        self._api_base = "https://api.fireworks.ai/inference/v1"
+
+    def send(self, request: LLMRequest, api_key: str | None) -> LLMResponse:
+        """Send a request to Fireworks AI API."""
+        start = time.perf_counter()
+
+        if not api_key:
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=request.model or self.default_model,
+                latency_ms=0,
+                error="API key required for Fireworks AI",
+            )
+
+        model = request.model or self.default_model
+
+        messages: list[dict[str, str]] = []
+        if request.system_prompt:
+            messages.append({"role": "system", "content": request.system_prompt})
+        messages.append({"role": "user", "content": request.prompt})
+
+        payload: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "temperature": request.temperature,
+        }
+
+        if request.max_tokens:
+            payload["max_tokens"] = request.max_tokens
+
+        try:
+            client = self._get_client()
+            response = client.post(
+                f"{self._api_base}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            elapsed = (time.perf_counter() - start) * 1000
+            text = data["choices"][0]["message"]["content"]
+            tokens = data.get("usage", {}).get("total_tokens", 0)
+
+            return LLMResponse(
+                text=text,
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                tokens_used=tokens,
+                raw=data,
+            )
+        except Exception as e:
+            elapsed = (time.perf_counter() - start) * 1000
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                error=str(e),
+            )
+
+
+class HuggingFaceInferenceProvider(_BaseProvider):
+    """HuggingFace Inference API provider."""
+
+    name: ProviderName = "huggingface"  # type: ignore
+    is_local: bool = False
+    requires_api_key: bool = True
+
+    def __init__(self, timeout: float = 60.0):
+        super().__init__("meta-llama/Llama-3.1-70B-Instruct", timeout)
+        self._api_base = "https://api-inference.huggingface.co/models"
+
+    def send(self, request: LLMRequest, api_key: str | None) -> LLMResponse:
+        """Send a request to HuggingFace Inference API."""
+        start = time.perf_counter()
+
+        if not api_key:
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=request.model or self.default_model,
+                latency_ms=0,
+                error="API key required for HuggingFace",
+            )
+
+        model = request.model or self.default_model
+
+        # Build prompt with system message if provided
+        full_prompt = request.prompt
+        if request.system_prompt:
+            full_prompt = f"System: {request.system_prompt}\n\nUser: {request.prompt}\n\nAssistant:"
+
+        payload: dict[str, Any] = {
+            "inputs": full_prompt,
+            "parameters": {
+                "temperature": request.temperature,
+                "return_full_text": False,
+            },
+        }
+
+        if request.max_tokens:
+            payload["parameters"]["max_new_tokens"] = request.max_tokens
+
+        try:
+            client = self._get_client()
+            response = client.post(
+                f"{self._api_base}/{model}",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            elapsed = (time.perf_counter() - start) * 1000
+
+            # HuggingFace returns list of generated texts
+            if isinstance(data, list) and len(data) > 0:
+                text = data[0].get("generated_text", "")
+            else:
+                text = data.get("generated_text", "")
+
+            return LLMResponse(
+                text=text,
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                raw=data,
+            )
+        except Exception as e:
+            elapsed = (time.perf_counter() - start) * 1000
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                error=str(e),
+            )
+
+
+class ReplicateProvider(_BaseProvider):
+    """Replicate API provider for running models."""
+
+    name: ProviderName = "replicate"  # type: ignore
+    is_local: bool = False
+    requires_api_key: bool = True
+
+    def __init__(self, timeout: float = 120.0):  # Longer timeout for Replicate
+        super().__init__("meta/llama-3.1-405b-instruct", timeout)
+        self._api_base = "https://api.replicate.com/v1"
+
+    def send(self, request: LLMRequest, api_key: str | None) -> LLMResponse:
+        """Send a request to Replicate API."""
+        start = time.perf_counter()
+
+        if not api_key:
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=request.model or self.default_model,
+                latency_ms=0,
+                error="API key required for Replicate",
+            )
+
+        model = request.model or self.default_model
+
+        # Build prompt
+        full_prompt = request.prompt
+        if request.system_prompt:
+            full_prompt = f"<|system|>{request.system_prompt}<|end|><|user|>{request.prompt}<|end|><|assistant|>"
+
+        payload: dict[str, Any] = {
+            "input": {
+                "prompt": full_prompt,
+                "temperature": request.temperature,
+            },
+        }
+
+        if request.max_tokens:
+            payload["input"]["max_tokens"] = request.max_tokens
+
+        try:
+            client = self._get_client()
+            
+            # Create prediction
+            response = client.post(
+                f"{self._api_base}/models/{model}/predictions",
+                headers={
+                    "Authorization": f"Token {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
+            response.raise_for_status()
+            prediction = response.json()
+            
+            # Poll for completion
+            prediction_id = prediction.get("id")
+            max_polls = 60
+            poll_count = 0
+            
+            while poll_count < max_polls:
+                poll_response = client.get(
+                    f"{self._api_base}/predictions/{prediction_id}",
+                    headers={"Authorization": f"Token {api_key}"},
+                )
+                poll_data = poll_response.json()
+                status = poll_data.get("status")
+                
+                if status == "succeeded":
+                    output = poll_data.get("output", [])
+                    text = "".join(output) if isinstance(output, list) else str(output)
+                    elapsed = (time.perf_counter() - start) * 1000
+                    return LLMResponse(
+                        text=text,
+                        provider=self.name,
+                        model=model,
+                        latency_ms=elapsed,
+                        raw=poll_data,
+                    )
+                elif status in ("failed", "canceled"):
+                    elapsed = (time.perf_counter() - start) * 1000
+                    return LLMResponse(
+                        text="",
+                        provider=self.name,
+                        model=model,
+                        latency_ms=elapsed,
+                        error=f"Prediction {status}: {poll_data.get('error', 'Unknown error')}",
+                    )
+                
+                poll_count += 1
+                time.sleep(1)
+            
+            elapsed = (time.perf_counter() - start) * 1000
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                error="Prediction timed out",
+            )
+            
+        except Exception as e:
+            elapsed = (time.perf_counter() - start) * 1000
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                error=str(e),
+            )
+
+
+class OpenRouterProvider(_BaseProvider):
+    """OpenRouter API provider for unified access to multiple models."""
+
+    name: ProviderName = "openrouter"  # type: ignore
+    is_local: bool = False
+    requires_api_key: bool = True
+
+    def __init__(self, timeout: float = 60.0):
+        super().__init__("anthropic/claude-3.5-sonnet", timeout)
+        self._api_base = "https://openrouter.ai/api/v1"
+
+    def send(self, request: LLMRequest, api_key: str | None) -> LLMResponse:
+        """Send a request to OpenRouter API."""
+        start = time.perf_counter()
+
+        if not api_key:
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=request.model or self.default_model,
+                latency_ms=0,
+                error="API key required for OpenRouter",
+            )
+
+        model = request.model or self.default_model
+
+        messages: list[dict[str, str]] = []
+        if request.system_prompt:
+            messages.append({"role": "system", "content": request.system_prompt})
+        messages.append({"role": "user", "content": request.prompt})
+
+        payload: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "temperature": request.temperature,
+        }
+
+        if request.max_tokens:
+            payload["max_tokens"] = request.max_tokens
+
+        try:
+            client = self._get_client()
+            response = client.post(
+                f"{self._api_base}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                    "HTTP-Referer": "https://github.com/proxima",
+                    "X-Title": "Proxima",
+                },
+                json=payload,
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            elapsed = (time.perf_counter() - start) * 1000
+            text = data["choices"][0]["message"]["content"]
+            tokens = data.get("usage", {}).get("total_tokens", 0)
+
+            return LLMResponse(
+                text=text,
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                tokens_used=tokens,
+                raw=data,
+            )
+        except Exception as e:
+            elapsed = (time.perf_counter() - start) * 1000
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                error=str(e),
+            )
+
+    def stream_send(
+        self,
+        request: LLMRequest,
+        api_key: str | None,
+        callback: Callable[[str], None] | None = None,
+    ) -> LLMResponse:
+        """Send a streaming request to OpenRouter API."""
+        start = time.perf_counter()
+
+        if not api_key:
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=request.model or self.default_model,
+                latency_ms=0,
+                error="API key required for OpenRouter",
+            )
+
+        model = request.model or self.default_model
+
+        messages: list[dict[str, str]] = []
+        if request.system_prompt:
+            messages.append({"role": "system", "content": request.system_prompt})
+        messages.append({"role": "user", "content": request.prompt})
+
+        payload: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "temperature": request.temperature,
+            "stream": True,
+        }
+
+        if request.max_tokens:
+            payload["max_tokens"] = request.max_tokens
+
+        try:
+            chunks: list[str] = []
+            with httpx.Client(timeout=self.timeout) as client:
+                with client.stream(
+                    "POST",
+                    f"{self._api_base}/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {api_key}",
+                        "Content-Type": "application/json",
+                        "HTTP-Referer": "https://github.com/proxima",
+                    },
+                    json=payload,
+                ) as response:
+                    response.raise_for_status()
+                    for line in response.iter_lines():
+                        if line.startswith("data: "):
+                            data_str = line[6:]
+                            if data_str == "[DONE]":
+                                break
+                            try:
+                                data = json.loads(data_str)
+                                delta = data["choices"][0].get("delta", {})
+                                content = delta.get("content", "")
+                                if content:
+                                    chunks.append(content)
+                                    if callback:
+                                        callback(content)
+                            except json.JSONDecodeError:
+                                continue
+
+            elapsed = (time.perf_counter() - start) * 1000
+            full_text = "".join(chunks)
+
+            return LLMResponse(
+                text=full_text,
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                is_streaming=True,
+                stream_chunks=chunks,
+            )
+        except Exception as e:
+            elapsed = (time.perf_counter() - start) * 1000
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                error=str(e),
+            )
+
+
 class ProviderRegistry:
-    """Registry of available LLM providers."""
+    """Registry of available LLM providers.
+    
+    Includes both core providers and extended integrations:
+    - Core: OpenAI, Anthropic, Ollama, LM Studio, llama.cpp
+    - Extended: Together AI, Groq, Mistral, Azure OpenAI, Cohere
+    - Additional: Perplexity, DeepSeek, Fireworks, HuggingFace, Replicate, OpenRouter
+    """
 
     def __init__(self) -> None:
         self._providers: dict[ProviderName, LLMProvider] = {
+            # Core providers
             "openai": OpenAIProvider(),
             "anthropic": AnthropicProvider(),
             "ollama": OllamaProvider(),
             "lmstudio": LMStudioProvider(),
             "llama_cpp": LlamaCppProvider(),
+            # Extended providers
+            "together": TogetherProvider(),
+            "groq": GroqProvider(),
+            "mistral": MistralProvider(),
+            "azure_openai": AzureOpenAIProvider(),
+            "cohere": CohereProvider(),
+            # Additional providers (2% gap coverage)
+            "perplexity": PerplexityProvider(),  # type: ignore
+            "deepseek": DeepSeekProvider(),  # type: ignore
+            "fireworks": FireworksProvider(),  # type: ignore
+            "huggingface": HuggingFaceInferenceProvider(),  # type: ignore
+            "replicate": ReplicateProvider(),  # type: ignore
+            "openrouter": OpenRouterProvider(),  # type: ignore
         }
 
     def get(self, name: ProviderName) -> LLMProvider:
         """Get a provider by name."""
         if name == "none":
             raise ValueError("No LLM provider configured")
-        provider = self._providers.get(name)
+        provider = self._providers.get(name)  # type: ignore
         if not provider:
             raise ValueError(f"Unknown provider: {name}")
         return provider
 
     def list_providers(self) -> list[ProviderName]:
         """List all registered provider names."""
-        return list(self._providers.keys())
+        return list(self._providers.keys())  # type: ignore
 
     def register(self, name: ProviderName, provider: LLMProvider) -> None:
         """Register a custom provider."""
@@ -2784,3 +4374,1170 @@ def stream_with_handler(
             latency_ms=0,
             error=str(e),
         )
+
+
+# =============================================================================
+# PROVIDER EDGE CASES (2% Gap Coverage)
+# Rate Limiting, Retries, Circuit Breaker, Health Monitoring, Connection Pooling
+# =============================================================================
+
+
+class RateLimitError(Exception):
+    """Raised when rate limit is exceeded."""
+    
+    def __init__(
+        self,
+        message: str,
+        retry_after_seconds: float | None = None,
+        limit_type: str = "requests",
+    ) -> None:
+        super().__init__(message)
+        self.retry_after_seconds = retry_after_seconds
+        self.limit_type = limit_type  # "requests", "tokens", "concurrent"
+
+
+class ProviderUnavailableError(Exception):
+    """Raised when provider is temporarily unavailable (circuit open)."""
+    
+    def __init__(
+        self,
+        provider: str,
+        message: str,
+        recovery_time: float | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.provider = provider
+        self.recovery_time = recovery_time
+
+
+class AuthenticationError(Exception):
+    """Raised when API key is invalid or expired."""
+    
+    def __init__(
+        self,
+        provider: str,
+        message: str,
+        is_expired: bool = False,
+    ) -> None:
+        super().__init__(message)
+        self.provider = provider
+        self.is_expired = is_expired
+
+
+@dataclass
+class RateLimitConfig:
+    """Configuration for rate limiting."""
+    
+    requests_per_minute: int = 60
+    tokens_per_minute: int = 100000
+    max_concurrent: int = 10
+    burst_allowance: float = 1.2  # Allow 20% burst
+    cooldown_seconds: float = 1.0  # Base cooldown after hitting limit
+
+
+@dataclass
+class RetryConfig:
+    """Configuration for retry behavior."""
+    
+    max_retries: int = 3
+    initial_delay_seconds: float = 1.0
+    max_delay_seconds: float = 60.0
+    exponential_base: float = 2.0
+    jitter: bool = True  # Add randomness to prevent thundering herd
+    retry_on_status: tuple[int, ...] = (429, 500, 502, 503, 504)
+    retry_on_exceptions: tuple[type, ...] = (
+        ConnectionError, TimeoutError, OSError
+    )
+
+
+@dataclass
+class CircuitBreakerConfig:
+    """Configuration for circuit breaker pattern."""
+    
+    failure_threshold: int = 5  # Failures before opening circuit
+    success_threshold: int = 2  # Successes to close circuit
+    half_open_timeout_seconds: float = 30.0  # Time before trying again
+    failure_window_seconds: float = 60.0  # Window for counting failures
+
+
+class CircuitState(Enum):
+    """Circuit breaker states."""
+    
+    CLOSED = "closed"  # Normal operation
+    OPEN = "open"  # Blocking requests
+    HALF_OPEN = "half_open"  # Testing recovery
+
+
+@dataclass
+class ProviderHealthStatus:
+    """Health status of a provider."""
+    
+    provider: ProviderName
+    is_healthy: bool
+    circuit_state: CircuitState
+    last_success: float | None
+    last_failure: float | None
+    failure_count: int
+    success_count: int
+    average_latency_ms: float
+    error_rate: float  # 0-1
+    current_concurrency: int
+    rate_limit_remaining: int | None
+    last_check: float
+
+
+class TokenBucket:
+    """Token bucket rate limiter with burst support."""
+    
+    def __init__(
+        self,
+        capacity: int,
+        refill_rate: float,  # Tokens per second
+        burst_multiplier: float = 1.2,
+    ) -> None:
+        """Initialize token bucket.
+        
+        Args:
+            capacity: Maximum tokens in bucket
+            refill_rate: Tokens added per second
+            burst_multiplier: Allow burst up to capacity * multiplier
+        """
+        self._capacity = capacity
+        self._burst_capacity = int(capacity * burst_multiplier)
+        self._refill_rate = refill_rate
+        self._tokens = float(capacity)
+        self._last_update = time.time()
+        self._lock = threading.Lock()
+    
+    def _refill(self) -> None:
+        """Refill tokens based on elapsed time."""
+        now = time.time()
+        elapsed = now - self._last_update
+        self._tokens = min(
+            self._burst_capacity,
+            self._tokens + elapsed * self._refill_rate
+        )
+        self._last_update = now
+    
+    def try_acquire(self, tokens: int = 1) -> bool:
+        """Try to acquire tokens without blocking.
+        
+        Args:
+            tokens: Number of tokens to acquire
+            
+        Returns:
+            True if acquired, False if insufficient tokens
+        """
+        with self._lock:
+            self._refill()
+            if self._tokens >= tokens:
+                self._tokens -= tokens
+                return True
+            return False
+    
+    def acquire(
+        self,
+        tokens: int = 1,
+        timeout: float | None = None,
+    ) -> bool:
+        """Acquire tokens, optionally waiting.
+        
+        Args:
+            tokens: Number of tokens to acquire
+            timeout: Maximum time to wait in seconds
+            
+        Returns:
+            True if acquired, False if timeout
+        """
+        start_time = time.time()
+        
+        while True:
+            if self.try_acquire(tokens):
+                return True
+            
+            if timeout is not None:
+                if time.time() - start_time >= timeout:
+                    return False
+            
+            # Calculate wait time until enough tokens
+            with self._lock:
+                tokens_needed = tokens - self._tokens
+                wait_time = tokens_needed / self._refill_rate
+            
+            # Wait with small intervals for responsiveness
+            time.sleep(min(wait_time, 0.1))
+    
+    def wait_time(self, tokens: int = 1) -> float:
+        """Get estimated wait time for tokens.
+        
+        Args:
+            tokens: Number of tokens needed
+            
+        Returns:
+            Estimated wait time in seconds (0 if available now)
+        """
+        with self._lock:
+            self._refill()
+            if self._tokens >= tokens:
+                return 0.0
+            tokens_needed = tokens - self._tokens
+            return tokens_needed / self._refill_rate
+    
+    @property
+    def available(self) -> float:
+        """Get currently available tokens."""
+        with self._lock:
+            self._refill()
+            return self._tokens
+
+
+class ConcurrencyLimiter:
+    """Limits concurrent requests to a provider."""
+    
+    def __init__(self, max_concurrent: int) -> None:
+        """Initialize limiter.
+        
+        Args:
+            max_concurrent: Maximum concurrent requests
+        """
+        self._max_concurrent = max_concurrent
+        self._current = 0
+        self._lock = threading.Lock()
+        self._condition = threading.Condition(self._lock)
+    
+    def acquire(self, timeout: float | None = None) -> bool:
+        """Acquire a slot for a request.
+        
+        Args:
+            timeout: Maximum time to wait
+            
+        Returns:
+            True if acquired, False if timeout
+        """
+        with self._condition:
+            start = time.time()
+            while self._current >= self._max_concurrent:
+                remaining = None
+                if timeout is not None:
+                    remaining = timeout - (time.time() - start)
+                    if remaining <= 0:
+                        return False
+                self._condition.wait(timeout=remaining)
+            self._current += 1
+            return True
+    
+    def release(self) -> None:
+        """Release a slot after request completion."""
+        with self._condition:
+            self._current = max(0, self._current - 1)
+            self._condition.notify()
+    
+    @property
+    def current(self) -> int:
+        """Current number of concurrent requests."""
+        with self._lock:
+            return self._current
+    
+    @contextmanager
+    def acquire_context(self, timeout: float | None = None) -> Generator[bool, None, None]:
+        """Context manager for acquiring/releasing slots.
+        
+        Args:
+            timeout: Maximum time to wait
+            
+        Yields:
+            True if acquired, False if timeout
+        """
+        acquired = self.acquire(timeout)
+        try:
+            yield acquired
+        finally:
+            if acquired:
+                self.release()
+
+
+class CircuitBreaker:
+    """Circuit breaker for provider failure protection."""
+    
+    def __init__(self, config: CircuitBreakerConfig | None = None) -> None:
+        """Initialize circuit breaker.
+        
+        Args:
+            config: Circuit breaker configuration
+        """
+        self._config = config or CircuitBreakerConfig()
+        self._state = CircuitState.CLOSED
+        self._failure_count = 0
+        self._success_count = 0
+        self._last_failure_time: float | None = None
+        self._last_state_change = time.time()
+        self._failure_times: list[float] = []
+        self._lock = threading.Lock()
+    
+    @property
+    def state(self) -> CircuitState:
+        """Get current circuit state."""
+        with self._lock:
+            self._check_half_open()
+            return self._state
+    
+    def _check_half_open(self) -> None:
+        """Check if should transition to half-open."""
+        if self._state == CircuitState.OPEN:
+            elapsed = time.time() - self._last_state_change
+            if elapsed >= self._config.half_open_timeout_seconds:
+                self._state = CircuitState.HALF_OPEN
+                self._last_state_change = time.time()
+                self._success_count = 0
+    
+    def _clean_old_failures(self) -> None:
+        """Remove failures outside the window."""
+        cutoff = time.time() - self._config.failure_window_seconds
+        self._failure_times = [t for t in self._failure_times if t > cutoff]
+    
+    def allow_request(self) -> bool:
+        """Check if a request should be allowed.
+        
+        Returns:
+            True if request allowed, False if circuit is open
+        """
+        with self._lock:
+            self._check_half_open()
+            return self._state != CircuitState.OPEN
+    
+    def record_success(self) -> None:
+        """Record a successful request."""
+        with self._lock:
+            self._success_count += 1
+            
+            if self._state == CircuitState.HALF_OPEN:
+                if self._success_count >= self._config.success_threshold:
+                    self._state = CircuitState.CLOSED
+                    self._last_state_change = time.time()
+                    self._failure_count = 0
+                    self._failure_times.clear()
+            elif self._state == CircuitState.CLOSED:
+                # Decay failure count on success
+                self._failure_count = max(0, self._failure_count - 1)
+    
+    def record_failure(self) -> None:
+        """Record a failed request."""
+        now = time.time()
+        with self._lock:
+            self._failure_count += 1
+            self._failure_times.append(now)
+            self._last_failure_time = now
+            self._clean_old_failures()
+            
+            if self._state == CircuitState.HALF_OPEN:
+                # Any failure in half-open reopens circuit
+                self._state = CircuitState.OPEN
+                self._last_state_change = now
+            elif self._state == CircuitState.CLOSED:
+                # Check if should open
+                if len(self._failure_times) >= self._config.failure_threshold:
+                    self._state = CircuitState.OPEN
+                    self._last_state_change = now
+    
+    def get_recovery_time(self) -> float | None:
+        """Get estimated time until circuit might close.
+        
+        Returns:
+            Seconds until half-open, None if already closed/half-open
+        """
+        with self._lock:
+            if self._state != CircuitState.OPEN:
+                return None
+            elapsed = time.time() - self._last_state_change
+            remaining = self._config.half_open_timeout_seconds - elapsed
+            return max(0, remaining)
+
+
+@dataclass
+class ProviderRateLimitState:
+    """State for provider rate limiting."""
+    
+    request_bucket: TokenBucket
+    token_bucket: TokenBucket
+    concurrency_limiter: ConcurrencyLimiter
+    circuit_breaker: CircuitBreaker
+    latency_samples: list[float]
+    error_count: int = 0
+    success_count: int = 0
+    last_rate_limit_error: float | None = None
+
+
+class ProviderRateLimiter:
+    """Rate limiter for all providers with health tracking."""
+    
+    # Default limits per provider
+    DEFAULT_LIMITS: dict[ProviderName, RateLimitConfig] = {
+        "openai": RateLimitConfig(
+            requests_per_minute=60,
+            tokens_per_minute=150000,
+            max_concurrent=20,
+        ),
+        "anthropic": RateLimitConfig(
+            requests_per_minute=60,
+            tokens_per_minute=100000,
+            max_concurrent=10,
+        ),
+        "groq": RateLimitConfig(
+            requests_per_minute=30,
+            tokens_per_minute=30000,
+            max_concurrent=5,
+        ),
+        "together": RateLimitConfig(
+            requests_per_minute=60,
+            tokens_per_minute=100000,
+            max_concurrent=15,
+        ),
+        "mistral": RateLimitConfig(
+            requests_per_minute=60,
+            tokens_per_minute=100000,
+            max_concurrent=10,
+        ),
+        "cohere": RateLimitConfig(
+            requests_per_minute=100,
+            tokens_per_minute=200000,
+            max_concurrent=20,
+        ),
+        "azure_openai": RateLimitConfig(
+            requests_per_minute=100,
+            tokens_per_minute=200000,
+            max_concurrent=30,
+        ),
+        "ollama": RateLimitConfig(
+            requests_per_minute=1000,  # Local, essentially unlimited
+            tokens_per_minute=1000000,
+            max_concurrent=1,  # But single model at a time
+        ),
+        "lmstudio": RateLimitConfig(
+            requests_per_minute=1000,
+            tokens_per_minute=1000000,
+            max_concurrent=1,
+        ),
+        "llama_cpp": RateLimitConfig(
+            requests_per_minute=1000,
+            tokens_per_minute=1000000,
+            max_concurrent=1,
+        ),
+    }
+    
+    def __init__(self) -> None:
+        """Initialize rate limiter."""
+        self._provider_states: dict[ProviderName, ProviderRateLimitState] = {}
+        self._lock = threading.Lock()
+    
+    def _get_state(self, provider: ProviderName) -> ProviderRateLimitState:
+        """Get or create state for a provider."""
+        with self._lock:
+            if provider not in self._provider_states:
+                config = self.DEFAULT_LIMITS.get(
+                    provider,
+                    RateLimitConfig()  # Default values
+                )
+                
+                # Create rate limiters
+                request_bucket = TokenBucket(
+                    capacity=config.requests_per_minute,
+                    refill_rate=config.requests_per_minute / 60.0,
+                    burst_multiplier=config.burst_allowance,
+                )
+                token_bucket = TokenBucket(
+                    capacity=config.tokens_per_minute,
+                    refill_rate=config.tokens_per_minute / 60.0,
+                    burst_multiplier=config.burst_allowance,
+                )
+                concurrency_limiter = ConcurrencyLimiter(config.max_concurrent)
+                circuit_breaker = CircuitBreaker()
+                
+                self._provider_states[provider] = ProviderRateLimitState(
+                    request_bucket=request_bucket,
+                    token_bucket=token_bucket,
+                    concurrency_limiter=concurrency_limiter,
+                    circuit_breaker=circuit_breaker,
+                    latency_samples=[],
+                )
+            
+            return self._provider_states[provider]
+    
+    def check_rate_limit(
+        self,
+        provider: ProviderName,
+        estimated_tokens: int = 1000,
+        timeout: float = 30.0,
+    ) -> None:
+        """Check and enforce rate limits before a request.
+        
+        Args:
+            provider: Provider name
+            estimated_tokens: Estimated tokens for request
+            timeout: Maximum time to wait for rate limit
+            
+        Raises:
+            RateLimitError: If rate limit exceeded and timeout
+            ProviderUnavailableError: If circuit is open
+        """
+        state = self._get_state(provider)
+        
+        # Check circuit breaker
+        if not state.circuit_breaker.allow_request():
+            recovery = state.circuit_breaker.get_recovery_time()
+            raise ProviderUnavailableError(
+                provider=provider,
+                message=f"Provider {provider} is temporarily unavailable (circuit open)",
+                recovery_time=recovery,
+            )
+        
+        # Check request rate limit
+        if not state.request_bucket.acquire(1, timeout=timeout):
+            wait = state.request_bucket.wait_time(1)
+            raise RateLimitError(
+                f"Request rate limit exceeded for {provider}",
+                retry_after_seconds=wait,
+                limit_type="requests",
+            )
+        
+        # Check token rate limit
+        if not state.token_bucket.acquire(estimated_tokens, timeout=timeout):
+            wait = state.token_bucket.wait_time(estimated_tokens)
+            raise RateLimitError(
+                f"Token rate limit exceeded for {provider}",
+                retry_after_seconds=wait,
+                limit_type="tokens",
+            )
+    
+    def acquire_concurrency(
+        self,
+        provider: ProviderName,
+        timeout: float = 30.0,
+    ) -> bool:
+        """Acquire a concurrency slot.
+        
+        Args:
+            provider: Provider name
+            timeout: Maximum time to wait
+            
+        Returns:
+            True if acquired, False if timeout
+        """
+        state = self._get_state(provider)
+        return state.concurrency_limiter.acquire(timeout)
+    
+    def release_concurrency(self, provider: ProviderName) -> None:
+        """Release a concurrency slot."""
+        state = self._get_state(provider)
+        state.concurrency_limiter.release()
+    
+    def record_success(
+        self,
+        provider: ProviderName,
+        latency_ms: float,
+    ) -> None:
+        """Record a successful request."""
+        state = self._get_state(provider)
+        state.circuit_breaker.record_success()
+        state.success_count += 1
+        state.latency_samples.append(latency_ms)
+        
+        # Keep last 100 samples
+        if len(state.latency_samples) > 100:
+            state.latency_samples = state.latency_samples[-100:]
+    
+    def record_failure(
+        self,
+        provider: ProviderName,
+        is_rate_limit: bool = False,
+    ) -> None:
+        """Record a failed request."""
+        state = self._get_state(provider)
+        state.error_count += 1
+        
+        if is_rate_limit:
+            state.last_rate_limit_error = time.time()
+        else:
+            state.circuit_breaker.record_failure()
+    
+    def get_health_status(self, provider: ProviderName) -> ProviderHealthStatus:
+        """Get health status for a provider."""
+        state = self._get_state(provider)
+        
+        total_requests = state.success_count + state.error_count
+        error_rate = state.error_count / max(total_requests, 1)
+        avg_latency = (
+            sum(state.latency_samples) / len(state.latency_samples)
+            if state.latency_samples else 0.0
+        )
+        
+        return ProviderHealthStatus(
+            provider=provider,
+            is_healthy=state.circuit_breaker.state == CircuitState.CLOSED,
+            circuit_state=state.circuit_breaker.state,
+            last_success=None,  # Could track if needed
+            last_failure=state.last_rate_limit_error,
+            failure_count=state.error_count,
+            success_count=state.success_count,
+            average_latency_ms=avg_latency,
+            error_rate=error_rate,
+            current_concurrency=state.concurrency_limiter.current,
+            rate_limit_remaining=int(state.request_bucket.available),
+            last_check=time.time(),
+        )
+    
+    def set_custom_limits(
+        self,
+        provider: ProviderName,
+        config: RateLimitConfig,
+    ) -> None:
+        """Set custom rate limits for a provider.
+        
+        Args:
+            provider: Provider name
+            config: Rate limit configuration
+        """
+        with self._lock:
+            # Remove existing state to force recreation with new config
+            if provider in self._provider_states:
+                del self._provider_states[provider]
+            
+            # Pre-create with new config
+            self.DEFAULT_LIMITS[provider] = config
+
+
+class RetryHandler:
+    """Handles retries with exponential backoff and jitter."""
+    
+    def __init__(self, config: RetryConfig | None = None) -> None:
+        """Initialize retry handler.
+        
+        Args:
+            config: Retry configuration
+        """
+        self._config = config or RetryConfig()
+        self._random = random.Random()
+    
+    def calculate_delay(self, attempt: int) -> float:
+        """Calculate delay for a retry attempt.
+        
+        Args:
+            attempt: Attempt number (0 = first retry)
+            
+        Returns:
+            Delay in seconds
+        """
+        delay = self._config.initial_delay_seconds * (
+            self._config.exponential_base ** attempt
+        )
+        delay = min(delay, self._config.max_delay_seconds)
+        
+        if self._config.jitter:
+            # Add 0-50% jitter
+            jitter = delay * self._random.uniform(0, 0.5)
+            delay += jitter
+        
+        return delay
+    
+    def should_retry(
+        self,
+        attempt: int,
+        error: Exception | None = None,
+        status_code: int | None = None,
+    ) -> bool:
+        """Determine if should retry.
+        
+        Args:
+            attempt: Current attempt number
+            error: Exception that occurred
+            status_code: HTTP status code if applicable
+            
+        Returns:
+            True if should retry
+        """
+        if attempt >= self._config.max_retries:
+            return False
+        
+        if status_code and status_code in self._config.retry_on_status:
+            return True
+        
+        if error and isinstance(error, self._config.retry_on_exceptions):
+            return True
+        
+        return False
+    
+    def execute_with_retry(
+        self,
+        func: Callable[[], T],
+        on_retry: Callable[[int, float, Exception | None], None] | None = None,
+    ) -> T:
+        """Execute a function with retry logic.
+        
+        Args:
+            func: Function to execute
+            on_retry: Callback before each retry (attempt, delay, error)
+            
+        Returns:
+            Result from successful function call
+            
+        Raises:
+            Last exception if all retries exhausted
+        """
+        last_error: Exception | None = None
+        
+        for attempt in range(self._config.max_retries + 1):
+            try:
+                return func()
+            except Exception as e:
+                last_error = e
+                
+                # Check if we should retry
+                status_code = getattr(e, "status_code", None)
+                if not self.should_retry(attempt, e, status_code):
+                    raise
+                
+                # Calculate delay
+                delay = self.calculate_delay(attempt)
+                
+                # Callback
+                if on_retry:
+                    on_retry(attempt, delay, e)
+                
+                # Wait before retry
+                time.sleep(delay)
+        
+        # Should not reach here, but raise last error if we do
+        if last_error:
+            raise last_error
+        raise RuntimeError("Retry logic error")
+
+
+@dataclass
+class FallbackChainConfig:
+    """Configuration for fallback chain."""
+    
+    primary_provider: ProviderName
+    fallback_providers: list[ProviderName]
+    fallback_on_rate_limit: bool = True
+    fallback_on_error: bool = True
+    fallback_on_timeout: bool = True
+    preserve_model: bool = False  # Try same model on fallback
+
+
+class FallbackChainManager:
+    """Manages provider fallback chains."""
+    
+    def __init__(
+        self,
+        rate_limiter: ProviderRateLimiter | None = None,
+    ) -> None:
+        """Initialize fallback manager.
+        
+        Args:
+            rate_limiter: Rate limiter for health checks
+        """
+        self._rate_limiter = rate_limiter or ProviderRateLimiter()
+        self._chains: dict[str, FallbackChainConfig] = {}
+    
+    def register_chain(
+        self,
+        name: str,
+        config: FallbackChainConfig,
+    ) -> None:
+        """Register a fallback chain.
+        
+        Args:
+            name: Chain name
+            config: Chain configuration
+        """
+        self._chains[name] = config
+    
+    def get_providers_in_order(
+        self,
+        chain_name: str | None = None,
+        primary: ProviderName | None = None,
+        fallbacks: list[ProviderName] | None = None,
+    ) -> list[ProviderName]:
+        """Get providers to try in order.
+        
+        Args:
+            chain_name: Named chain to use
+            primary: Override primary provider
+            fallbacks: Override fallback providers
+            
+        Returns:
+            List of providers to try in order (healthy ones first)
+        """
+        if chain_name and chain_name in self._chains:
+            config = self._chains[chain_name]
+            providers = [config.primary_provider] + config.fallback_providers
+        elif primary:
+            providers = [primary] + (fallbacks or [])
+        else:
+            # Default chain
+            providers = [
+                "openai",
+                "anthropic",
+                "groq",
+                "together",
+                "ollama",
+            ]
+        
+        # Sort by health status
+        def health_score(p: ProviderName) -> float:
+            status = self._rate_limiter.get_health_status(p)
+            score = 0.0
+            
+            if status.is_healthy:
+                score += 100
+            if status.circuit_state == CircuitState.CLOSED:
+                score += 50
+            elif status.circuit_state == CircuitState.HALF_OPEN:
+                score += 25
+            
+            # Factor in error rate
+            score -= status.error_rate * 30
+            
+            # Factor in latency (prefer faster)
+            if status.average_latency_ms > 0:
+                score -= min(status.average_latency_ms / 100, 20)
+            
+            return score
+        
+        return sorted(providers, key=health_score, reverse=True)
+    
+    def should_fallback(
+        self,
+        error: Exception,
+        config: FallbackChainConfig | None = None,
+    ) -> bool:
+        """Determine if should fallback based on error.
+        
+        Args:
+            error: The error that occurred
+            config: Chain configuration (uses defaults if None)
+            
+        Returns:
+            True if should try fallback
+        """
+        if config is None:
+            return True
+        
+        if isinstance(error, RateLimitError) and config.fallback_on_rate_limit:
+            return True
+        
+        if isinstance(error, TimeoutError) and config.fallback_on_timeout:
+            return True
+        
+        if config.fallback_on_error:
+            return True
+        
+        return False
+
+
+class ConnectionPoolManager:
+    """Manages connection pools for providers."""
+    
+    def __init__(self) -> None:
+        """Initialize connection pool manager."""
+        self._pools: dict[str, httpx.Client] = {}
+        self._pool_configs: dict[str, dict[str, Any]] = {}
+        self._lock = threading.Lock()
+    
+    def _get_pool_key(
+        self,
+        provider: ProviderName,
+        endpoint: str | None = None,
+    ) -> str:
+        """Get unique key for a pool."""
+        return f"{provider}:{endpoint or 'default'}"
+    
+    def get_client(
+        self,
+        provider: ProviderName,
+        endpoint: str | None = None,
+        timeout: float = 60.0,
+        max_connections: int = 10,
+        max_keepalive: int = 5,
+    ) -> httpx.Client:
+        """Get or create a pooled HTTP client.
+        
+        Args:
+            provider: Provider name
+            endpoint: Custom endpoint (optional)
+            timeout: Request timeout
+            max_connections: Maximum connections in pool
+            max_keepalive: Maximum keepalive connections
+            
+        Returns:
+            HTTP client with connection pooling
+        """
+        key = self._get_pool_key(provider, endpoint)
+        
+        with self._lock:
+            if key not in self._pools:
+                limits = httpx.Limits(
+                    max_connections=max_connections,
+                    max_keepalive_connections=max_keepalive,
+                )
+                
+                self._pools[key] = httpx.Client(
+                    timeout=timeout,
+                    limits=limits,
+                    http2=True,  # Enable HTTP/2 for better multiplexing
+                )
+                
+                self._pool_configs[key] = {
+                    "provider": provider,
+                    "endpoint": endpoint,
+                    "timeout": timeout,
+                    "max_connections": max_connections,
+                }
+            
+            return self._pools[key]
+    
+    def close_pool(
+        self,
+        provider: ProviderName,
+        endpoint: str | None = None,
+    ) -> None:
+        """Close a connection pool.
+        
+        Args:
+            provider: Provider name
+            endpoint: Custom endpoint (optional)
+        """
+        key = self._get_pool_key(provider, endpoint)
+        
+        with self._lock:
+            if key in self._pools:
+                try:
+                    self._pools[key].close()
+                except Exception:
+                    pass
+                del self._pools[key]
+                del self._pool_configs[key]
+    
+    def close_all(self) -> None:
+        """Close all connection pools."""
+        with self._lock:
+            for client in self._pools.values():
+                try:
+                    client.close()
+                except Exception:
+                    pass
+            self._pools.clear()
+            self._pool_configs.clear()
+    
+    def get_pool_stats(self) -> dict[str, dict[str, Any]]:
+        """Get statistics for all pools.
+        
+        Returns:
+            Dict mapping pool key to stats
+        """
+        with self._lock:
+            return dict(self._pool_configs)
+
+
+class ResilientLLMRouter:
+    """Enhanced LLM router with resilience features.
+    
+    Features:
+    - Rate limiting with token bucket
+    - Automatic retries with exponential backoff
+    - Circuit breaker for failing providers
+    - Fallback chains
+    - Connection pooling
+    - Health monitoring
+    """
+    
+    def __init__(
+        self,
+        base_router: LLMRouter | None = None,
+        retry_config: RetryConfig | None = None,
+    ) -> None:
+        """Initialize resilient router.
+        
+        Args:
+            base_router: Underlying LLM router
+            retry_config: Retry configuration
+        """
+        self._router = base_router or build_router()
+        self._rate_limiter = ProviderRateLimiter()
+        self._retry_handler = RetryHandler(retry_config)
+        self._fallback_manager = FallbackChainManager(self._rate_limiter)
+        self._pool_manager = ConnectionPoolManager()
+        self._request_counter = 0
+        self._lock = threading.Lock()
+    
+    def route(
+        self,
+        request: LLMRequest,
+        fallback_providers: list[ProviderName] | None = None,
+        retry: bool = True,
+        use_rate_limiting: bool = True,
+    ) -> LLMResponse:
+        """Route request with resilience features.
+        
+        Args:
+            request: LLM request
+            fallback_providers: Providers to try on failure
+            retry: Whether to retry on transient failures
+            use_rate_limiting: Whether to enforce rate limits
+            
+        Returns:
+            LLM response
+        """
+        provider_name: ProviderName = (
+            request.provider or self._router.settings.llm.provider or "openai"
+        )
+        
+        # Get providers to try
+        providers = self._fallback_manager.get_providers_in_order(
+            primary=provider_name,
+            fallbacks=fallback_providers,
+        )
+        
+        last_error: Exception | None = None
+        
+        for provider in providers:
+            try:
+                # Check rate limits
+                if use_rate_limiting:
+                    estimated_tokens = len(request.prompt.split()) * 2  # Rough estimate
+                    self._rate_limiter.check_rate_limit(
+                        provider,
+                        estimated_tokens=estimated_tokens,
+                    )
+                
+                # Acquire concurrency slot
+                if not self._rate_limiter.acquire_concurrency(provider, timeout=30.0):
+                    continue  # Try next provider
+                
+                try:
+                    # Execute with retry
+                    def do_request() -> LLMResponse:
+                        req = LLMRequest(
+                            prompt=request.prompt,
+                            model=request.model,
+                            temperature=request.temperature,
+                            max_tokens=request.max_tokens,
+                            provider=provider,
+                            system_prompt=request.system_prompt,
+                            metadata=request.metadata,
+                            functions=request.functions,
+                            tools=request.tools,
+                            tool_choice=request.tool_choice,
+                            stream=request.stream,
+                        )
+                        return self._router.route(req)
+                    
+                    if retry:
+                        response = self._retry_handler.execute_with_retry(do_request)
+                    else:
+                        response = do_request()
+                    
+                    # Record success
+                    if not response.error:
+                        self._rate_limiter.record_success(provider, response.latency_ms)
+                        return response
+                    else:
+                        raise RuntimeError(response.error)
+                        
+                finally:
+                    self._rate_limiter.release_concurrency(provider)
+                    
+            except RateLimitError as e:
+                last_error = e
+                self._rate_limiter.record_failure(provider, is_rate_limit=True)
+                continue  # Try next provider
+                
+            except ProviderUnavailableError as e:
+                last_error = e
+                continue  # Try next provider
+                
+            except Exception as e:
+                last_error = e
+                self._rate_limiter.record_failure(provider)
+                
+                if self._fallback_manager.should_fallback(e):
+                    continue
+                raise
+        
+        # All providers failed
+        return LLMResponse(
+            text="",
+            provider="none",
+            model="",
+            latency_ms=0,
+            error=f"All providers failed: {last_error}",
+        )
+    
+    def get_all_health_status(self) -> dict[ProviderName, ProviderHealthStatus]:
+        """Get health status for all providers.
+        
+        Returns:
+            Dict mapping provider name to health status
+        """
+        result: dict[ProviderName, ProviderHealthStatus] = {}
+        
+        for provider in self._router.registry.list_providers():
+            result[provider] = self._rate_limiter.get_health_status(provider)
+        
+        return result
+    
+    def reset_circuit_breaker(self, provider: ProviderName) -> None:
+        """Manually reset circuit breaker for a provider.
+        
+        Args:
+            provider: Provider name
+        """
+        state = self._rate_limiter._get_state(provider)
+        with state.circuit_breaker._lock:
+            state.circuit_breaker._state = CircuitState.CLOSED
+            state.circuit_breaker._failure_count = 0
+            state.circuit_breaker._failure_times.clear()
+    
+    def close(self) -> None:
+        """Clean up resources."""
+        self._pool_manager.close_all()
+
+
+# Singleton instances for convenience
+_global_rate_limiter: ProviderRateLimiter | None = None
+_global_connection_pool: ConnectionPoolManager | None = None
+
+
+def get_global_rate_limiter() -> ProviderRateLimiter:
+    """Get or create global rate limiter."""
+    global _global_rate_limiter
+    if _global_rate_limiter is None:
+        _global_rate_limiter = ProviderRateLimiter()
+    return _global_rate_limiter
+
+
+def get_global_connection_pool() -> ConnectionPoolManager:
+    """Get or create global connection pool manager."""
+    global _global_connection_pool
+    if _global_connection_pool is None:
+        _global_connection_pool = ConnectionPoolManager()
+    return _global_connection_pool
+
+
+def build_resilient_router(
+    settings: Settings | None = None,
+    retry_config: RetryConfig | None = None,
+) -> ResilientLLMRouter:
+    """Build a resilient LLM router with all edge case handling.
+    
+    Args:
+        settings: Configuration settings
+        retry_config: Retry configuration
+        
+    Returns:
+        Configured ResilientLLMRouter
+    """
+    base_router = LLMRouter(settings=settings or config_service.load())
+    return ResilientLLMRouter(
+        base_router=base_router,
+        retry_config=retry_config,
+    )

@@ -18,7 +18,7 @@ import time
 import traceback
 import uuid
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Any, Generic, TypeVar
@@ -2230,3 +2230,745 @@ class PipelineAggregator:
     def all_successful(self) -> bool:
         """Check if all pipelines succeeded."""
         return all(r.is_success for r in self._results.values())
+
+
+# =============================================================================
+# Streaming Large Datasets (Feature - 5% Gap Completion)
+# =============================================================================
+
+
+class StreamStatus(Enum):
+    """Status of a data stream."""
+    
+    IDLE = "idle"
+    STARTING = "starting"
+    STREAMING = "streaming"
+    PAUSED = "paused"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+@dataclass
+class StreamProgress:
+    """Progress tracking for streaming operations."""
+    
+    total_items: int | None  # None if unknown
+    processed_items: int
+    current_chunk: int
+    total_chunks: int | None
+    bytes_processed: int
+    elapsed_seconds: float
+    estimated_remaining_seconds: float | None
+    
+    @property
+    def percentage(self) -> float | None:
+        """Get completion percentage."""
+        if self.total_items is None or self.total_items == 0:
+            return None
+        return (self.processed_items / self.total_items) * 100
+    
+    @property
+    def items_per_second(self) -> float:
+        """Get processing rate."""
+        if self.elapsed_seconds == 0:
+            return 0.0
+        return self.processed_items / self.elapsed_seconds
+
+
+@dataclass
+class ChunkResult(Generic[T]):
+    """Result from processing a single chunk."""
+    
+    chunk_index: int
+    items_processed: int
+    result: T | None
+    error: str | None = None
+    duration_ms: float = 0.0
+    memory_mb: float = 0.0
+
+
+@dataclass
+class StreamResult(Generic[T]):
+    """Result of a complete streaming operation."""
+    
+    status: StreamStatus
+    total_chunks: int
+    successful_chunks: int
+    failed_chunks: int
+    total_items_processed: int
+    results: list[T]
+    errors: list[str]
+    duration_ms: float
+    peak_memory_mb: float
+    average_chunk_time_ms: float
+
+
+class DataChunker(Generic[T]):
+    """Chunks data into memory-efficient pieces.
+    
+    Provides:
+    - Size-based chunking
+    - Count-based chunking
+    - Adaptive chunking based on memory
+    - Overlap support for sliding window operations
+    """
+    
+    def __init__(
+        self,
+        chunk_size: int = 1000,
+        max_memory_mb: float = 100.0,
+        overlap: int = 0,
+    ) -> None:
+        """Initialize chunker.
+        
+        Args:
+            chunk_size: Target items per chunk
+            max_memory_mb: Maximum memory per chunk
+            overlap: Items to overlap between chunks
+        """
+        self.chunk_size = chunk_size
+        self.max_memory_mb = max_memory_mb
+        self.overlap = overlap
+    
+    def chunk_list(self, data: list[T]) -> Iterator[list[T]]:
+        """Chunk a list into smaller pieces.
+        
+        Args:
+            data: List to chunk
+            
+        Yields:
+            Chunks of the list
+        """
+        total = len(data)
+        start = 0
+        
+        while start < total:
+            end = min(start + self.chunk_size, total)
+            yield data[start:end]
+            start = end - self.overlap if self.overlap > 0 else end
+    
+    def chunk_iterator(self, data: Iterator[T]) -> Iterator[list[T]]:
+        """Chunk an iterator into batches.
+        
+        Args:
+            data: Iterator to chunk
+            
+        Yields:
+            Chunks as lists
+        """
+        chunk: list[T] = []
+        
+        for item in data:
+            chunk.append(item)
+            if len(chunk) >= self.chunk_size:
+                yield chunk
+                # Keep overlap items
+                if self.overlap > 0:
+                    chunk = chunk[-self.overlap:]
+                else:
+                    chunk = []
+        
+        # Yield remaining items
+        if chunk:
+            yield chunk
+    
+    async def async_chunk_iterator(
+        self,
+        data: AsyncIterator[T],
+    ) -> AsyncIterator[list[T]]:
+        """Chunk an async iterator into batches.
+        
+        Args:
+            data: Async iterator to chunk
+            
+        Yields:
+            Chunks as lists
+        """
+        chunk: list[T] = []
+        
+        async for item in data:
+            chunk.append(item)
+            if len(chunk) >= self.chunk_size:
+                yield chunk
+                if self.overlap > 0:
+                    chunk = chunk[-self.overlap:]
+                else:
+                    chunk = []
+        
+        if chunk:
+            yield chunk
+    
+    def estimate_chunks(self, total_items: int) -> int:
+        """Estimate number of chunks needed.
+        
+        Args:
+            total_items: Total items to process
+            
+        Returns:
+            Estimated chunk count
+        """
+        if self.overlap > 0:
+            effective_chunk = self.chunk_size - self.overlap
+            return (total_items + effective_chunk - 1) // effective_chunk
+        return (total_items + self.chunk_size - 1) // self.chunk_size
+
+
+class StreamingProcessor(Generic[T, R]):
+    """Processes large datasets in a streaming fashion.
+    
+    Provides:
+    - Memory-efficient chunk processing
+    - Progress tracking with callbacks
+    - Backpressure handling
+    - Automatic retry on chunk failures
+    - Parallel chunk processing option
+    """
+    
+    def __init__(
+        self,
+        processor: Callable[[list[T]], R] | Callable[[list[T]], Awaitable[R]],
+        chunk_size: int = 1000,
+        max_concurrent: int = 1,
+        retry_failed_chunks: bool = True,
+        max_retries: int = 3,
+    ) -> None:
+        """Initialize streaming processor.
+        
+        Args:
+            processor: Function to process each chunk
+            chunk_size: Items per chunk
+            max_concurrent: Maximum concurrent chunk processing
+            retry_failed_chunks: Whether to retry failed chunks
+            max_retries: Maximum retries per chunk
+        """
+        self._processor = processor
+        self._chunk_size = chunk_size
+        self._max_concurrent = max_concurrent
+        self._retry_failed = retry_failed_chunks
+        self._max_retries = max_retries
+        
+        self._status = StreamStatus.IDLE
+        self._progress_callbacks: list[Callable[[StreamProgress], None]] = []
+        self._cancel_requested = False
+        self._pause_requested = False
+    
+    def on_progress(self, callback: Callable[[StreamProgress], None]) -> None:
+        """Register progress callback.
+        
+        Args:
+            callback: Function called with progress updates
+        """
+        self._progress_callbacks.append(callback)
+    
+    def cancel(self) -> None:
+        """Request cancellation of processing."""
+        self._cancel_requested = True
+    
+    def pause(self) -> None:
+        """Request pause of processing."""
+        self._pause_requested = True
+    
+    def resume(self) -> None:
+        """Resume paused processing."""
+        self._pause_requested = False
+    
+    async def process_stream(
+        self,
+        data: list[T] | Iterator[T] | AsyncIterator[T],
+        total_items: int | None = None,
+    ) -> StreamResult[R]:
+        """Process data stream.
+        
+        Args:
+            data: Data source (list, iterator, or async iterator)
+            total_items: Total items (for progress tracking)
+            
+        Returns:
+            Streaming result
+        """
+        import time
+        
+        start_time = time.perf_counter()
+        self._status = StreamStatus.STARTING
+        self._cancel_requested = False
+        self._pause_requested = False
+        
+        chunker = DataChunker[T](chunk_size=self._chunk_size)
+        results: list[R] = []
+        errors: list[str] = []
+        chunk_times: list[float] = []
+        
+        total_processed = 0
+        chunk_index = 0
+        successful_chunks = 0
+        failed_chunks = 0
+        peak_memory = 0.0
+        
+        # Convert to chunks
+        if isinstance(data, list):
+            total_items = total_items or len(data)
+            chunk_iter = chunker.chunk_list(data)
+        else:
+            chunk_iter = data  # type: ignore
+        
+        total_chunks = chunker.estimate_chunks(total_items) if total_items else None
+        
+        self._status = StreamStatus.STREAMING
+        
+        # Process chunks
+        if self._max_concurrent > 1:
+            # Parallel processing
+            chunk_buffer: list[tuple[int, list[T]]] = []
+            
+            for chunk in chunk_iter:
+                if self._cancel_requested:
+                    self._status = StreamStatus.CANCELLED
+                    break
+                
+                while self._pause_requested:
+                    self._status = StreamStatus.PAUSED
+                    await asyncio.sleep(0.1)
+                self._status = StreamStatus.STREAMING
+                
+                chunk_buffer.append((chunk_index, chunk))  # type: ignore
+                chunk_index += 1
+                
+                if len(chunk_buffer) >= self._max_concurrent:
+                    batch_results = await self._process_batch(chunk_buffer)
+                    for cr in batch_results:
+                        if cr.error:
+                            errors.append(cr.error)
+                            failed_chunks += 1
+                        else:
+                            if cr.result is not None:
+                                results.append(cr.result)
+                            successful_chunks += 1
+                        total_processed += cr.items_processed
+                        chunk_times.append(cr.duration_ms)
+                        peak_memory = max(peak_memory, cr.memory_mb)
+                    
+                    chunk_buffer = []
+                    
+                    # Notify progress
+                    await self._notify_progress(StreamProgress(
+                        total_items=total_items,
+                        processed_items=total_processed,
+                        current_chunk=chunk_index,
+                        total_chunks=total_chunks,
+                        bytes_processed=0,
+                        elapsed_seconds=time.perf_counter() - start_time,
+                        estimated_remaining_seconds=self._estimate_remaining(
+                            total_items, total_processed, time.perf_counter() - start_time
+                        ),
+                    ))
+            
+            # Process remaining
+            if chunk_buffer and not self._cancel_requested:
+                batch_results = await self._process_batch(chunk_buffer)
+                for cr in batch_results:
+                    if cr.error:
+                        errors.append(cr.error)
+                        failed_chunks += 1
+                    else:
+                        if cr.result is not None:
+                            results.append(cr.result)
+                        successful_chunks += 1
+                    total_processed += cr.items_processed
+                    chunk_times.append(cr.duration_ms)
+        else:
+            # Sequential processing
+            for chunk in chunk_iter:
+                if self._cancel_requested:
+                    self._status = StreamStatus.CANCELLED
+                    break
+                
+                while self._pause_requested:
+                    self._status = StreamStatus.PAUSED
+                    await asyncio.sleep(0.1)
+                self._status = StreamStatus.STREAMING
+                
+                cr = await self._process_chunk(chunk_index, chunk)  # type: ignore
+                
+                if cr.error:
+                    errors.append(cr.error)
+                    failed_chunks += 1
+                else:
+                    if cr.result is not None:
+                        results.append(cr.result)
+                    successful_chunks += 1
+                
+                total_processed += cr.items_processed
+                chunk_times.append(cr.duration_ms)
+                peak_memory = max(peak_memory, cr.memory_mb)
+                chunk_index += 1
+                
+                # Notify progress
+                await self._notify_progress(StreamProgress(
+                    total_items=total_items,
+                    processed_items=total_processed,
+                    current_chunk=chunk_index,
+                    total_chunks=total_chunks,
+                    bytes_processed=0,
+                    elapsed_seconds=time.perf_counter() - start_time,
+                    estimated_remaining_seconds=self._estimate_remaining(
+                        total_items, total_processed, time.perf_counter() - start_time
+                    ),
+                ))
+        
+        duration = (time.perf_counter() - start_time) * 1000
+        
+        if self._cancel_requested:
+            self._status = StreamStatus.CANCELLED
+        elif failed_chunks > 0 and successful_chunks == 0:
+            self._status = StreamStatus.FAILED
+        else:
+            self._status = StreamStatus.COMPLETED
+        
+        return StreamResult(
+            status=self._status,
+            total_chunks=chunk_index,
+            successful_chunks=successful_chunks,
+            failed_chunks=failed_chunks,
+            total_items_processed=total_processed,
+            results=results,
+            errors=errors,
+            duration_ms=duration,
+            peak_memory_mb=peak_memory,
+            average_chunk_time_ms=sum(chunk_times) / len(chunk_times) if chunk_times else 0,
+        )
+    
+    async def _process_chunk(
+        self,
+        index: int,
+        chunk: list[T],
+    ) -> ChunkResult[R]:
+        """Process a single chunk with retry support.
+        
+        Args:
+            index: Chunk index
+            chunk: Data chunk
+            
+        Returns:
+            Chunk processing result
+        """
+        import time
+        import tracemalloc
+        
+        tracemalloc.start()
+        start = time.perf_counter()
+        
+        last_error: str | None = None
+        
+        for attempt in range(self._max_retries if self._retry_failed else 1):
+            try:
+                if asyncio.iscoroutinefunction(self._processor):
+                    result = await self._processor(chunk)
+                else:
+                    result = self._processor(chunk)
+                
+                duration = (time.perf_counter() - start) * 1000
+                current, peak = tracemalloc.get_traced_memory()
+                tracemalloc.stop()
+                
+                return ChunkResult(
+                    chunk_index=index,
+                    items_processed=len(chunk),
+                    result=result,
+                    duration_ms=duration,
+                    memory_mb=peak / 1024 / 1024,
+                )
+            
+            except Exception as e:
+                last_error = str(e)
+                if attempt < self._max_retries - 1:
+                    await asyncio.sleep(0.1 * (2 ** attempt))  # Exponential backoff
+        
+        tracemalloc.stop()
+        duration = (time.perf_counter() - start) * 1000
+        
+        return ChunkResult(
+            chunk_index=index,
+            items_processed=len(chunk),
+            result=None,
+            error=last_error,
+            duration_ms=duration,
+        )
+    
+    async def _process_batch(
+        self,
+        chunks: list[tuple[int, list[T]]],
+    ) -> list[ChunkResult[R]]:
+        """Process multiple chunks in parallel.
+        
+        Args:
+            chunks: List of (index, chunk) tuples
+            
+        Returns:
+            List of chunk results
+        """
+        tasks = [self._process_chunk(idx, chunk) for idx, chunk in chunks]
+        return await asyncio.gather(*tasks)
+    
+    async def _notify_progress(self, progress: StreamProgress) -> None:
+        """Notify progress callbacks."""
+        for callback in self._progress_callbacks:
+            try:
+                callback(progress)
+            except Exception:
+                pass
+    
+    def _estimate_remaining(
+        self,
+        total: int | None,
+        processed: int,
+        elapsed: float,
+    ) -> float | None:
+        """Estimate remaining time."""
+        if total is None or processed == 0:
+            return None
+        
+        rate = processed / elapsed
+        remaining = total - processed
+        return remaining / rate if rate > 0 else None
+
+
+class StreamingPipeline(Generic[T, R]):
+    """Pipeline that processes data in streaming fashion.
+    
+    Combines multiple streaming processors into a pipeline
+    with backpressure handling and memory management.
+    """
+    
+    def __init__(
+        self,
+        name: str,
+        max_buffer_size: int = 1000,
+        memory_limit_mb: float = 500.0,
+    ) -> None:
+        """Initialize streaming pipeline.
+        
+        Args:
+            name: Pipeline name
+            max_buffer_size: Maximum items buffered between stages
+            memory_limit_mb: Memory limit in MB
+        """
+        self.name = name
+        self._max_buffer = max_buffer_size
+        self._memory_limit = memory_limit_mb
+        self._stages: list[tuple[str, Callable]] = []
+        self._status = StreamStatus.IDLE
+    
+    def add_stage(
+        self,
+        name: str,
+        processor: Callable[[T], R] | Callable[[T], Awaitable[R]],
+    ) -> "StreamingPipeline[T, R]":
+        """Add a processing stage.
+        
+        Args:
+            name: Stage name
+            processor: Processing function
+            
+        Returns:
+            Self for chaining
+        """
+        self._stages.append((name, processor))
+        return self
+    
+    async def process(
+        self,
+        source: AsyncIterator[T],
+    ) -> AsyncIterator[R]:
+        """Process data through the pipeline.
+        
+        Args:
+            source: Async data source
+            
+        Yields:
+            Processed results
+        """
+        self._status = StreamStatus.STREAMING
+        
+        current_stream: AsyncIterator = source
+        
+        for stage_name, processor in self._stages:
+            current_stream = self._apply_stage(current_stream, processor)
+        
+        async for result in current_stream:
+            yield result
+        
+        self._status = StreamStatus.COMPLETED
+    
+    async def _apply_stage(
+        self,
+        source: AsyncIterator,
+        processor: Callable,
+    ) -> AsyncIterator:
+        """Apply a stage to the stream.
+        
+        Args:
+            source: Input stream
+            processor: Stage processor
+            
+        Yields:
+            Processed items
+        """
+        buffer: list = []
+        
+        async for item in source:
+            if asyncio.iscoroutinefunction(processor):
+                result = await processor(item)
+            else:
+                result = processor(item)
+            
+            if result is not None:
+                yield result
+            
+            # Backpressure: pause if buffer grows too large
+            while len(buffer) >= self._max_buffer:
+                await asyncio.sleep(0.01)
+
+
+class MemoryAwareStream(Generic[T]):
+    """Stream that automatically manages memory.
+    
+    Monitors memory usage and applies backpressure
+    or triggers garbage collection when limits are approached.
+    """
+    
+    def __init__(
+        self,
+        source: Iterator[T] | AsyncIterator[T],
+        memory_limit_mb: float = 500.0,
+        gc_threshold_percent: float = 80.0,
+    ) -> None:
+        """Initialize memory-aware stream.
+        
+        Args:
+            source: Data source
+            memory_limit_mb: Memory limit in MB
+            gc_threshold_percent: Trigger GC at this percentage of limit
+        """
+        self._source = source
+        self._memory_limit = memory_limit_mb
+        self._gc_threshold = gc_threshold_percent
+        self._is_async = hasattr(source, '__anext__')
+    
+    async def __aiter__(self) -> AsyncIterator[T]:
+        """Async iterate with memory management."""
+        import gc
+        import tracemalloc
+        
+        tracemalloc.start()
+        gc_threshold_bytes = self._memory_limit * 1024 * 1024 * self._gc_threshold / 100
+        
+        if self._is_async:
+            async for item in self._source:  # type: ignore
+                current, peak = tracemalloc.get_traced_memory()
+                
+                if current > gc_threshold_bytes:
+                    gc.collect()
+                    await asyncio.sleep(0.01)  # Allow other tasks
+                
+                yield item
+        else:
+            for item in self._source:  # type: ignore
+                current, peak = tracemalloc.get_traced_memory()
+                
+                if current > gc_threshold_bytes:
+                    gc.collect()
+                    await asyncio.sleep(0.01)
+                
+                yield item
+        
+        tracemalloc.stop()
+    
+    def __iter__(self) -> Iterator[T]:
+        """Sync iterate with memory management."""
+        import gc
+        
+        for item in self._source:  # type: ignore
+            yield item
+            gc.collect()
+
+
+class StreamAggregator(Generic[T, R]):
+    """Aggregates streaming results efficiently.
+    
+    Provides running aggregations without storing all data.
+    """
+    
+    def __init__(self) -> None:
+        """Initialize aggregator."""
+        self._count = 0
+        self._sum = 0.0
+        self._min: float | None = None
+        self._max: float | None = None
+        self._sum_squares = 0.0  # For variance
+    
+    def update(self, value: float) -> None:
+        """Update aggregation with new value.
+        
+        Args:
+            value: New value to include
+        """
+        self._count += 1
+        self._sum += value
+        self._sum_squares += value * value
+        
+        if self._min is None or value < self._min:
+            self._min = value
+        if self._max is None or value > self._max:
+            self._max = value
+    
+    @property
+    def count(self) -> int:
+        """Get count."""
+        return self._count
+    
+    @property
+    def sum(self) -> float:
+        """Get sum."""
+        return self._sum
+    
+    @property
+    def mean(self) -> float:
+        """Get mean."""
+        return self._sum / self._count if self._count > 0 else 0.0
+    
+    @property
+    def min(self) -> float | None:
+        """Get minimum."""
+        return self._min
+    
+    @property
+    def max(self) -> float | None:
+        """Get maximum."""
+        return self._max
+    
+    @property
+    def variance(self) -> float:
+        """Get variance."""
+        if self._count < 2:
+            return 0.0
+        mean = self.mean
+        return (self._sum_squares / self._count) - (mean * mean)
+    
+    @property
+    def std_dev(self) -> float:
+        """Get standard deviation."""
+        return self.variance ** 0.5
+    
+    def to_dict(self) -> dict[str, Any]:
+        """Get aggregation results as dictionary."""
+        return {
+            "count": self._count,
+            "sum": self._sum,
+            "mean": self.mean,
+            "min": self._min,
+            "max": self._max,
+            "variance": self.variance,
+            "std_dev": self.std_dev,
+        }
+

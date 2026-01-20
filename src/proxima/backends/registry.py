@@ -347,6 +347,472 @@ class BackendHealthMonitor:
     def is_running(self) -> bool:
         return self._running
 
+    # =========================================================================
+    # Health Monitoring Edge Cases (2% completion)
+    # =========================================================================
+
+    def handle_timeout_edge_case(
+        self,
+        name: str,
+        timeout_seconds: float = 30.0,
+    ) -> HealthCheckResult:
+        """Handle health check with timeout to prevent hanging.
+
+        Edge case: Backend check may hang indefinitely if backend is unresponsive.
+
+        Args:
+            name: Backend name to check.
+            timeout_seconds: Maximum time to wait for health check.
+
+        Returns:
+            HealthCheckResult with timeout handling.
+        """
+        import concurrent.futures
+
+        start_time = time.perf_counter()
+        timestamp = time.time()
+
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(self.check_backend, name)
+                try:
+                    result = future.result(timeout=timeout_seconds)
+                    return result
+                except concurrent.futures.TimeoutError:
+                    response_time_ms = (time.perf_counter() - start_time) * 1000
+                    self._logger.warning(
+                        f"Health check timed out for backend {name} "
+                        f"after {timeout_seconds}s"
+                    )
+                    self._registry.mark_backend_failure(name, severity=0.25)
+                    return HealthCheckResult(
+                        backend_name=name,
+                        timestamp=timestamp,
+                        healthy=False,
+                        response_time_ms=response_time_ms,
+                        error=f"Timeout after {timeout_seconds}s",
+                        details={"edge_case": "timeout"},
+                    )
+        except Exception as e:
+            response_time_ms = (time.perf_counter() - start_time) * 1000
+            return HealthCheckResult(
+                backend_name=name,
+                timestamp=timestamp,
+                healthy=False,
+                response_time_ms=response_time_ms,
+                error=str(e),
+                details={"edge_case": "exception_during_timeout_check"},
+            )
+
+    def handle_intermittent_failure_edge_case(
+        self,
+        name: str,
+        retry_count: int = 3,
+        retry_delay_ms: float = 100.0,
+    ) -> HealthCheckResult:
+        """Handle intermittent failures with retries.
+
+        Edge case: Backend may fail sporadically due to network issues,
+        resource contention, or transient errors.
+
+        Args:
+            name: Backend name to check.
+            retry_count: Number of retries before declaring unhealthy.
+            retry_delay_ms: Delay between retries in milliseconds.
+
+        Returns:
+            HealthCheckResult with retry handling.
+        """
+        last_result: HealthCheckResult | None = None
+        successful_checks = 0
+        total_response_time_ms = 0.0
+
+        for attempt in range(retry_count):
+            result = self.check_backend(name)
+            total_response_time_ms += result.response_time_ms
+
+            if result.healthy:
+                successful_checks += 1
+                if successful_checks >= 2:  # Need at least 2 successful checks
+                    return HealthCheckResult(
+                        backend_name=name,
+                        timestamp=result.timestamp,
+                        healthy=True,
+                        response_time_ms=total_response_time_ms / (attempt + 1),
+                        details={
+                            "edge_case": "intermittent_recovery",
+                            "attempts": attempt + 1,
+                            "successful_checks": successful_checks,
+                        },
+                    )
+            last_result = result
+
+            if attempt < retry_count - 1:
+                time.sleep(retry_delay_ms / 1000.0)
+
+        # All retries failed or not enough successful checks
+        avg_response_time = total_response_time_ms / retry_count
+        return HealthCheckResult(
+            backend_name=name,
+            timestamp=time.time(),
+            healthy=False,
+            response_time_ms=avg_response_time,
+            error=last_result.error if last_result else "All retries failed",
+            details={
+                "edge_case": "intermittent_failure",
+                "attempts": retry_count,
+                "successful_checks": successful_checks,
+            },
+        )
+
+    def handle_partial_degradation_edge_case(
+        self,
+        name: str,
+    ) -> HealthCheckResult:
+        """Handle partial backend degradation.
+
+        Edge case: Backend may be available but with reduced capabilities
+        (e.g., GPU unavailable, reduced max qubits, missing features).
+
+        Args:
+            name: Backend name to check.
+
+        Returns:
+            HealthCheckResult with degradation details.
+        """
+        start_time = time.perf_counter()
+        timestamp = time.time()
+
+        try:
+            adapter = self._registry.get(name)
+            is_available = adapter.is_available()
+
+            if not is_available:
+                response_time_ms = (time.perf_counter() - start_time) * 1000
+                return HealthCheckResult(
+                    backend_name=name,
+                    timestamp=timestamp,
+                    healthy=False,
+                    response_time_ms=response_time_ms,
+                    error="Backend unavailable",
+                )
+
+            # Check for partial degradation
+            degradation_issues: list[str] = []
+            capabilities = adapter.get_capabilities()
+
+            # Check GPU availability if expected
+            if capabilities and capabilities.supports_gpu:
+                try:
+                    # Try to detect if GPU is actually accessible
+                    gpu_info = getattr(adapter, 'get_gpu_info', lambda: None)()
+                    if gpu_info is None:
+                        degradation_issues.append("GPU not accessible")
+                except Exception:
+                    degradation_issues.append("GPU check failed")
+
+            # Check memory constraints
+            try:
+                if hasattr(adapter, 'get_memory_info'):
+                    mem_info = adapter.get_memory_info()
+                    if mem_info and mem_info.get('utilization', 0) > 0.9:
+                        degradation_issues.append("High memory usage (>90%)")
+            except Exception:
+                pass
+
+            # Check version compatibility
+            try:
+                version = adapter.get_version()
+                if version and ('unknown' in version.lower() or 'error' in version.lower()):
+                    degradation_issues.append("Version detection issue")
+            except Exception:
+                degradation_issues.append("Version check failed")
+
+            response_time_ms = (time.perf_counter() - start_time) * 1000
+
+            if degradation_issues:
+                # Partial degradation - mark as degraded
+                self._registry.mark_backend_failure(name, severity=0.1)
+                return HealthCheckResult(
+                    backend_name=name,
+                    timestamp=timestamp,
+                    healthy=True,  # Still healthy but degraded
+                    response_time_ms=response_time_ms,
+                    details={
+                        "edge_case": "partial_degradation",
+                        "degradation_issues": degradation_issues,
+                        "status": "degraded",
+                    },
+                )
+
+            self._registry.mark_backend_success(name)
+            return HealthCheckResult(
+                backend_name=name,
+                timestamp=timestamp,
+                healthy=True,
+                response_time_ms=response_time_ms,
+                details={"edge_case": "partial_degradation", "status": "fully_healthy"},
+            )
+
+        except KeyError:
+            response_time_ms = (time.perf_counter() - start_time) * 1000
+            return HealthCheckResult(
+                backend_name=name,
+                timestamp=timestamp,
+                healthy=False,
+                response_time_ms=response_time_ms,
+                error="Backend not registered",
+            )
+        except Exception as e:
+            response_time_ms = (time.perf_counter() - start_time) * 1000
+            return HealthCheckResult(
+                backend_name=name,
+                timestamp=timestamp,
+                healthy=False,
+                response_time_ms=response_time_ms,
+                error=str(e),
+            )
+
+    def handle_flapping_edge_case(
+        self,
+        name: str,
+        stability_window: int = 10,
+        flap_threshold: int = 3,
+    ) -> tuple[bool, dict[str, Any]]:
+        """Detect and handle flapping backends.
+
+        Edge case: Backend rapidly alternating between healthy and unhealthy
+        states (flapping), which can indicate instability.
+
+        Args:
+            name: Backend name to check.
+            stability_window: Number of recent checks to analyze.
+            flap_threshold: Number of state changes to consider flapping.
+
+        Returns:
+            Tuple of (is_flapping, flapping_details).
+        """
+        history = self.get_health_history(name)
+        if len(history) < stability_window:
+            return False, {"edge_case": "flapping", "status": "insufficient_data"}
+
+        recent = history[-stability_window:]
+        state_changes = 0
+
+        for i in range(1, len(recent)):
+            if recent[i].healthy != recent[i - 1].healthy:
+                state_changes += 1
+
+        is_flapping = state_changes >= flap_threshold
+
+        if is_flapping:
+            # Apply damping - reduce health score for unstable backend
+            self._registry.mark_backend_failure(name, severity=0.15)
+            self._logger.warning(
+                f"Backend {name} is flapping: {state_changes} state changes "
+                f"in last {stability_window} checks"
+            )
+
+        return is_flapping, {
+            "edge_case": "flapping",
+            "is_flapping": is_flapping,
+            "state_changes": state_changes,
+            "threshold": flap_threshold,
+            "window_size": stability_window,
+            "recent_healthy_count": sum(1 for r in recent if r.healthy),
+            "recent_unhealthy_count": sum(1 for r in recent if not r.healthy),
+        }
+
+    def handle_resource_exhaustion_edge_case(
+        self,
+        name: str,
+    ) -> HealthCheckResult:
+        """Handle resource exhaustion scenarios.
+
+        Edge case: Backend may become unhealthy due to resource exhaustion
+        (memory, file handles, connections, threads).
+
+        Args:
+            name: Backend name to check.
+
+        Returns:
+            HealthCheckResult with resource exhaustion details.
+        """
+        import psutil
+
+        start_time = time.perf_counter()
+        timestamp = time.time()
+
+        resource_issues: list[str] = []
+
+        try:
+            # Check system memory
+            memory = psutil.virtual_memory()
+            if memory.percent > 95:
+                resource_issues.append(f"Critical system memory usage: {memory.percent}%")
+            elif memory.percent > 85:
+                resource_issues.append(f"High system memory usage: {memory.percent}%")
+
+            # Check available file descriptors (Unix-like systems)
+            try:
+                process = psutil.Process()
+                num_fds = process.num_fds() if hasattr(process, 'num_fds') else 0
+                if num_fds > 1000:
+                    resource_issues.append(f"High file descriptor count: {num_fds}")
+            except Exception:
+                pass
+
+            # Check thread count
+            try:
+                num_threads = len(psutil.Process().threads())
+                if num_threads > 100:
+                    resource_issues.append(f"High thread count: {num_threads}")
+            except Exception:
+                pass
+
+            # Now do the actual health check
+            result = self.check_backend(name)
+            response_time_ms = (time.perf_counter() - start_time) * 1000
+
+            if resource_issues:
+                result.details["edge_case"] = "resource_exhaustion"
+                result.details["resource_issues"] = resource_issues
+                if not result.healthy:
+                    result.details["likely_cause"] = "resource_exhaustion"
+
+            return result
+
+        except Exception as e:
+            response_time_ms = (time.perf_counter() - start_time) * 1000
+            return HealthCheckResult(
+                backend_name=name,
+                timestamp=timestamp,
+                healthy=False,
+                response_time_ms=response_time_ms,
+                error=str(e),
+                details={"edge_case": "resource_exhaustion", "check_failed": True},
+            )
+
+    def handle_cascading_failure_edge_case(
+        self,
+        affected_backends: list[str] | None = None,
+    ) -> dict[str, HealthCheckResult]:
+        """Handle cascading failures across multiple backends.
+
+        Edge case: One backend failure may trigger failures in dependent
+        backends (e.g., GPU driver crash affecting cuQuantum and qsim-gpu).
+
+        Args:
+            affected_backends: List of backends to check, or all if None.
+
+        Returns:
+            Dictionary mapping backend names to their health check results.
+        """
+        backends = affected_backends or [s.name for s in self._registry.list_statuses()]
+        results: dict[str, HealthCheckResult] = {}
+        failure_count = 0
+
+        for name in backends:
+            result = self.check_backend(name)
+            results[name] = result
+            if not result.healthy:
+                failure_count += 1
+
+        # If multiple backends failed simultaneously, likely a cascading failure
+        if failure_count >= 2:
+            self._logger.warning(
+                f"Potential cascading failure detected: {failure_count}/{len(backends)} "
+                f"backends unhealthy"
+            )
+
+            # Check for common dependencies
+            failed_backends = [name for name, r in results.items() if not r.healthy]
+
+            # Categorize by potential root cause
+            gpu_related = [b for b in failed_backends if b in ["cuquantum", "qsim"]]
+            dependency_related = [b for b in failed_backends if b in ["cirq", "qiskit", "qsim"]]
+
+            for name in failed_backends:
+                results[name].details["edge_case"] = "cascading_failure"
+                results[name].details["concurrent_failures"] = failure_count
+
+                if name in gpu_related and len(gpu_related) > 1:
+                    results[name].details["potential_cause"] = "gpu_subsystem_failure"
+                if name in dependency_related and len(dependency_related) > 1:
+                    results[name].details["potential_cause"] = "shared_dependency_failure"
+
+        return results
+
+    def comprehensive_health_check(
+        self,
+        name: str,
+        include_edge_cases: bool = True,
+    ) -> dict[str, Any]:
+        """Perform comprehensive health check including all edge cases.
+
+        Args:
+            name: Backend name to check.
+            include_edge_cases: Whether to run edge case handlers.
+
+        Returns:
+            Comprehensive health check report.
+        """
+        report: dict[str, Any] = {
+            "backend_name": name,
+            "timestamp": time.time(),
+            "basic_check": None,
+            "edge_cases": {},
+            "overall_status": "unknown",
+            "recommendations": [],
+        }
+
+        # Basic health check
+        basic_result = self.check_backend(name)
+        report["basic_check"] = {
+            "healthy": basic_result.healthy,
+            "response_time_ms": basic_result.response_time_ms,
+            "error": basic_result.error,
+        }
+
+        if include_edge_cases:
+            # Check for flapping
+            is_flapping, flap_details = self.handle_flapping_edge_case(name)
+            report["edge_cases"]["flapping"] = flap_details
+
+            # Check for partial degradation
+            degradation_result = self.handle_partial_degradation_edge_case(name)
+            report["edge_cases"]["degradation"] = degradation_result.details
+
+            # Check for resource exhaustion
+            resource_result = self.handle_resource_exhaustion_edge_case(name)
+            report["edge_cases"]["resources"] = resource_result.details
+
+            # Generate recommendations
+            if is_flapping:
+                report["recommendations"].append(
+                    "Backend is unstable - consider restarting or investigating root cause"
+                )
+            if degradation_result.details.get("degradation_issues"):
+                report["recommendations"].append(
+                    f"Partial degradation detected: {degradation_result.details['degradation_issues']}"
+                )
+            if resource_result.details.get("resource_issues"):
+                report["recommendations"].append(
+                    f"Resource issues: {resource_result.details['resource_issues']}"
+                )
+
+        # Determine overall status
+        if not basic_result.healthy:
+            report["overall_status"] = "unhealthy"
+        elif is_flapping if include_edge_cases else False:
+            report["overall_status"] = "unstable"
+        elif report["edge_cases"].get("degradation", {}).get("status") == "degraded":
+            report["overall_status"] = "degraded"
+        else:
+            report["overall_status"] = "healthy"
+
+        return report
+
 
 # =============================================================================
 # PERFORMANCE TRACKER

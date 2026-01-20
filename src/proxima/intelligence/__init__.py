@@ -48,6 +48,16 @@ from proxima.intelligence.selector import (
     SelectionStrategy,
     analyze_circuit,
     select_backend,
+    # Deeper circuit analysis (5% gap)
+    CircuitPatternType,
+    PatternMatch,
+    ComplexityMetrics,
+    OptimizationRecommendation,
+    DeepCircuitAnalysis,
+    GatePatternDetector,
+    CircuitComplexityAnalyzer,
+    OptimizationRecommendationEngine,
+    DeepCircuitAnalyzer,
 )
 
 __all__ = [
@@ -82,6 +92,16 @@ __all__ = [
     # Backend Selector - Functions
     "select_backend",
     "analyze_circuit",
+    # Backend Selector - Deeper Circuit Analysis (5% gap)
+    "CircuitPatternType",
+    "PatternMatch",
+    "ComplexityMetrics",
+    "OptimizationRecommendation",
+    "DeepCircuitAnalysis",
+    "GatePatternDetector",
+    "CircuitComplexityAnalyzer",
+    "OptimizationRecommendationEngine",
+    "DeepCircuitAnalyzer",
     # Insight Engine - Core
     "InsightEngine",
     "InsightReport",

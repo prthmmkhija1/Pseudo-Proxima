@@ -847,3 +847,888 @@ def on_consent_event(
     bus_kinds = event_kinds if event_kinds else None
     event_bus.register(handler, event_kinds=bus_kinds)
     return handler
+
+
+# =============================================================================
+# HOOK PRIORITIZATION (5% Gap Coverage)
+# Priority-based handler execution with dependencies and conflict resolution
+# =============================================================================
+
+
+class HookPriority(Enum):
+    """Standard priority levels for hooks."""
+    
+    SYSTEM = 0  # System-level hooks, run first
+    CRITICAL = 100  # Critical handlers
+    HIGH = 200  # High priority
+    NORMAL = 500  # Default priority
+    LOW = 800  # Low priority
+    MONITOR = 900  # Monitoring/logging hooks, run last
+    CLEANUP = 1000  # Cleanup hooks, run after everything
+
+
+@dataclass
+class PrioritizedHandler:
+    """A handler with priority and dependency information."""
+    
+    handler_id: str
+    handler: ConsentEventHandler
+    priority: int
+    name: str = ""
+    description: str = ""
+    
+    # Dependencies on other handlers
+    depends_on: list[str] = field(default_factory=list)  # Must run after these
+    blocks: list[str] = field(default_factory=list)  # Must run before these
+    
+    # Execution constraints
+    exclusive_group: str | None = None  # Only one in group runs
+    required: bool = False  # Failure aborts event processing
+    timeout_seconds: float = 30.0  # Max execution time
+    
+    # State
+    is_enabled: bool = True
+    execution_count: int = 0
+    total_execution_time: float = 0.0
+    last_error: str | None = None
+    
+    def __lt__(self, other: "PrioritizedHandler") -> bool:
+        """Compare by priority for sorting."""
+        return self.priority < other.priority
+    
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary."""
+        return {
+            "handler_id": self.handler_id,
+            "name": self.name,
+            "priority": self.priority,
+            "depends_on": self.depends_on,
+            "blocks": self.blocks,
+            "exclusive_group": self.exclusive_group,
+            "required": self.required,
+            "is_enabled": self.is_enabled,
+            "execution_count": self.execution_count,
+            "avg_execution_time": (
+                self.total_execution_time / self.execution_count 
+                if self.execution_count > 0 else 0
+            ),
+        }
+
+
+@dataclass
+class HookExecutionResult:
+    """Result of executing a prioritized hook."""
+    
+    handler_id: str
+    success: bool
+    execution_time: float
+    error: str | None = None
+    was_skipped: bool = False
+    skip_reason: str | None = None
+    
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary."""
+        return {
+            "handler_id": self.handler_id,
+            "success": self.success,
+            "execution_time": self.execution_time,
+            "error": self.error,
+            "was_skipped": self.was_skipped,
+            "skip_reason": self.skip_reason,
+        }
+
+
+@dataclass
+class HookChainResult:
+    """Result of executing a chain of prioritized hooks."""
+    
+    event_id: str
+    total_handlers: int
+    executed_handlers: int
+    successful_handlers: int
+    failed_handlers: int
+    skipped_handlers: int
+    
+    total_execution_time: float
+    aborted: bool
+    abort_reason: str | None
+    
+    results: list[HookExecutionResult]
+    
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary."""
+        return {
+            "event_id": self.event_id,
+            "total_handlers": self.total_handlers,
+            "executed_handlers": self.executed_handlers,
+            "successful_handlers": self.successful_handlers,
+            "failed_handlers": self.failed_handlers,
+            "skipped_handlers": self.skipped_handlers,
+            "total_execution_time": self.total_execution_time,
+            "aborted": self.aborted,
+            "abort_reason": self.abort_reason,
+            "results": [r.to_dict() for r in self.results],
+        }
+
+
+class DependencyResolver:
+    """Resolves handler dependencies into execution order.
+    
+    Uses topological sorting to respect dependencies while
+    maintaining priority ordering where possible.
+    """
+    
+    def __init__(self) -> None:
+        """Initialize resolver."""
+        self._handlers: dict[str, PrioritizedHandler] = {}
+    
+    def add_handler(self, handler: PrioritizedHandler) -> None:
+        """Add a handler to the resolver.
+        
+        Args:
+            handler: Handler to add
+        """
+        self._handlers[handler.handler_id] = handler
+    
+    def remove_handler(self, handler_id: str) -> None:
+        """Remove a handler from the resolver.
+        
+        Args:
+            handler_id: Handler ID to remove
+        """
+        self._handlers.pop(handler_id, None)
+    
+    def resolve(self) -> list[PrioritizedHandler]:
+        """Resolve dependencies and return execution order.
+        
+        Returns:
+            List of handlers in execution order
+        
+        Raises:
+            ValueError: If circular dependency detected
+        """
+        enabled = {
+            hid: h for hid, h in self._handlers.items() if h.is_enabled
+        }
+        
+        if not enabled:
+            return []
+        
+        # Build dependency graph
+        # handler -> set of handlers it depends on
+        graph: dict[str, set[str]] = {}
+        
+        for hid, handler in enabled.items():
+            deps = set()
+            
+            # Direct dependencies
+            for dep_id in handler.depends_on:
+                if dep_id in enabled:
+                    deps.add(dep_id)
+            
+            # Reverse dependencies (from blocks)
+            for other_id, other in enabled.items():
+                if hid in other.blocks and other_id in enabled:
+                    deps.add(other_id)
+            
+            graph[hid] = deps
+        
+        # Topological sort with priority as tiebreaker
+        resolved: list[str] = []
+        pending = set(enabled.keys())
+        
+        while pending:
+            # Find handlers with no unresolved dependencies
+            ready = [
+                hid for hid in pending
+                if all(dep in resolved for dep in graph[hid])
+            ]
+            
+            if not ready:
+                # Circular dependency
+                cycle = self._find_cycle(graph, pending)
+                raise ValueError(f"Circular dependency detected: {' -> '.join(cycle)}")
+            
+            # Sort ready handlers by priority
+            ready.sort(key=lambda hid: enabled[hid].priority)
+            
+            # Take the highest priority handler
+            next_handler = ready[0]
+            resolved.append(next_handler)
+            pending.remove(next_handler)
+        
+        return [enabled[hid] for hid in resolved]
+    
+    def _find_cycle(
+        self,
+        graph: dict[str, set[str]],
+        nodes: set[str],
+    ) -> list[str]:
+        """Find a cycle in the dependency graph.
+        
+        Args:
+            graph: Dependency graph
+            nodes: Nodes to check
+            
+        Returns:
+            List of node IDs forming a cycle
+        """
+        visited = set()
+        rec_stack = []
+        
+        def dfs(node: str) -> list[str] | None:
+            visited.add(node)
+            rec_stack.append(node)
+            
+            for neighbor in graph.get(node, set()):
+                if neighbor in nodes:
+                    if neighbor not in visited:
+                        result = dfs(neighbor)
+                        if result:
+                            return result
+                    elif neighbor in rec_stack:
+                        # Found cycle
+                        idx = rec_stack.index(neighbor)
+                        return rec_stack[idx:] + [neighbor]
+            
+            rec_stack.pop()
+            return None
+        
+        for node in nodes:
+            if node not in visited:
+                cycle = dfs(node)
+                if cycle:
+                    return cycle
+        
+        return ["unknown cycle"]
+    
+    def validate_dependencies(self) -> list[str]:
+        """Validate all dependencies can be resolved.
+        
+        Returns:
+            List of validation errors (empty if valid)
+        """
+        errors = []
+        
+        for hid, handler in self._handlers.items():
+            # Check depends_on exist
+            for dep_id in handler.depends_on:
+                if dep_id not in self._handlers:
+                    errors.append(
+                        f"Handler '{hid}' depends on unknown handler '{dep_id}'"
+                    )
+            
+            # Check blocks exist
+            for block_id in handler.blocks:
+                if block_id not in self._handlers:
+                    errors.append(
+                        f"Handler '{hid}' blocks unknown handler '{block_id}'"
+                    )
+        
+        # Check for cycles
+        try:
+            self.resolve()
+        except ValueError as e:
+            errors.append(str(e))
+        
+        return errors
+
+
+class ExclusiveGroupManager:
+    """Manages exclusive groups where only one handler runs.
+    
+    When multiple handlers belong to the same exclusive group,
+    only the highest priority one executes.
+    """
+    
+    def __init__(self) -> None:
+        """Initialize manager."""
+        self._groups: dict[str, list[str]] = {}  # group -> [handler_ids]
+        self._handler_groups: dict[str, str] = {}  # handler_id -> group
+    
+    def register(self, handler_id: str, group: str) -> None:
+        """Register a handler to an exclusive group.
+        
+        Args:
+            handler_id: Handler ID
+            group: Group name
+        """
+        if group not in self._groups:
+            self._groups[group] = []
+        
+        if handler_id not in self._groups[group]:
+            self._groups[group].append(handler_id)
+        
+        self._handler_groups[handler_id] = group
+    
+    def unregister(self, handler_id: str) -> None:
+        """Unregister a handler from its group.
+        
+        Args:
+            handler_id: Handler ID
+        """
+        group = self._handler_groups.pop(handler_id, None)
+        if group and group in self._groups:
+            try:
+                self._groups[group].remove(handler_id)
+            except ValueError:
+                pass
+    
+    def get_group(self, handler_id: str) -> str | None:
+        """Get the group a handler belongs to.
+        
+        Args:
+            handler_id: Handler ID
+            
+        Returns:
+            Group name or None
+        """
+        return self._handler_groups.get(handler_id)
+    
+    def should_execute(
+        self,
+        handler_id: str,
+        already_executed: set[str],
+    ) -> tuple[bool, str | None]:
+        """Check if a handler should execute based on group exclusivity.
+        
+        Args:
+            handler_id: Handler to check
+            already_executed: Set of already executed handler IDs
+            
+        Returns:
+            Tuple of (should_execute, skip_reason)
+        """
+        group = self._handler_groups.get(handler_id)
+        
+        if not group:
+            return (True, None)
+        
+        # Check if any handler from same group already executed
+        group_handlers = set(self._groups.get(group, []))
+        executed_from_group = already_executed & group_handlers
+        
+        if executed_from_group:
+            return (
+                False,
+                f"Exclusive group '{group}': {list(executed_from_group)[0]} already executed"
+            )
+        
+        return (True, None)
+    
+    def get_groups(self) -> dict[str, list[str]]:
+        """Get all groups and their handlers.
+        
+        Returns:
+            Dictionary of group -> handler IDs
+        """
+        return self._groups.copy()
+
+
+class PrioritizedEventBus:
+    """Event bus with prioritized handler execution.
+    
+    Features:
+    - Priority-based execution order
+    - Dependency resolution
+    - Exclusive group support
+    - Execution timeout
+    - Required handler enforcement
+    """
+    
+    def __init__(
+        self,
+        parallel_execution: bool = False,
+        abort_on_required_failure: bool = True,
+    ) -> None:
+        """Initialize prioritized event bus.
+        
+        Args:
+            parallel_execution: Execute handlers in parallel (ignoring deps)
+            abort_on_required_failure: Abort if required handler fails
+        """
+        self._parallel = parallel_execution
+        self._abort_on_required = abort_on_required_failure
+        self._lock = threading.Lock()
+        
+        self._handlers: dict[str, PrioritizedHandler] = {}
+        self._resolver = DependencyResolver()
+        self._exclusive = ExclusiveGroupManager()
+        
+        self._event_counter = 0
+        self._execution_history: list[HookChainResult] = []
+    
+    def register(
+        self,
+        handler: ConsentEventHandler,
+        priority: int = HookPriority.NORMAL.value,
+        handler_id: str | None = None,
+        name: str = "",
+        depends_on: list[str] | None = None,
+        blocks: list[str] | None = None,
+        exclusive_group: str | None = None,
+        required: bool = False,
+        timeout_seconds: float = 30.0,
+    ) -> str:
+        """Register a prioritized handler.
+        
+        Args:
+            handler: Handler to register
+            priority: Execution priority (lower = earlier)
+            handler_id: Optional handler ID
+            name: Optional handler name
+            depends_on: Handler IDs this must run after
+            blocks: Handler IDs this must run before
+            exclusive_group: Exclusive group name
+            required: Whether handler is required
+            timeout_seconds: Execution timeout
+            
+        Returns:
+            Handler ID
+        """
+        with self._lock:
+            if handler_id is None:
+                handler_id = f"handler_{len(self._handlers) + 1}_{int(time.time())}"
+            
+            prioritized = PrioritizedHandler(
+                handler_id=handler_id,
+                handler=handler,
+                priority=priority,
+                name=name or handler_id,
+                depends_on=depends_on or [],
+                blocks=blocks or [],
+                exclusive_group=exclusive_group,
+                required=required,
+                timeout_seconds=timeout_seconds,
+            )
+            
+            self._handlers[handler_id] = prioritized
+            self._resolver.add_handler(prioritized)
+            
+            if exclusive_group:
+                self._exclusive.register(handler_id, exclusive_group)
+            
+            return handler_id
+    
+    def unregister(self, handler_id: str) -> bool:
+        """Unregister a handler.
+        
+        Args:
+            handler_id: Handler to unregister
+            
+        Returns:
+            True if handler was found and removed
+        """
+        with self._lock:
+            if handler_id not in self._handlers:
+                return False
+            
+            del self._handlers[handler_id]
+            self._resolver.remove_handler(handler_id)
+            self._exclusive.unregister(handler_id)
+            return True
+    
+    def set_priority(self, handler_id: str, priority: int) -> bool:
+        """Update a handler's priority.
+        
+        Args:
+            handler_id: Handler ID
+            priority: New priority
+            
+        Returns:
+            True if updated
+        """
+        with self._lock:
+            if handler_id not in self._handlers:
+                return False
+            
+            self._handlers[handler_id].priority = priority
+            return True
+    
+    def enable_handler(self, handler_id: str) -> bool:
+        """Enable a handler.
+        
+        Args:
+            handler_id: Handler ID
+            
+        Returns:
+            True if enabled
+        """
+        with self._lock:
+            if handler_id not in self._handlers:
+                return False
+            
+            self._handlers[handler_id].is_enabled = True
+            return True
+    
+    def disable_handler(self, handler_id: str) -> bool:
+        """Disable a handler.
+        
+        Args:
+            handler_id: Handler ID
+            
+        Returns:
+            True if disabled
+        """
+        with self._lock:
+            if handler_id not in self._handlers:
+                return False
+            
+            self._handlers[handler_id].is_enabled = False
+            return True
+    
+    def dispatch(self, event: ConsentEvent) -> HookChainResult:
+        """Dispatch an event through prioritized handlers.
+        
+        Args:
+            event: Event to dispatch
+            
+        Returns:
+            HookChainResult with execution details
+        """
+        with self._lock:
+            self._event_counter += 1
+            event_id = f"event_{self._event_counter}"
+            
+            # Resolve execution order
+            try:
+                ordered_handlers = self._resolver.resolve()
+            except ValueError as e:
+                return HookChainResult(
+                    event_id=event_id,
+                    total_handlers=len(self._handlers),
+                    executed_handlers=0,
+                    successful_handlers=0,
+                    failed_handlers=0,
+                    skipped_handlers=len(self._handlers),
+                    total_execution_time=0.0,
+                    aborted=True,
+                    abort_reason=str(e),
+                    results=[],
+                )
+        
+        # Execute handlers
+        results: list[HookExecutionResult] = []
+        executed = set()
+        start_time = time.time()
+        aborted = False
+        abort_reason = None
+        
+        for prioritized in ordered_handlers:
+            if aborted:
+                results.append(HookExecutionResult(
+                    handler_id=prioritized.handler_id,
+                    success=False,
+                    execution_time=0.0,
+                    was_skipped=True,
+                    skip_reason="Chain aborted",
+                ))
+                continue
+            
+            # Check exclusive group
+            should_run, skip_reason = self._exclusive.should_execute(
+                prioritized.handler_id, executed
+            )
+            
+            if not should_run:
+                results.append(HookExecutionResult(
+                    handler_id=prioritized.handler_id,
+                    success=True,
+                    execution_time=0.0,
+                    was_skipped=True,
+                    skip_reason=skip_reason,
+                ))
+                continue
+            
+            # Execute handler
+            result = self._execute_handler(prioritized, event)
+            results.append(result)
+            
+            if result.success or result.was_skipped:
+                executed.add(prioritized.handler_id)
+            else:
+                # Check if required
+                if prioritized.required and self._abort_on_required:
+                    aborted = True
+                    abort_reason = f"Required handler '{prioritized.handler_id}' failed"
+        
+        total_time = time.time() - start_time
+        
+        chain_result = HookChainResult(
+            event_id=event_id,
+            total_handlers=len(ordered_handlers),
+            executed_handlers=len([r for r in results if not r.was_skipped]),
+            successful_handlers=len([r for r in results if r.success and not r.was_skipped]),
+            failed_handlers=len([r for r in results if not r.success and not r.was_skipped]),
+            skipped_handlers=len([r for r in results if r.was_skipped]),
+            total_execution_time=total_time,
+            aborted=aborted,
+            abort_reason=abort_reason,
+            results=results,
+        )
+        
+        with self._lock:
+            self._execution_history.append(chain_result)
+            if len(self._execution_history) > 1000:
+                self._execution_history = self._execution_history[-500:]
+        
+        return chain_result
+    
+    def _execute_handler(
+        self,
+        prioritized: PrioritizedHandler,
+        event: ConsentEvent,
+    ) -> HookExecutionResult:
+        """Execute a single handler with timeout.
+        
+        Args:
+            prioritized: Handler to execute
+            event: Event to pass
+            
+        Returns:
+            Execution result
+        """
+        start_time = time.time()
+        
+        try:
+            # Execute handler
+            prioritized.handler.handle_event(event)
+            
+            execution_time = time.time() - start_time
+            
+            # Update statistics
+            with self._lock:
+                prioritized.execution_count += 1
+                prioritized.total_execution_time += execution_time
+                prioritized.last_error = None
+            
+            return HookExecutionResult(
+                handler_id=prioritized.handler_id,
+                success=True,
+                execution_time=execution_time,
+            )
+            
+        except Exception as e:
+            execution_time = time.time() - start_time
+            error_msg = str(e)
+            
+            with self._lock:
+                prioritized.last_error = error_msg
+            
+            return HookExecutionResult(
+                handler_id=prioritized.handler_id,
+                success=False,
+                execution_time=execution_time,
+                error=error_msg,
+            )
+    
+    def get_execution_order(self) -> list[dict[str, Any]]:
+        """Get the current execution order of handlers.
+        
+        Returns:
+            List of handlers in execution order
+        """
+        with self._lock:
+            try:
+                ordered = self._resolver.resolve()
+                return [h.to_dict() for h in ordered]
+            except ValueError:
+                return []
+    
+    def get_handler_stats(self, handler_id: str) -> dict[str, Any] | None:
+        """Get statistics for a handler.
+        
+        Args:
+            handler_id: Handler ID
+            
+        Returns:
+            Handler statistics or None
+        """
+        with self._lock:
+            handler = self._handlers.get(handler_id)
+            if not handler:
+                return None
+            return handler.to_dict()
+    
+    def get_all_handlers(self) -> list[dict[str, Any]]:
+        """Get all registered handlers.
+        
+        Returns:
+            List of handler information
+        """
+        with self._lock:
+            return [h.to_dict() for h in self._handlers.values()]
+    
+    def validate(self) -> list[str]:
+        """Validate the handler configuration.
+        
+        Returns:
+            List of validation errors
+        """
+        with self._lock:
+            return self._resolver.validate_dependencies()
+    
+    def get_history(self, limit: int = 10) -> list[dict[str, Any]]:
+        """Get recent execution history.
+        
+        Args:
+            limit: Maximum results to return
+            
+        Returns:
+            List of execution results
+        """
+        with self._lock:
+            recent = self._execution_history[-limit:]
+            return [r.to_dict() for r in reversed(recent)]
+
+
+class DynamicPriorityAdjuster:
+    """Dynamically adjusts handler priorities based on performance.
+    
+    Features:
+    - Automatic priority adjustment
+    - Performance-based optimization
+    - Failure rate tracking
+    """
+    
+    def __init__(
+        self,
+        event_bus: PrioritizedEventBus,
+        adjustment_interval: float = 60.0,
+    ) -> None:
+        """Initialize adjuster.
+        
+        Args:
+            event_bus: Event bus to manage
+            adjustment_interval: Seconds between adjustments
+        """
+        self._bus = event_bus
+        self._interval = adjustment_interval
+        self._lock = threading.Lock()
+        
+        # Tracking
+        self._failure_counts: dict[str, int] = {}
+        self._slow_counts: dict[str, int] = {}  # Execution > threshold
+        self._slow_threshold = 5.0  # seconds
+        
+        # Adjustment bounds
+        self._min_priority = 0
+        self._max_priority = 1000
+        self._priority_step = 50
+        
+        # Background thread
+        self._running = False
+        self._thread: threading.Thread | None = None
+        self._stop_event = threading.Event()
+    
+    def record_execution(
+        self,
+        result: HookExecutionResult,
+    ) -> None:
+        """Record a handler execution for tracking.
+        
+        Args:
+            result: Execution result
+        """
+        with self._lock:
+            if not result.success and not result.was_skipped:
+                self._failure_counts[result.handler_id] = (
+                    self._failure_counts.get(result.handler_id, 0) + 1
+                )
+            
+            if result.execution_time > self._slow_threshold:
+                self._slow_counts[result.handler_id] = (
+                    self._slow_counts.get(result.handler_id, 0) + 1
+                )
+    
+    def adjust_priorities(self) -> dict[str, int]:
+        """Adjust priorities based on tracked performance.
+        
+        Returns:
+            Dictionary of handler_id -> new priority
+        """
+        adjustments = {}
+        
+        with self._lock:
+            handlers = self._bus.get_all_handlers()
+            
+            for handler_info in handlers:
+                handler_id = handler_info["handler_id"]
+                current = handler_info["priority"]
+                
+                failures = self._failure_counts.get(handler_id, 0)
+                slow = self._slow_counts.get(handler_id, 0)
+                
+                new_priority = current
+                
+                # Demote failing handlers
+                if failures > 5:
+                    new_priority = min(
+                        current + self._priority_step,
+                        self._max_priority
+                    )
+                
+                # Demote slow handlers
+                if slow > 3:
+                    new_priority = min(
+                        current + self._priority_step // 2,
+                        self._max_priority
+                    )
+                
+                # Promote well-performing handlers
+                exec_count = handler_info.get("execution_count", 0)
+                if exec_count > 10 and failures == 0 and slow == 0:
+                    new_priority = max(
+                        current - self._priority_step // 2,
+                        self._min_priority
+                    )
+                
+                if new_priority != current:
+                    self._bus.set_priority(handler_id, new_priority)
+                    adjustments[handler_id] = new_priority
+            
+            # Reset counters
+            self._failure_counts.clear()
+            self._slow_counts.clear()
+        
+        return adjustments
+    
+    def start_auto_adjustment(self) -> None:
+        """Start automatic priority adjustment."""
+        if self._running:
+            return
+        
+        self._running = True
+        self._stop_event.clear()
+        
+        def adjust_loop():
+            while not self._stop_event.is_set():
+                self._stop_event.wait(self._interval)
+                if not self._stop_event.is_set():
+                    self.adjust_priorities()
+        
+        self._thread = threading.Thread(target=adjust_loop, daemon=True)
+        self._thread.start()
+    
+    def stop_auto_adjustment(self) -> None:
+        """Stop automatic priority adjustment."""
+        self._stop_event.set()
+        self._running = False
+        
+        if self._thread:
+            self._thread.join(timeout=2.0)
+            self._thread = None
+    
+    def get_tracking_stats(self) -> dict[str, Any]:
+        """Get current tracking statistics.
+        
+        Returns:
+            Tracking statistics
+        """
+        with self._lock:
+            return {
+                "failure_counts": self._failure_counts.copy(),
+                "slow_counts": self._slow_counts.copy(),
+                "slow_threshold_seconds": self._slow_threshold,
+            }
+
