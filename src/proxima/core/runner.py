@@ -10,9 +10,14 @@ import time
 from collections import Counter
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
-import cirq
+try:
+    import cirq
+    CIRQ_AVAILABLE = True
+except ImportError:
+    cirq = None  # type: ignore
+    CIRQ_AVAILABLE = False
 
 from proxima.backends.base import SimulatorType
 from proxima.backends.registry import BackendRegistry
@@ -21,8 +26,10 @@ from proxima.utils.logging import get_logger
 logger = get_logger("runner")
 
 
-def create_bell_state_circuit() -> cirq.Circuit:
+def create_bell_state_circuit() -> "cirq.Circuit":
     """Create a 2-qubit Bell state circuit."""
+    if not CIRQ_AVAILABLE:
+        raise ImportError("cirq is required for circuit creation. Install with: pip install cirq")
     q0, q1 = cirq.LineQubit.range(2)
     circuit = cirq.Circuit(
         cirq.H(q0),  # Hadamard on qubit 0
@@ -32,8 +39,10 @@ def create_bell_state_circuit() -> cirq.Circuit:
     return circuit
 
 
-def create_ghz_state_circuit(num_qubits: int = 3) -> cirq.Circuit:
+def create_ghz_state_circuit(num_qubits: int = 3) -> "cirq.Circuit":
     """Create a GHZ state circuit."""
+    if not CIRQ_AVAILABLE:
+        raise ImportError("cirq is required for circuit creation. Install with: pip install cirq")
     qubits = cirq.LineQubit.range(num_qubits)
     circuit = cirq.Circuit(
         cirq.H(qubits[0]),  # Hadamard on first qubit
@@ -45,11 +54,13 @@ def create_ghz_state_circuit(num_qubits: int = 3) -> cirq.Circuit:
     return circuit
 
 
-def create_teleportation_circuit() -> cirq.Circuit:
+def create_teleportation_circuit() -> "cirq.Circuit":
     """Create a quantum teleportation circuit.
 
     Teleports the state of qubit 0 to qubit 2 using qubit 1 as an entangled resource.
     """
+    if not CIRQ_AVAILABLE:
+        raise ImportError("cirq is required for circuit creation. Install with: pip install cirq")
     q0, q1, q2 = cirq.LineQubit.range(3)
 
     circuit = cirq.Circuit(

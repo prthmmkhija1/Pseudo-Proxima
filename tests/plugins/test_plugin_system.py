@@ -556,8 +556,8 @@ class TestPluginManager:
         """Test registering plugin with manager."""
         manager.register_plugin(mock_plugin)
 
-        # Should be in registry
-        assert manager._registry.is_registered("managed_plugin")
+        # Should be in snapshot configs (register_plugin updates state, not registry)
+        assert "managed_plugin" in manager._snapshot.configs
 
     def test_state_persistence(self, manager, mock_plugin, tmp_path):
         """Test plugin state is persisted."""
@@ -723,12 +723,18 @@ class TestHookType:
         from proxima.plugins.hooks import HookType
 
         expected = [
+            "PRE_INIT",
+            "POST_INIT",
+            "PRE_SHUTDOWN",
             "PRE_EXECUTE",
             "POST_EXECUTE",
-            "PRE_COMPARE",
-            "POST_COMPARE",
             "ON_ERROR",
-            "ON_BACKEND_CHANGE",
+            "PRE_STAGE",
+            "POST_STAGE",
+            "PRE_BACKEND_INIT",
+            "POST_BACKEND_INIT",
+            "PRE_BACKEND_RUN",
+            "POST_BACKEND_RUN",
         ]
 
         for hook in expected:
@@ -781,10 +787,14 @@ class TestHookManager:
         callback = Mock()
         manager.register(HookType.PRE_EXECUTE, callback)
 
-        context = HookContext(hook_type=HookType.PRE_EXECUTE, data={})
-        manager.trigger(HookType.PRE_EXECUTE, context)
+        # trigger() takes a data dict and creates HookContext internally
+        result_context = manager.trigger(HookType.PRE_EXECUTE, data={})
 
-        callback.assert_called_once_with(context)
+        # Callback should be called once with a HookContext
+        callback.assert_called_once()
+        call_args = callback.call_args[0][0]
+        assert isinstance(call_args, HookContext)
+        assert call_args.hook_type == HookType.PRE_EXECUTE
 
     def test_unregister_hook(self):
         """Test unregistering a hook."""
@@ -797,8 +807,7 @@ class TestHookManager:
         manager.unregister(HookType.PRE_EXECUTE, callback)
 
         # Triggering should not call the callback
-        context = Mock()
-        manager.trigger(HookType.PRE_EXECUTE, context)
+        manager.trigger(HookType.PRE_EXECUTE, data={})
         callback.assert_not_called()
 
 
