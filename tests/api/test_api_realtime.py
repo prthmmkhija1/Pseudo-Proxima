@@ -314,7 +314,8 @@ class TestBulkOperations:
 
     def test_bulk_delete_results(self, client):
         """Test bulk deletion of results."""
-        response = client.delete(
+        response = client.request(
+            "DELETE",
             "/api/v1/results/bulk",
             json={"result_ids": ["id1", "id2"]}
         )

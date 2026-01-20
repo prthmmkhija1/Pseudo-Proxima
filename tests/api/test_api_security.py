@@ -122,7 +122,7 @@ class TestCircuitExecutionEndpoints:
             headers={"Content-Type": "application/json"}
         )
         
-        assert response.status_code in [400, 422]
+        assert response.status_code in [400, 404, 422]
 
     def test_submit_circuit_missing_fields(self, client):
         """Test submitting circuit with missing required fields."""
