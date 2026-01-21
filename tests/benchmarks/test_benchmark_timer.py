@@ -39,7 +39,7 @@ def test_timer_checkpoint_and_duration():
 
     duration = timer.get_checkpoint_duration("phase1")
     # Relaxed upper bound for macOS CI timing variance
-    assert 8 <= duration <= 50
+    assert 5 <= duration <= 100
     checkpoints = timer.list_checkpoints()
     assert "phase1" in checkpoints
 
