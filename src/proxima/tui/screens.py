@@ -81,13 +81,11 @@ class BaseScreen(Screen):
     """Base screen with common functionality."""
 
     BINDINGS = [
-        Binding("question_mark", "toggle_help", "Help", show=True),
-        Binding("1", "goto_dashboard", "Dashboard", show=False),
-        Binding("2", "goto_execution", "Execution", show=False),
-        Binding("3", "goto_config", "Config", show=False),
-        Binding("4", "goto_results", "Results", show=False),
-        Binding("5", "goto_backends", "Backends", show=False),
-        Binding("q", "quit", "Quit", show=True),
+        Binding("1", "goto_dashboard", "1 Dashboard", show=False),
+        Binding("2", "goto_execution", "2 Execution", show=False),
+        Binding("3", "goto_config", "3 Config", show=False),
+        Binding("4", "goto_results", "4 Results", show=False),
+        Binding("5", "goto_backends", "5 Backends", show=False),
     ]
 
     def action_toggle_help(self) -> None:
@@ -162,6 +160,7 @@ class DashboardScreen(BaseScreen):
         dock: bottom;
         height: 3;
         padding: 1;
+        margin-bottom: 1;
     }
 
     #quick-actions Button {
@@ -171,8 +170,8 @@ class DashboardScreen(BaseScreen):
 
     BINDINGS = [
         *BaseScreen.BINDINGS,
-        Binding("r", "refresh", "Refresh", show=True),
-        Binding("e", "new_execution", "New Execution", show=True),
+        Binding("r", "refresh", "r Refresh", show=False),
+        Binding("e", "new_execution", "e New Execution", show=False),
     ]
 
     def compose(self) -> ComposeResult:
@@ -423,8 +422,8 @@ class ExecutionScreen(BaseScreen):
 
     BINDINGS = [
         *BaseScreen.BINDINGS,
-        Binding("s", "stop_execution", "Stop", show=True),
-        Binding("c", "clear_logs", "Clear Logs", show=True),
+        Binding("s", "stop_execution", "s Stop", show=False),
+        Binding("c", "clear_logs", "c Clear Logs", show=False),
         Binding("enter", "start_execution", "Start", show=False),
     ]
 
@@ -589,7 +588,7 @@ class ExecutionScreen(BaseScreen):
         log_text = log_viewer.export_to_text()
 
         if not log_text.strip():
-            self.notify("No logs to export", severity="warning")
+            self.app.notify("No logs to export", severity="warning")
             return
 
         # Create exports directory if needed
@@ -609,10 +608,10 @@ class ExecutionScreen(BaseScreen):
                 f.write(log_text)
 
             log_viewer.log_success(f"Logs exported to {filepath}")
-            self.notify(f"Logs exported to {filename}", severity="information")
+            self.app.notify(f"Logs exported to {filename}", severity="information")
         except Exception as e:
             log_viewer.log_error(f"Failed to export logs: {e}")
-            self.notify(f"Export failed: {e}", severity="error")
+            self.app.notify(f"Export failed: {e}", severity="error")
 
     async def _run_real_execution(self, backend_name: str = "auto") -> None:
         """Run a real execution using the Proxima pipeline."""
@@ -763,7 +762,7 @@ class ConfigurationScreen(BaseScreen):
 
     BINDINGS = [
         *BaseScreen.BINDINGS,
-        Binding("ctrl+s", "save_config", "Save", show=True),
+        Binding("ctrl+s", "save_config", "Save", show=False),
     ]
 
     def compose(self) -> ComposeResult:
@@ -839,9 +838,9 @@ class ConfigurationScreen(BaseScreen):
         try:
             with open(config_file, "w", encoding="utf-8") as f:
                 json.dump(config, f, indent=2)
-            self.notify(f"Configuration saved to {config_file}", severity="information")
+            self.app.notify(f"Configuration saved to {config_file}", severity="information")
         except Exception as e:
-            self.notify(f"Failed to save config: {e}", severity="error")
+            self.app.notify(f"Failed to save config: {e}", severity="error")
 
     async def _import_config(self) -> None:
         """Import configuration from file."""
@@ -868,7 +867,7 @@ class ConfigurationScreen(BaseScreen):
 
         filepath = response.data.get("filepath", "")
         if not filepath or not os.path.exists(filepath):
-            self.notify("File not found", severity="error")
+            self.app.notify("File not found", severity="error")
             return
 
         try:
@@ -879,7 +878,7 @@ class ConfigurationScreen(BaseScreen):
 
                         config = yaml.safe_load(f)
                     except ImportError:
-                        self.notify(
+                        self.app.notify(
                             "YAML support requires pyyaml package", severity="error"
                         )
                         return
@@ -905,11 +904,11 @@ class ConfigurationScreen(BaseScreen):
                 except Exception:
                     pass
 
-            self.notify(
+            self.app.notify(
                 f"Configuration imported from {filepath}", severity="information"
             )
         except Exception as e:
-            self.notify(f"Failed to import config: {e}", severity="error")
+            self.app.notify(f"Failed to import config: {e}", severity="error")
 
     async def _export_config(self) -> None:
         """Export current configuration to file."""
@@ -945,16 +944,16 @@ class ConfigurationScreen(BaseScreen):
         try:
             with open(filepath, "w", encoding="utf-8") as f:
                 json.dump(config, f, indent=2)
-            self.notify(f"Config exported to {filename}", severity="information")
+            self.app.notify(f"Config exported to {filename}", severity="information")
         except Exception as e:
-            self.notify(f"Export failed: {e}", severity="error")
+            self.app.notify(f"Export failed: {e}", severity="error")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button presses."""
         if event.button.id == "btn-save":
             self.action_save_config()
         elif event.button.id == "btn-reset":
-            self.notify("Configuration reset to defaults", severity="warning")
+            self.app.notify("Configuration reset to defaults", severity="warning")
         elif event.button.id == "btn-export":
             self.run_worker(self._export_config())
         elif event.button.id == "btn-import":
@@ -1003,8 +1002,8 @@ class ResultsScreen(BaseScreen):
 
     BINDINGS = [
         *BaseScreen.BINDINGS,
-        Binding("r", "refresh_results", "Refresh", show=True),
-        Binding("delete", "delete_result", "Delete", show=True),
+        Binding("r", "refresh_results", "r Refresh", show=False),
+        Binding("delete", "delete_result", "Del Delete", show=False),
     ]
 
     def compose(self) -> ComposeResult:
@@ -1062,16 +1061,16 @@ class ResultsScreen(BaseScreen):
     def action_refresh_results(self) -> None:
         """Refresh results list."""
         self._load_sample_results()
-        self.notify("Results refreshed", severity="information")
+        self.app.notify("Results refreshed", severity="information")
 
     def action_delete_result(self) -> None:
         """Delete selected result."""
         results_table = self.query_one("#results-table", ResultsTable)
         selected = results_table.get_selected_result()
         if selected:
-            self.notify(f"Deleted result {selected['id']}", severity="warning")
+            self.app.notify(f"Deleted result {selected['id']}", severity="warning")
         else:
-            self.notify("No result selected", severity="warning")
+            self.app.notify("No result selected", severity="warning")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button presses."""
@@ -1081,15 +1080,15 @@ class ResultsScreen(BaseScreen):
             results_table = self.query_one("#results-table", ResultsTable)
             selected = results_table.get_selected_result()
             if selected:
-                self.notify(
+                self.app.notify(
                     f"Details for {selected['id']}: {selected}", severity="information"
                 )
         elif event.button.id == "btn-export":
-            self.notify("Results exported to results.json", severity="information")
+            self.app.notify("Results exported to results.json", severity="information")
         elif event.button.id == "btn-delete":
             self.action_delete_result()
         elif event.button.id == "btn-clear":
-            self.notify("All results cleared", severity="warning")
+            self.app.notify("All results cleared", severity="warning")
 
 
 class BackendsScreen(BaseScreen):
@@ -1135,8 +1134,8 @@ class BackendsScreen(BaseScreen):
 
     BINDINGS = [
         *BaseScreen.BINDINGS,
-        Binding("r", "refresh_backends", "Refresh", show=True),
-        Binding("t", "test_connection", "Test", show=True),
+        Binding("r", "refresh_backends", "r Refresh", show=False),
+        Binding("t", "test_connection", "t Test", show=False),
     ]
 
     def __init__(self, **kwargs) -> None:
@@ -1253,15 +1252,15 @@ class BackendsScreen(BaseScreen):
     def action_refresh_backends(self) -> None:
         """Refresh backend list."""
         self._refresh_backends()
-        self.notify("Backends refreshed", severity="information")
+        self.app.notify("Backends refreshed", severity="information")
 
     async def action_test_connection(self) -> None:
         """Test connection to selected backend."""
         if not self._selected_backend:
-            self.notify("No backend selected", severity="warning")
+            self.app.notify("No backend selected", severity="warning")
             return
 
-        self.notify(
+        self.app.notify(
             f"Testing connection to {self._selected_backend.name}...",
             severity="information",
         )
@@ -1275,13 +1274,13 @@ class BackendsScreen(BaseScreen):
                 # Attempt a simple test
                 is_available = await backend.is_available()
                 if is_available:
-                    self.notify(
+                    self.app.notify(
                         f"{self._selected_backend.name}: Connection successful!",
                         severity="information",
                     )
                     self._selected_backend.status = BackendStatus.CONNECTED
                 else:
-                    self.notify(
+                    self.app.notify(
                         f"{self._selected_backend.name}: Connection failed",
                         severity="error",
                     )
@@ -1289,18 +1288,18 @@ class BackendsScreen(BaseScreen):
                 # Refresh the display
                 self._show_backend_details(self._selected_backend)
             else:
-                self.notify(
+                self.app.notify(
                     f"Backend {self._selected_backend.name} not found in registry",
                     severity="warning",
                 )
         except ImportError:
             # Fallback if registry not available
-            self.notify(
+            self.app.notify(
                 f"Simulated test for {self._selected_backend.name}: OK",
                 severity="information",
             )
         except Exception as e:
-            self.notify(f"Connection test failed: {e}", severity="error")
+            self.app.notify(f"Connection test failed: {e}", severity="error")
 
     async def _show_add_backend_dialog(self) -> None:
         """Show dialog to add a new backend."""
@@ -1345,7 +1344,7 @@ class BackendsScreen(BaseScreen):
         backend_name = data.get("name", "").strip()
 
         if not backend_name:
-            self.notify("Backend name is required", severity="error")
+            self.app.notify("Backend name is required", severity="error")
             return
 
         try:
@@ -1360,30 +1359,30 @@ class BackendsScreen(BaseScreen):
                 api_key=data.get("api_key"),
             )
 
-            self.notify(
+            self.app.notify(
                 f"Backend '{backend_name}' added successfully!", severity="information"
             )
             self._refresh_backends()
 
         except ImportError:
             # Fallback if registry not available - just show success
-            self.notify(
+            self.app.notify(
                 f"Backend '{backend_name}' registered (simulation mode)",
                 severity="information",
             )
             self._refresh_backends()
         except AttributeError:
             # register_custom might not exist
-            self.notify(
+            self.app.notify(
                 "Custom backend registration not supported yet", severity="warning"
             )
         except Exception as e:
-            self.notify(f"Failed to add backend: {e}", severity="error")
+            self.app.notify(f"Failed to add backend: {e}", severity="error")
 
     async def _show_configure_backend_dialog(self) -> None:
         """Show configuration dialog for selected backend."""
         if not self._selected_backend:
-            self.notify("No backend selected", severity="warning")
+            self.app.notify("No backend selected", severity="warning")
             return
 
         from .modals import FormField, FormModal
@@ -1433,12 +1432,12 @@ class BackendsScreen(BaseScreen):
                     max_shots=int(data.get("max_shots", 10000)),
                     retry_count=int(data.get("retry_count", 3)),
                 )
-            self.notify(
+            self.app.notify(
                 f"Configuration applied to {self._selected_backend.name}",
                 severity="information",
             )
         except Exception as e:
-            self.notify(f"Configuration applied (local only): {e}", severity="warning")
+            self.app.notify(f"Configuration applied (local only): {e}", severity="warning")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button presses."""

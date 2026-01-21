@@ -45,6 +45,7 @@ $surface-lighten-2: #2a4a7c;
 $error: #e74c3c;
 $warning: #f39c12;
 $success: #2ecc71;
+$info: #3498db;
 $text: #ecf0f1;
 $text-muted: #95a5a6;
 $accent: #9b59b6;
@@ -59,12 +60,15 @@ Header {
 }
 
 Footer {
+    dock: bottom;
+    height: 1;
     background: $surface;
     color: $text;
 }
 
 Button {
     margin: 0 1;
+    min-width: 10;
 }
 
 Button.-primary {
@@ -97,7 +101,7 @@ Toast {
     dock: top;
     width: 60;
     height: auto;
-    margin: 2 auto;
+    margin: 2 0;
 }
 
 /* Modals */
@@ -131,15 +135,15 @@ class ProximaApp(App):
     CSS = PROXIMA_CSS
 
     BINDINGS = [
-        Binding("1", "show_dashboard", "Dashboard", show=True, priority=True),
-        Binding("2", "show_execution", "Execution", show=True, priority=True),
-        Binding("3", "show_config", "Config", show=True, priority=True),
-        Binding("4", "show_results", "Results", show=True, priority=True),
-        Binding("5", "show_backends", "Backends", show=True, priority=True),
-        Binding("6", "show_circuit", "Circuit", show=True, priority=True),
-        Binding("q", "quit", "Quit", show=True),
-        Binding("question_mark", "show_help", "Help", show=True),
-        Binding("ctrl+p", "show_command_palette", "Commands", show=True),
+        Binding("1", "show_dashboard", "1:Dashboard", show=True, priority=True),
+        Binding("2", "show_execution", "2:Exec", show=True, priority=True),
+        Binding("3", "show_config", "3:Config", show=True, priority=True),
+        Binding("4", "show_results", "4:Results", show=True, priority=True),
+        Binding("5", "show_backends", "5:Backends", show=True, priority=True),
+        Binding("6", "show_circuit", "6:Circuit", show=False, priority=True),
+        Binding("q", "quit", "q:Quit", show=True),
+        Binding("question_mark", "show_help", "?:Help", show=True),
+        Binding("ctrl+p", "show_command_palette", "^p:Cmd", show=False),
         Binding("ctrl+r", "refresh", "Refresh", show=False),
         Binding("ctrl+c", "quit", "Quit", show=False),
     ]
@@ -282,7 +286,7 @@ class ProximaApp(App):
         
         if self._current_screen != screen_name:
             # Pop current screen and push new one
-            while len(self.screen_stack) > 0:
+            while len(self.screen_stack) > 1:
                 self.pop_screen()
             self.push_screen(screen_name)
             self._current_screen = screen_name

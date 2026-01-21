@@ -1,4 +1,4 @@
-﻿"""TUI Widgets for Proxima.
+"""TUI Widgets for Proxima.
 
 Step 6.1: Rich widget library including:
 - StatusPanel: System status display
@@ -80,14 +80,14 @@ class StatusIndicator(Static):
     """
 
     ICONS = {
-        "success": "✓",
-        "error": "✗",
-        "warning": "⚠",
-        "info": "ℹ",
-        "pending": "○",
-        "running": "◉",
-        "connected": "●",
-        "disconnected": "○",
+        "success": "?",
+        "error": "?",
+        "warning": "?",
+        "info": "?",
+        "pending": "?",
+        "running": "?",
+        "connected": "?",
+        "disconnected": "?",
     }
 
     status = reactive("pending")
@@ -105,7 +105,7 @@ class StatusIndicator(Static):
         self._update_content()
 
     def _update_content(self) -> None:
-        icon = self.ICONS.get(self.status, "○")
+        icon = self.ICONS.get(self.status, "?")
         self.update(f"{icon} {self._label}" if self._label else icon)
 
 
@@ -143,7 +143,7 @@ class StatusPanel(Static):
 
     def compose(self) -> ComposeResult:
         if self._title:
-            yield Label(f"📊 {self._title}", classes="status-title")
+            yield Label(f"?? {self._title}", classes="status-title")
         yield Container(id="status-items")
 
     def on_mount(self) -> None:
@@ -210,7 +210,7 @@ class LogViewer(Static):
     LogViewer .log-timestamp { color: $text-muted; width: 12; }
     LogViewer .log-level { width: 8; text-align: center; }
     LogViewer .log-level-debug { color: $text-muted; }
-    LogViewer .log-level-info { color: $info; }
+    LogViewer .log-level-info { color: $accent; }
     LogViewer .log-level-warning { color: $warning; }
     LogViewer .log-level-error { color: $error; }
     LogViewer .log-level-success { color: $success; }
@@ -236,7 +236,7 @@ class LogViewer(Static):
 
     def compose(self) -> ComposeResult:
         with Container(classes="log-header"):
-            yield Label("📋 Logs")
+            yield Label("?? Logs")
         with ScrollableContainer(classes="log-content", id="log-content"):
             pass
         with Horizontal(classes="log-footer"):
@@ -316,17 +316,11 @@ class LogViewer(Static):
         if self._filter_text and self._filter_text.lower() not in entry.message.lower():
             return
         content = self.query_one("#log-content", ScrollableContainer)
-        with content.batch():
-            row = Horizontal(classes="log-entry")
-            row.mount(Label(entry.format_timestamp(), classes="log-timestamp"))
-            row.mount(
-                Label(
-                    f"[{entry.format_level()}]",
-                    classes=f"log-level log-level-{entry.level}",
-                )
-            )
-            row.mount(Label(entry.message, classes="log-message"))
-            content.mount(row)
+        # Create formatted log line as a single Label
+        ts = entry.format_timestamp()
+        level = entry.format_level()
+        log_line = f"{ts} [{level}] {entry.message}"
+        content.mount(Label(log_line, classes=f"log-entry log-level-{entry.level}"))
         if self._auto_scroll:
             content.scroll_end()
 
@@ -383,7 +377,7 @@ class BackendCard(Static):
 
     DEFAULT_CSS = """
     BackendCard {
-        border: solid $surface-light;
+        border: solid $surface-lighten-1;
         padding: 1;
         margin: 1;
         height: auto;
@@ -412,13 +406,13 @@ class BackendCard(Static):
 
     def compose(self) -> ComposeResult:
         icons = {
-            BackendStatus.CONNECTED: "🟢",
-            BackendStatus.DISCONNECTED: "⚪",
-            BackendStatus.ERROR: "🔴",
-            BackendStatus.CONNECTING: "🟡",
+            BackendStatus.CONNECTED: "??",
+            BackendStatus.DISCONNECTED: "?",
+            BackendStatus.ERROR: "??",
+            BackendStatus.CONNECTING: "??",
         }
         yield Label(
-            f"{icons.get(self._backend.status, '⚪')} {self._backend.name}",
+            f"{icons.get(self._backend.status, '?')} {self._backend.name}",
             classes="backend-name",
         )
         yield Label(f"Type: {self._backend.backend_type}", classes="backend-type")
@@ -470,7 +464,7 @@ class ResultsTable(Static):
         table = self.query_one("#results-data-table", DataTable)
         table.clear()
         for result in results:
-            icon = "✓" if result.get("status") == "success" else "✗"
+            icon = "?" if result.get("status") == "success" else "?"
             ts = datetime.fromtimestamp(result.get("timestamp", time.time())).strftime(
                 "%H:%M:%S"
             )
@@ -559,7 +553,7 @@ class MetricDisplay(Static):
     """Display for a single metric with optional trend."""
 
     DEFAULT_CSS = """
-    MetricDisplay { height: auto; min-width: 15; padding: 1; border: solid $surface-light; text-align: center; }
+    MetricDisplay { height: auto; min-width: 15; padding: 1; border: solid $surface-lighten-1; text-align: center; }
     MetricDisplay .metric-value { text-style: bold; text-align: center; }
     MetricDisplay .metric-label { color: $text-muted; text-align: center; }
     MetricDisplay .trend-up { color: $success; }
@@ -592,7 +586,7 @@ class MetricDisplay(Static):
                 if self._trend > 0
                 else ("trend-down" if self._trend < 0 else "trend-neutral")
             )
-            icon = "↑" if self._trend > 0 else ("↓" if self._trend < 0 else "→")
+            icon = "?" if self._trend > 0 else ("?" if self._trend < 0 else "?")
             yield Label(
                 f"{icon} {abs(self._trend):.1f}%", classes=f"metric-trend {cls}"
             )
@@ -669,11 +663,11 @@ class HelpModal(Static):
     """
 
     def compose(self) -> ComposeResult:
-        yield Label("⌨️ Keyboard Shortcuts", classes="help-title")
+        yield Label("?? Keyboard Shortcuts", classes="help-title")
         yield Label("Navigation", classes="help-section")
         yield Label("  [bold]1-5[/bold]  Switch screens", classes="help-shortcut")
         yield Label("  [bold]Tab[/bold]  Next element", classes="help-shortcut")
-        yield Label("  [bold]↑/↓[/bold]  Navigate lists", classes="help-shortcut")
+        yield Label("  [bold]?/?[/bold]  Navigate lists", classes="help-shortcut")
         yield Label("  [bold]Enter[/bold]  Select/Confirm", classes="help-shortcut")
         yield Label("Actions", classes="help-section")
         yield Label("  [bold]r[/bold]  Refresh data", classes="help-shortcut")
@@ -793,7 +787,7 @@ class ExecutionCard(Static):
         self.add_class(status)
 
     def compose(self) -> ComposeResult:
-        icon = "✓" if self._status == "success" else "✗"
+        icon = "?" if self._status == "success" else "?"
         yield Label(f"{icon} Execution {self._id}", classes="exec-title")
         ts = datetime.fromtimestamp(self._timestamp).strftime("%H:%M:%S")
         yield Label(

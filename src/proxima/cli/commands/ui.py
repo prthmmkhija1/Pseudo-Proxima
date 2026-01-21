@@ -13,7 +13,7 @@ app = typer.Typer(help="Launch the Terminal User Interface.")
 def ui_callback(ctx: typer.Context) -> None:
     """Launch the TUI."""
     if ctx.invoked_subcommand is None:
-        launch()
+        launch_tui()
 
 
 @app.command("launch")
@@ -22,6 +22,11 @@ def launch(
     screen: str = typer.Option("dashboard", "--screen", "-s", help="Initial screen"),
 ) -> None:
     """Launch the Proxima TUI."""
+    launch_tui(theme, screen)
+
+
+def launch_tui(theme: str = "dark", screen: str = "dashboard") -> None:
+    """Launch the Proxima TUI with the specified theme and screen."""
     try:
         from proxima.tui.app import ProximaApp
     except ImportError as e:
