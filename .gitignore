@@ -68,7 +68,7 @@ dmypy.json
 .proxima/
 *.proxima.yaml
 results/
-sessions/
+/sessions/
 logs/
 
 # Build and release
