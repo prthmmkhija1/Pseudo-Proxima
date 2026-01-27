@@ -240,8 +240,7 @@ class ResultsScreen(BaseScreen):
             ]
             
             # Show detailed stats
-            self.notify("
-".join(stats_text))
+            self.notify("\n".join(stats_text))
             self.notify("Install dialogs for full statistics view", severity="information")
 
     def _export_json(self) -> None:
