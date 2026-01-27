@@ -62,6 +62,10 @@ class BackendsScreen(BaseScreen):
         background: $surface-lighten-1;
     }
     
+    BackendsScreen .backend-card:focus {
+        border: double $primary;
+    }
+    
     BackendsScreen .backend-name {
         text-style: bold;
     }
@@ -81,6 +85,11 @@ class BackendsScreen(BaseScreen):
         margin-right: 1;
     }
     """
+    
+    def __init__(self, **kwargs):
+        """Initialize the backends screen."""
+        super().__init__(**kwargs)
+        self._selected_backend = None
     
     def compose_main(self):
         """Compose the backends screen content."""
@@ -309,6 +318,8 @@ class BackendsScreen(BaseScreen):
 class BackendCard(Static):
     """A card displaying backend information."""
     
+    can_focus = True  # Make card focusable for selection
+    
     def __init__(
         self,
         backend_id: str,
@@ -324,6 +335,31 @@ class BackendCard(Static):
         self.description = description
         self.status = status
         self.classes = "backend-card"
+        self._selected = False
+    
+    def on_click(self) -> None:
+        """Handle click to select this backend."""
+        # Find parent screen and update selection
+        screen = self.screen
+        if hasattr(screen, '_selected_backend'):
+            # Deselect previous
+            if screen._selected_backend:
+                try:
+                    for card in screen.query(BackendCard):
+                        card.remove_class("-selected")
+                        card._selected = False
+                except Exception:
+                    pass
+        
+        # Select this card
+        self._selected = True
+        self.add_class("-selected")
+        screen._selected_backend = {
+            'name': self.backend_name,
+            'type': 'Simulator',
+            'status': self.status,
+        }
+        screen.notify(f"Selected: {self.backend_name}")
     
     def render(self) -> Text:
         """Render the backend card."""

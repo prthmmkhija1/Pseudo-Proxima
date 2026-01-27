@@ -63,8 +63,88 @@ class ProximaTUI(App):
         self.title = "Proxima"
         self.sub_title = "Quantum Simulation Orchestration"
         
+        # Auto-load last session settings
+        self._auto_load_session()
+        
+        # Apply saved theme
+        self._apply_saved_theme()
+        
         # Install and push the initial screen
         self.push_screen(DashboardScreen(state=self.state))
+    
+    def _auto_load_session(self) -> None:
+        """Auto-load the last active session on startup."""
+        import json
+        
+        try:
+            config_dir = Path.home() / ".proxima"
+            session_file = config_dir / "last_session.json"
+            
+            if session_file.exists():
+                with open(session_file, 'r') as f:
+                    session_data = json.load(f)
+                
+                # Restore session state
+                if 'session_id' in session_data:
+                    self.state.active_session_id = session_data['session_id']
+                if 'session_title' in session_data:
+                    self.state.session_title = session_data['session_title']
+                if 'working_directory' in session_data:
+                    self.state.working_directory = session_data['working_directory']
+                if 'current_backend' in session_data:
+                    self.state.current_backend = session_data['current_backend']
+                if 'shots' in session_data:
+                    self.state.shots = session_data['shots']
+                
+                # Notify user
+                self.notify(f"Session restored: {self.state.session_title or 'Last session'}", severity="information")
+        except Exception:
+            # Silently fail - no previous session or corrupted
+            pass
+    
+    def _apply_saved_theme(self) -> None:
+        """Apply the saved theme from settings."""
+        import json
+        
+        try:
+            config_path = Path.home() / ".proxima" / "tui_settings.json"
+            
+            if config_path.exists():
+                with open(config_path, 'r') as f:
+                    settings = json.load(f)
+                
+                display = settings.get('display', {})
+                saved_theme = display.get('theme', 'dark')
+                
+                # Apply theme
+                self.theme_name = saved_theme
+                self.dark = (saved_theme == 'dark')
+        except Exception:
+            # Use default theme
+            pass
+    
+    def save_session_state(self) -> None:
+        """Save current session state for auto-load on next startup."""
+        import json
+        
+        try:
+            config_dir = Path.home() / ".proxima"
+            config_dir.mkdir(parents=True, exist_ok=True)
+            session_file = config_dir / "last_session.json"
+            
+            session_data = {
+                'session_id': self.state.active_session_id,
+                'session_title': self.state.session_title,
+                'working_directory': self.state.working_directory,
+                'current_backend': self.state.current_backend,
+                'shots': self.state.shots,
+                'saved_at': __import__('time').time(),
+            }
+            
+            with open(session_file, 'w') as f:
+                json.dump(session_data, f, indent=2)
+        except Exception:
+            pass  # Silently fail
     
     def _navigate_to_screen(self, screen_name: str) -> None:
         """Navigate to a specific screen.
@@ -125,15 +205,157 @@ class ProximaTUI(App):
         
         def handle_command(command):
             if command:
-                self.notify(f"Executing: {command.name}")
-                # Execute command action if defined
-                if command.action:
-                    command.action()
+                self._execute_command(command)
         
         self.push_screen(CommandPalette(), handle_command)
     
+    def _execute_command(self, command) -> None:
+        """Execute a command from the command palette.
+        
+        Args:
+            command: Command object with action_name or action
+        """
+        # First, try direct action
+        if command.action:
+            command.action()
+            return
+        
+        # Map action names to app actions
+        action_map = {
+            # Navigation
+            "goto_dashboard": self.action_goto_dashboard,
+            "goto_execution": self.action_goto_execution,
+            "goto_results": self.action_goto_results,
+            "goto_backends": self.action_goto_backends,
+            "goto_settings": self.action_goto_settings,
+            "show_help": self.action_show_help,
+            "quit": self.action_quit,
+            
+            # Execution
+            "show_simulation_dialog": self._action_show_simulation_dialog,
+            "pause_execution": self._action_pause_execution,
+            "resume_execution": self._action_resume_execution,
+            "abort_execution": self._action_abort_execution,
+            "rollback": self._action_rollback,
+            
+            # Session
+            "new_session": self._action_new_session,
+            "switch_session": self._action_switch_session,
+            "export_session": self._action_export_session,
+            "view_history": self._action_view_history,
+            
+            # Backend
+            "switch_backend": self._action_switch_backend,
+            "run_health_check": self._action_run_health_check,
+            "compare_backends": self._action_compare_backends,
+            
+            # LLM
+            "configure_llm": self._action_configure_llm,
+            "toggle_thinking": self._action_toggle_thinking,
+            "switch_provider": self._action_switch_provider,
+        }
+        
+        if command.action_name and command.action_name in action_map:
+            action_map[command.action_name]()
+        else:
+            self.notify(f"Executing: {command.name}")
+    
+    def _action_show_simulation_dialog(self) -> None:
+        """Show simulation dialog."""
+        from .dialogs import SimulationDialog
+        
+        def handle_config(config):
+            if config:
+                self.notify(f"🚀 Starting: {config.description or config.circuit_type}")
+                self.action_goto_execution()
+        
+        self.push_screen(SimulationDialog(), handle_config)
+    
+    def _action_pause_execution(self) -> None:
+        """Pause current execution."""
+        from .screens import ExecutionScreen
+        if isinstance(self.screen, ExecutionScreen):
+            self.screen.action_pause_execution()
+        else:
+            self.notify("Switch to Execution screen first", severity="warning")
+    
+    def _action_resume_execution(self) -> None:
+        """Resume paused execution."""
+        from .screens import ExecutionScreen
+        if isinstance(self.screen, ExecutionScreen):
+            self.screen.action_resume_execution()
+        else:
+            self.notify("Switch to Execution screen first", severity="warning")
+    
+    def _action_abort_execution(self) -> None:
+        """Abort current execution."""
+        from .screens import ExecutionScreen
+        if isinstance(self.screen, ExecutionScreen):
+            self.screen.action_abort_execution()
+        else:
+            self.action_goto_execution()
+            self.notify("Navigate to Execution to abort", severity="information")
+    
+    def _action_rollback(self) -> None:
+        """Rollback to checkpoint."""
+        from .screens import ExecutionScreen
+        if isinstance(self.screen, ExecutionScreen):
+            self.screen.action_rollback()
+        else:
+            self.notify("Switch to Execution screen first", severity="warning")
+    
+    def _action_new_session(self) -> None:
+        """Create new session."""
+        self.notify("Creating new session...", severity="information")
+        # Reset state for new session
+        self.state = TUIState()
+        self.action_goto_dashboard()
+        self.notify("✓ New session created", severity="success")
+    
+    def _action_switch_session(self) -> None:
+        """Switch session."""
+        from .dialogs import SessionsDialog
+        self.push_screen(SessionsDialog(sessions=[]))
+    
+    def _action_export_session(self) -> None:
+        """Export current session."""
+        self.notify("Exporting session...", severity="information")
+    
+    def _action_view_history(self) -> None:
+        """View execution history."""
+        self.action_goto_results()
+    
+    def _action_switch_backend(self) -> None:
+        """Switch backend."""
+        self.action_goto_backends()
+    
+    def _action_run_health_check(self) -> None:
+        """Run health check."""
+        self.action_goto_backends()
+        self.notify("Run Health Check from Backends screen", severity="information")
+    
+    def _action_compare_backends(self) -> None:
+        """Compare backends."""
+        self.action_goto_backends()
+    
+    def _action_configure_llm(self) -> None:
+        """Configure LLM."""
+        self.action_goto_settings()
+    
+    def _action_toggle_thinking(self) -> None:
+        """Toggle LLM thinking mode."""
+        self.state.llm_thinking_enabled = not getattr(self.state, 'llm_thinking_enabled', False)
+        status = "enabled" if self.state.llm_thinking_enabled else "disabled"
+        self.notify(f"LLM thinking mode {status}")
+    
+    def _action_switch_provider(self) -> None:
+        """Switch LLM provider."""
+        self.action_goto_settings()
+    
     def action_quit(self) -> None:
-        """Quit the application."""
+        """Quit the application, saving session state."""
+        # Save session state before quitting
+        self.save_session_state()
         self.exit()
 
 

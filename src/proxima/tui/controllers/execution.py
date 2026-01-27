@@ -6,8 +6,14 @@ Handles execution management, progress tracking, and control signals.
 from typing import Optional, Callable, List, Dict, Any
 from datetime import datetime
 from enum import Enum, auto
+from pathlib import Path
 
-from proxima.resources.control import ExecutionController as CoreExecutionController, ControlSignal, ControlState
+try:
+    from proxima.resources.control import ExecutionController as CoreExecutionController, ControlSignal as CoreControlSignal, ControlState
+    from proxima.resources.control import CheckpointManager
+    CORE_AVAILABLE = True
+except ImportError:
+    CORE_AVAILABLE = False
 
 from ..state import TUIState
 from ..state.tui_state import StageInfo, CheckpointInfo
@@ -54,10 +60,35 @@ class ExecutionController:
         self._control = None   # Will be set when Proxima core is available
         self._event_callbacks: List[Callable] = []
         self._core_controller = None
-        try:
-            self._core_controller = CoreExecutionController()
-        except Exception:
-            pass  # Core not available, use simulated mode
+        self._checkpoint_manager = None
+        self._checkpoints: List[Dict[str, Any]] = []
+        
+        if CORE_AVAILABLE:
+            try:
+                self._core_controller = CoreExecutionController()
+                checkpoint_dir = Path.home() / ".proxima" / "checkpoints"
+                checkpoint_dir.mkdir(parents=True, exist_ok=True)
+                self._checkpoint_manager = CheckpointManager(checkpoint_dir=checkpoint_dir)
+            except Exception:
+                pass  # Core not available, use simulated mode
+    
+    def get_status(self) -> Dict[str, Any]:
+        """Get current execution status.
+        
+        Returns:
+            Dictionary with status info
+        """
+        return {
+            'is_running': self.is_running,
+            'is_paused': self.is_paused,
+            'progress': self.state.progress_percent,
+            'stage': self.state.current_stage,
+            'stage_index': self.state.stage_index,
+            'elapsed_ms': self.state.elapsed_ms,
+            'eta_ms': self.state.eta_ms,
+            'checkpoint_count': self.state.checkpoint_count,
+            'rollback_available': self.can_rollback,
+        }
 
     @property
     def is_running(self) -> bool:
@@ -181,20 +212,48 @@ class ExecutionController:
 
         self.state.execution_status = "PAUSED"
 
-        # Create checkpoint
+        # Create checkpoint with full state
+        checkpoint_id = f"cp_{datetime.now().strftime('%H%M%S_%f')}"
         checkpoint = CheckpointInfo(
-            id=f"cp_{datetime.now().strftime('%H%M%S')}",
+            id=checkpoint_id,
             stage_index=self.state.stage_index,
             timestamp=datetime.now(),
         )
+        
+        # Store checkpoint data for rollback
+        checkpoint_data = {
+            'id': checkpoint_id,
+            'stage_index': self.state.stage_index,
+            'stage_name': self.state.current_stage,
+            'progress_percent': self.state.progress_percent,
+            'elapsed_ms': self.state.elapsed_ms,
+            'task': self.state.current_task,
+            'backend': self.state.current_backend,
+            'timestamp': datetime.now().isoformat(),
+        }
+        self._checkpoints.append(checkpoint_data)
+        
         self.state.latest_checkpoint = checkpoint
         self.state.checkpoint_count += 1
         self.state.last_checkpoint_time = datetime.now()
         self.state.rollback_available = True
 
+        # Save checkpoint to disk if manager available
+        if self._checkpoint_manager:
+            try:
+                self._checkpoint_manager.save_checkpoint(checkpoint_id, checkpoint_data)
+            except Exception:
+                pass  # Continue even if save fails
+
         self._emit_event(ExecutionPaused(
             checkpoint_id=checkpoint.id,
             stage_index=checkpoint.stage_index,
+        ))
+
+        self._emit_event(CheckpointCreated(
+            checkpoint_id=checkpoint_id,
+            stage_index=self.state.stage_index,
+            description=f"Checkpoint at {self.state.current_stage}",
         ))
 
         # Send pause signal to Proxima core if available
@@ -273,31 +332,78 @@ class ExecutionController:
         if not self.can_rollback:
             return False
 
-        checkpoint = self.state.latest_checkpoint
-        if checkpoint is None:
+        # Find the checkpoint to rollback to
+        checkpoint_data = None
+        if checkpoint_id:
+            # Find specific checkpoint
+            for cp in self._checkpoints:
+                if cp['id'] == checkpoint_id:
+                    checkpoint_data = cp
+                    break
+        else:
+            # Use latest checkpoint
+            if self._checkpoints:
+                checkpoint_data = self._checkpoints[-1]
+            elif self.state.latest_checkpoint:
+                checkpoint_data = {
+                    'id': self.state.latest_checkpoint.id,
+                    'stage_index': self.state.latest_checkpoint.stage_index,
+                }
+
+        if checkpoint_data is None:
             return False
 
-        # Update state to checkpoint's stage
-        self.state.stage_index = checkpoint.stage_index
-        self.state.current_stage = self.state.all_stages[checkpoint.stage_index].name
+        # Restore state from checkpoint
+        stage_index = checkpoint_data.get('stage_index', 0)
+        self.state.stage_index = stage_index
+        
+        if stage_index < len(self.state.all_stages):
+            self.state.current_stage = self.state.all_stages[stage_index].name
+        
+        # Restore progress if available
+        if 'progress_percent' in checkpoint_data:
+            self.state.progress_percent = checkpoint_data['progress_percent']
+        
+        if 'elapsed_ms' in checkpoint_data:
+            self.state.elapsed_ms = checkpoint_data['elapsed_ms']
 
         # Mark stages after checkpoint as pending
-        for stage in self.state.all_stages[checkpoint.stage_index + 1:]:
-            stage.status = "pending"
+        for i, stage in enumerate(self.state.all_stages):
+            if i > stage_index:
+                stage.status = "pending"
+            elif i == stage_index:
+                stage.status = "running"
+
+        # Remove checkpoints after this one
+        if checkpoint_id:
+            idx = next((i for i, cp in enumerate(self._checkpoints) if cp['id'] == checkpoint_id), -1)
+            if idx >= 0:
+                self._checkpoints = self._checkpoints[:idx + 1]
 
         self._emit_event(RollbackCompleted(
-            checkpoint_id=checkpoint.id,
-            stage_index=checkpoint.stage_index,
+            checkpoint_id=checkpoint_data['id'],
+            stage_index=stage_index,
         ))
 
         # Send rollback signal to Proxima core if available
         if self._core_controller:
             try:
-                self._core_controller.rollback_to_checkpoint(checkpoint_id or checkpoint.id)
+                self._core_controller.rollback_to_checkpoint(checkpoint_data['id'])
             except Exception as e:
                 pass  # Continue with TUI state update regardless
 
+        # Resume execution
+        self.state.execution_status = "RUNNING"
+
         return True
+    
+    def list_checkpoints(self) -> List[Dict[str, Any]]:
+        """List all available checkpoints.
+        
+        Returns:
+            List of checkpoint data dictionaries
+        """
+        return self._checkpoints.copy()
 
     def update_progress(
         self,

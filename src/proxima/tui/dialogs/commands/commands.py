@@ -26,6 +26,7 @@ class Command:
     keybinding: Optional[str] = None
     category: str = "General"
     action: Optional[Callable] = None
+    action_name: Optional[str] = None  # For app-level actions
     
     def matches(self, query: str) -> bool:
         """Check if the command matches a search query."""
@@ -37,42 +38,51 @@ class Command:
         )
 
 
-# Default commands
-DEFAULT_COMMANDS = [
-    # Execution
-    Command("Run Simulation", "Start a new simulation run", "Ctrl+R", "Execution"),
-    Command("Pause Execution", "Pause current execution", "P", "Execution"),
-    Command("Resume Execution", "Resume paused execution", "R", "Execution"),
-    Command("Abort Execution", "Abort current execution", "A", "Execution"),
-    Command("Rollback", "Rollback to last checkpoint", "Z", "Execution"),
+def get_default_commands() -> List[Command]:
+    """Get the default commands with action names for dynamic binding.
     
-    # Session
-    Command("New Session", "Create a new session", "Ctrl+N", "Session"),
-    Command("Switch Session", "Switch to another session", None, "Session"),
-    Command("Export Session", "Export current session", None, "Session"),
-    Command("View History", "View execution history", None, "Session"),
-    
-    # Backend
-    Command("Switch Backend", "Change simulation backend", None, "Backend"),
-    Command("Health Check", "Run backend health checks", None, "Backend"),
-    Command("Compare Backends", "Compare backend performance", None, "Backend"),
-    
-    # LLM
-    Command("Configure LLM", "Configure language model", None, "LLM"),
-    Command("Toggle Thinking", "Toggle LLM thinking mode", None, "LLM"),
-    Command("Switch Provider", "Change LLM provider", None, "LLM"),
-    
-    # Navigation
-    Command("Go to Dashboard", "Navigate to dashboard", "1", "Navigation"),
-    Command("Go to Execution", "Navigate to execution monitor", "2", "Navigation"),
-    Command("Go to Results", "Navigate to results browser", "3", "Navigation"),
-    Command("Go to Backends", "Navigate to backend management", "4", "Navigation"),
-    Command("Go to Settings", "Navigate to settings", "5", "Navigation"),
-    Command("Show Help", "Show help documentation", "?", "Navigation"),
-    
-    # System
-    Command("Quit", "Exit Proxima", "Ctrl+Q", "System"),
-]
+    Returns:
+        List of default commands
+    """
+    return [
+        # Execution
+        Command("Run Simulation", "Start a new simulation run", "Ctrl+R", "Execution", action_name="show_simulation_dialog"),
+        Command("Pause Execution", "Pause current execution", "P", "Execution", action_name="pause_execution"),
+        Command("Resume Execution", "Resume paused execution", "R", "Execution", action_name="resume_execution"),
+        Command("Abort Execution", "Abort current execution", "A", "Execution", action_name="abort_execution"),
+        Command("Rollback", "Rollback to last checkpoint", "Z", "Execution", action_name="rollback"),
+        
+        # Session
+        Command("New Session", "Create a new session", "Ctrl+N", "Session", action_name="new_session"),
+        Command("Switch Session", "Switch to another session", None, "Session", action_name="switch_session"),
+        Command("Export Session", "Export current session", None, "Session", action_name="export_session"),
+        Command("View History", "View execution history", None, "Session", action_name="view_history"),
+        
+        # Backend
+        Command("Switch Backend", "Change simulation backend", None, "Backend", action_name="switch_backend"),
+        Command("Health Check", "Run backend health checks", None, "Backend", action_name="run_health_check"),
+        Command("Compare Backends", "Compare backend performance", None, "Backend", action_name="compare_backends"),
+        
+        # LLM
+        Command("Configure LLM", "Configure language model", None, "LLM", action_name="configure_llm"),
+        Command("Toggle Thinking", "Toggle LLM thinking mode", None, "LLM", action_name="toggle_thinking"),
+        Command("Switch Provider", "Change LLM provider", None, "LLM", action_name="switch_provider"),
+        
+        # Navigation
+        Command("Go to Dashboard", "Navigate to dashboard", "1", "Navigation", action_name="goto_dashboard"),
+        Command("Go to Execution", "Navigate to execution monitor", "2", "Navigation", action_name="goto_execution"),
+        Command("Go to Results", "Navigate to results browser", "3", "Navigation", action_name="goto_results"),
+        Command("Go to Backends", "Navigate to backend management", "4", "Navigation", action_name="goto_backends"),
+        Command("Go to Settings", "Navigate to settings", "5", "Navigation", action_name="goto_settings"),
+        Command("Show Help", "Show help documentation", "?", "Navigation", action_name="show_help"),
+        
+        # System
+        Command("Quit", "Exit Proxima", "Ctrl+Q", "System", action_name="quit"),
+    ]
+
+
+# Default commands - for backward compatibility
+DEFAULT_COMMANDS = get_default_commands()
 
 
 class CommandPalette(ModalScreen):

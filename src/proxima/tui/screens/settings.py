@@ -299,19 +299,40 @@ class SettingsScreen(BaseScreen):
 
             # Actions
             with Horizontal(classes="actions-section"):
-                yield Button("?? Save Settings", id="btn-save", classes="action-btn", variant="primary")
-                yield Button("?? Reset to Defaults", id="btn-reset", classes="action-btn")
-                yield Button("?? Export Config", id="btn-export", classes="action-btn")
-                yield Button("?? Import Config", id="btn-import", classes="action-btn")
-
-    def on_mount(self) -> None:
-        """Hide API sections by default."""
-        self._update_llm_sections("none")
+                yield Button("💾 Save Settings", id="btn-save", classes="action-btn", variant="primary")
+                yield Button("🔄 Reset to Defaults", id="btn-reset", classes="action-btn")
+                yield Button("📤 Export Config", id="btn-export", classes="action-btn")
+                yield Button("📥 Import Config", id="btn-import", classes="action-btn")
 
     def on_select_changed(self, event: Select.Changed) -> None:
         """Handle select changes."""
         if event.select.id == "select-llm-mode":
             self._update_llm_sections(event.value)
+        elif event.select.id == "select-theme":
+            self._apply_theme(event.value)
+    
+    def _apply_theme(self, theme_name: str) -> None:
+        """Apply the selected theme immediately.
+        
+        Args:
+            theme_name: Name of the theme to apply ('dark' or 'light')
+        """
+        try:
+            app = self.app
+            if theme_name == "dark":
+                app.dark = True
+                app.theme_name = "dark"
+            elif theme_name == "light":
+                app.dark = False
+                app.theme_name = "light"
+            elif theme_name == "quantum":
+                # Custom quantum theme - uses dark mode with quantum colors
+                app.dark = True
+                app.theme_name = "quantum"
+            
+            self.notify(f"Theme switched to {theme_name}", severity="information")
+        except Exception as e:
+            self.notify(f"Failed to apply theme: {e}", severity="warning")
 
     def _update_llm_sections(self, mode: str) -> None:
         """Show/hide LLM sections based on selected mode."""
@@ -355,7 +376,7 @@ class SettingsScreen(BaseScreen):
             self._test_anthropic()
 
     def _save_settings(self) -> None:
-        """Save current settings."""
+        """Save current settings to disk."""
         # Get values from inputs
         shots = self.query_one("#input-shots", Input).value
         
@@ -367,8 +388,93 @@ class SettingsScreen(BaseScreen):
         except ValueError as e:
             self.notify(f"Invalid shots value: {e}", severity="error")
             return
-
-        self.notify("Settings saved successfully!", severity="success")
+        
+        # Collect all settings
+        settings = {
+            'general': {
+                'backend': self.query_one("#select-backend", Select).value,
+                'shots': shots_int,
+                'autosave': self.query_one("#switch-autosave", Switch).value,
+            },
+            'llm': {
+                'mode': self.query_one("#select-llm-mode", Select).value,
+                'ollama_url': self.query_one("#input-ollama-url", Input).value,
+                'local_model': self.query_one("#input-local-model", Input).value,
+            },
+            'display': {
+                'theme': self.query_one("#select-theme", Select).value,
+                'compact_sidebar': self.query_one("#switch-compact", Switch).value,
+                'show_logs': self.query_one("#switch-logs", Switch).value,
+            },
+        }
+        
+        # Save to disk
+        try:
+            import json
+            config_dir = Path.home() / ".proxima"
+            config_dir.mkdir(parents=True, exist_ok=True)
+            config_path = config_dir / "tui_settings.json"
+            
+            with open(config_path, 'w') as f:
+                json.dump(settings, f, indent=2)
+            
+            # Update TUI state
+            if hasattr(self, 'state'):
+                self.state.shots = shots_int
+                self.state.current_backend = settings['general']['backend']
+            
+            self.notify(f"✓ Settings saved to {config_path}", severity="success")
+        except Exception as e:
+            self.notify(f"✗ Failed to save settings: {e}", severity="error")
+    
+    def on_mount(self) -> None:
+        """Load saved settings on mount."""
+        self._update_llm_sections("none")
+        self._load_saved_settings()
+    
+    def _load_saved_settings(self) -> None:
+        """Load settings from disk if available."""
+        try:
+            import json
+            config_path = Path.home() / ".proxima" / "tui_settings.json"
+            
+            if not config_path.exists():
+                return
+            
+            with open(config_path, 'r') as f:
+                settings = json.load(f)
+            
+            # Apply general settings
+            general = settings.get('general', {})
+            if 'backend' in general:
+                self.query_one("#select-backend", Select).value = general['backend']
+            if 'shots' in general:
+                self.query_one("#input-shots", Input).value = str(general['shots'])
+            if 'autosave' in general:
+                self.query_one("#switch-autosave", Switch).value = general['autosave']
+            
+            # Apply LLM settings
+            llm = settings.get('llm', {})
+            if 'mode' in llm:
+                self.query_one("#select-llm-mode", Select).value = llm['mode']
+                self._update_llm_sections(llm['mode'])
+            if 'ollama_url' in llm:
+                self.query_one("#input-ollama-url", Input).value = llm['ollama_url']
+            if 'local_model' in llm:
+                self.query_one("#input-local-model", Input).value = llm['local_model']
+            
+            # Apply display settings
+            display = settings.get('display', {})
+            if 'theme' in display:
+                self.query_one("#select-theme", Select).value = display['theme']
+            if 'compact_sidebar' in display:
+                self.query_one("#switch-compact", Switch).value = display['compact_sidebar']
+            if 'show_logs' in display:
+                self.query_one("#switch-logs", Switch).value = display['show_logs']
+            
+            self.notify("Settings loaded", severity="information")
+        except Exception:
+            pass  # Silently fail if settings can't be loaded
 
     def _reset_settings(self) -> None:
         """Reset to default settings."""
@@ -496,39 +602,107 @@ class SettingsScreen(BaseScreen):
                 self.notify("API key seems too short", severity="warning")
 
     def _export_config(self) -> None:
-        """Export configuration to file."""
-        if LLM_AVAILABLE:
+        """Export configuration to YAML file."""
+        try:
+            # Collect all current settings
+            settings = {
+                'proxima': {
+                    'general': {
+                        'backend': self.query_one("#select-backend", Select).value,
+                        'shots': int(self.query_one("#input-shots", Input).value),
+                        'autosave': self.query_one("#switch-autosave", Switch).value,
+                    },
+                    'llm': {
+                        'mode': self.query_one("#select-llm-mode", Select).value,
+                        'ollama_url': self.query_one("#input-ollama-url", Input).value,
+                        'local_model': self.query_one("#input-local-model", Input).value,
+                    },
+                    'display': {
+                        'theme': self.query_one("#select-theme", Select).value,
+                        'compact_sidebar': self.query_one("#switch-compact", Switch).value,
+                        'show_logs': self.query_one("#switch-logs", Switch).value,
+                    },
+                },
+            }
+            
+            export_path = Path.home() / "proxima_config_export.yaml"
+            
+            # Try YAML export first
             try:
-                from pathlib import Path
-                export_path = Path.home() / "proxima_config_export.yaml"
-                result = export_config(export_path)
-                self.notify(f"✓ Configuration exported to {export_path}", severity="success")
-            except Exception as e:
-                self.notify(f"✗ Export failed: {e}", severity="error")
-        else:
-            # Fallback: show current settings as notification
-            backend = self.query_one("#select-backend", Select).value
-            shots = self.query_one("#input-shots", Input).value
-            llm_mode = self.query_one("#select-llm-mode", Select).value
-            self.notify(f"Config: backend={backend}, shots={shots}, llm={llm_mode}")
-            self.notify("Install proxima for full export functionality", severity="warning")
+                import yaml
+                with open(export_path, 'w') as f:
+                    yaml.dump(settings, f, default_flow_style=False, indent=2)
+            except ImportError:
+                # Fallback to JSON if YAML not available
+                import json
+                export_path = Path.home() / "proxima_config_export.json"
+                with open(export_path, 'w') as f:
+                    json.dump(settings, f, indent=2)
+            
+            self.notify(f"✓ Configuration exported to {export_path}", severity="success")
+            
+        except Exception as e:
+            self.notify(f"✗ Export failed: {e}", severity="error")
 
     def _import_config(self) -> None:
-        """Import configuration from file."""
-        if LLM_AVAILABLE:
-            try:
-                from pathlib import Path
-                import_path = Path.home() / "proxima_config_export.yaml"
-                if import_path.exists():
-                    result = import_config(import_path)
-                    if result.success:
-                        self.notify(f"✓ Configuration imported from {import_path}", severity="success")
-                        self.notify("Restart TUI to apply all settings", severity="information")
-                    else:
-                        self.notify(f"✗ Import failed: {result.error}", severity="error")
-                else:
-                    self.notify(f"No config file found at {import_path}", severity="warning")
-            except Exception as e:
-                self.notify(f"✗ Import failed: {e}", severity="error")
-        else:
-            self.notify("Install proxima for import functionality", severity="warning")
+        """Import configuration from YAML or JSON file."""
+        try:
+            # Check for YAML file first, then JSON
+            yaml_path = Path.home() / "proxima_config_export.yaml"
+            json_path = Path.home() / "proxima_config_export.json"
+            
+            settings = None
+            import_path = None
+            
+            if yaml_path.exists():
+                try:
+                    import yaml
+                    with open(yaml_path, 'r') as f:
+                        settings = yaml.safe_load(f)
+                    import_path = yaml_path
+                except ImportError:
+                    pass
+            
+            if settings is None and json_path.exists():
+                import json
+                with open(json_path, 'r') as f:
+                    settings = json.load(f)
+                import_path = json_path
+            
+            if settings is None:
+                self.notify("No config file found. Export first or create proxima_config_export.yaml", severity="warning")
+                return
+            
+            # Apply settings
+            proxima = settings.get('proxima', settings)  # Handle nested or flat
+            
+            general = proxima.get('general', {})
+            if 'backend' in general:
+                self.query_one("#select-backend", Select).value = general['backend']
+            if 'shots' in general:
+                self.query_one("#input-shots", Input).value = str(general['shots'])
+            if 'autosave' in general:
+                self.query_one("#switch-autosave", Switch).value = general['autosave']
+            
+            llm = proxima.get('llm', {})
+            if 'mode' in llm:
+                self.query_one("#select-llm-mode", Select).value = llm['mode']
+                self._update_llm_sections(llm['mode'])
+            if 'ollama_url' in llm:
+                self.query_one("#input-ollama-url", Input).value = llm['ollama_url']
+            if 'local_model' in llm:
+                self.query_one("#input-local-model", Input).value = llm['local_model']
+            
+            display = proxima.get('display', {})
+            if 'theme' in display:
+                self.query_one("#select-theme", Select).value = display['theme']
+            if 'compact_sidebar' in display:
+                self.query_one("#switch-compact", Switch).value = display['compact_sidebar']
+            if 'show_logs' in display:
+                self.query_one("#switch-logs", Switch).value = display['show_logs']
+            
+            self.notify(f"✓ Configuration imported from {import_path}", severity="success")
+            self.notify("Click 'Save Settings' to persist changes", severity="information")
+            
+        except Exception as e:
+            self.notify(f"✗ Import failed: {e}", severity="error")

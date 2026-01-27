@@ -200,12 +200,13 @@ class PermissionsDialog(ModalScreen):
         self.dismiss("allow")
     
     def action_allow_session(self) -> None:
-        ""Allow this action for the session.""
+        """Allow this action for the session."""
         self.dismiss("allow_session")
 
     def action_allow_task(self) -> None:
-        ""Allow this action for the current task only.""
+        """Allow this action for the current task only."""
         self.dismiss("allow_task")
+        
     def action_deny(self) -> None:
         """Deny this action."""
         self.dismiss("deny")

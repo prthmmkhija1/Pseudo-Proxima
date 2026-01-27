@@ -13,6 +13,7 @@ from .models import ModelsDialog, ModelItem
 from .backends import BackendsDialog
 from .sessions import SessionsDialog, SessionItem, SessionInfo
 from .error import ErrorDialog
+from .simulation import SimulationDialog, SimulationConfig
 
 __all__ = [
     # Base
@@ -46,4 +47,7 @@ __all__ = [
     "SessionInfo",
     # Error
     "ErrorDialog",
+    # Simulation
+    "SimulationDialog",
+    "SimulationConfig",
 ]

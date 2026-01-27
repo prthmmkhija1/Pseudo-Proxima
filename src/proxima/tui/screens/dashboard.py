@@ -13,6 +13,7 @@ from ..styles.theme import get_theme
 from ..components.logo import Logo
 from ..dialogs.sessions import SessionsDialog
 from ..dialogs.sessions.session_item import SessionInfo
+from ..dialogs.simulation import SimulationDialog, SimulationConfig
 from datetime import datetime
 
 try:
@@ -21,6 +22,13 @@ try:
     SESSION_MANAGER_AVAILABLE = True
 except ImportError:
     SESSION_MANAGER_AVAILABLE = False
+
+try:
+    from proxima.core.pipeline import run_simulation
+    import asyncio
+    PIPELINE_AVAILABLE = True
+except ImportError:
+    PIPELINE_AVAILABLE = False
 
 
 class DashboardScreen(BaseScreen):
@@ -161,7 +169,7 @@ class DashboardScreen(BaseScreen):
         button_id = event.button.id
         
         if button_id == "btn-run":
-            self.app.action_open_commands()
+            self._show_simulation_dialog()
         elif button_id == "btn-compare":
             self.app.action_goto_backends()
         elif button_id == "btn-results":
@@ -251,6 +259,72 @@ class DashboardScreen(BaseScreen):
             self.app.action_goto_settings()
         elif button_id == "btn-help":
             self.app.action_show_help()
+    
+    def _show_simulation_dialog(self) -> None:
+        """Show the simulation configuration dialog."""
+        def handle_simulation_config(config: SimulationConfig) -> None:
+            if config:
+                self._start_simulation(config)
+        
+        self.app.push_screen(SimulationDialog(), handle_simulation_config)
+    
+    def _start_simulation(self, config: SimulationConfig) -> None:
+        """Start a simulation with the given configuration.
+        
+        Args:
+            config: Simulation configuration from dialog
+        """
+        self.notify(f"🚀 Starting simulation: {config.description or config.circuit_type}", severity="information")
+        
+        # Navigate to execution screen
+        self.app.action_goto_execution()
+        
+        if PIPELINE_AVAILABLE:
+            # Start actual simulation in background
+            try:
+                async def run_sim():
+                    result = await run_simulation(
+                        user_input=config.description or f"Create a {config.circuit_type} circuit",
+                        backends=[config.backend] if config.backend != "auto" else None,
+                        qubits=config.qubits,
+                        shots=config.shots,
+                    )
+                    return result
+                
+                # Run async simulation
+                self.app.call_later(lambda: self._run_async_simulation(config))
+                
+            except Exception as e:
+                self.notify(f"Failed to start simulation: {e}", severity="error")
+        else:
+            # Fallback: Update state for demo
+            self.state.current_task = config.description or f"{config.circuit_type.title()} State"
+            self.state.current_backend = config.backend if config.backend != "auto" else "Cirq"
+            self.state.qubits = config.qubits
+            self.state.shots = config.shots
+            self.state.is_running = True
+            self.notify("Simulation started (demo mode)", severity="information")
+    
+    def _run_async_simulation(self, config: SimulationConfig) -> None:
+        """Run the simulation asynchronously."""
+        import asyncio
+        
+        async def _run():
+            try:
+                result = await run_simulation(
+                    user_input=config.description or f"Create a {config.circuit_type} circuit",
+                    backends=[config.backend] if config.backend != "auto" else None,
+                    qubits=config.qubits,
+                    shots=config.shots,
+                )
+                if result.get("success"):
+                    self.notify("✓ Simulation completed successfully!", severity="success")
+                else:
+                    self.notify(f"Simulation failed: {result.get('error', 'Unknown error')}", severity="error")
+            except Exception as e:
+                self.notify(f"Simulation error: {e}", severity="error")
+        
+        asyncio.create_task(_run())
 
 
 class RecentSessionsTable(DataTable):
@@ -268,8 +342,58 @@ class RecentSessionsTable(DataTable):
         self.add_columns("ID", "Task", "Backend", "Status", "Time")
         self.cursor_type = "row"
         
-        # Add sample data
-        self._populate_sample_data()
+        # Try to get real session data first
+        self._populate_sessions()
+    
+    def _populate_sessions(self) -> None:
+        """Populate with session data from SessionManager or fallback to sample."""
+        sessions_loaded = False
+        
+        if SESSION_MANAGER_AVAILABLE:
+            try:
+                from pathlib import Path
+                from datetime import datetime
+                
+                storage_dir = Path.home() / ".proxima" / "sessions"
+                if storage_dir.exists():
+                    manager = SessionManager(storage_dir=storage_dir)
+                    real_sessions = manager.list_sessions()
+                    
+                    if real_sessions:
+                        sessions_loaded = True
+                        for meta in real_sessions[:5]:  # Show up to 5 sessions
+                            status_icons = {
+                                SessionStatus.COMPLETED: "✓ Done",
+                                SessionStatus.RUNNING: "▶ Running",
+                                SessionStatus.PAUSED: "⏸ Paused",
+                                SessionStatus.FAILED: "✗ Failed",
+                                SessionStatus.ABORTED: "⏹ Aborted",
+                                SessionStatus.CREATED: "○ New",
+                            }
+                            
+                            # Calculate time ago
+                            created = datetime.fromtimestamp(meta.created_at)
+                            delta = datetime.now() - created
+                            if delta.seconds < 60:
+                                time_ago = f"{delta.seconds}s ago"
+                            elif delta.seconds < 3600:
+                                time_ago = f"{delta.seconds // 60}m ago"
+                            else:
+                                time_ago = f"{delta.seconds // 3600}h ago"
+                            
+                            self.add_row(
+                                meta.id[:8],
+                                meta.name or f"Session {meta.id[:8]}",
+                                "Auto",  # Backend not stored in metadata
+                                status_icons.get(meta.status, "? Unknown"),
+                                time_ago,
+                            )
+            except Exception:
+                pass
+        
+        # Fallback to sample data if no real sessions
+        if not sessions_loaded:
+            self._populate_sample_data()
     
     def _populate_sample_data(self) -> None:
         """Populate with sample session data."""
@@ -295,18 +419,61 @@ class SystemHealthBar(Static):
         theme = get_theme()
         text = Text()
         
+        # Get real system stats if available
+        cpu_percent = 23  # Default
+        memory_percent = 52  # Default
+        backends_healthy = 3
+        backends_total = 6
+        
+        try:
+            from proxima.resources.memory import MemoryMonitor
+            monitor = MemoryMonitor()
+            stats = monitor.get_stats()
+            if stats:
+                memory_percent = int(stats.get('memory_percent', 52))
+                cpu_percent = int(stats.get('cpu_percent', 23))
+        except ImportError:
+            pass
+        except Exception:
+            pass
+        
+        try:
+            from proxima.backends.registry import BackendRegistry
+            registry = BackendRegistry()
+            all_backends = registry.list_backends() if hasattr(registry, 'list_backends') else []
+            backends_total = len(all_backends) or 6
+            backends_healthy = 0
+            for backend in all_backends:
+                health = registry.check_backend_health(backend)
+                if health and health.get('status') == 'healthy':
+                    backends_healthy += 1
+        except ImportError:
+            pass
+        except Exception:
+            pass
+        
+        # Determine color based on value
+        def get_color(value: int, thresholds=(50, 80)) -> str:
+            if value < thresholds[0]:
+                return theme.success
+            elif value < thresholds[1]:
+                return theme.warning
+            else:
+                return theme.error
+        
         # CPU
         text.append("CPU: ", style=theme.fg_muted)
-        text.append("23%", style=f"bold {theme.success}")
+        text.append(f"{cpu_percent}%", style=f"bold {get_color(cpu_percent)}")
         text.append("  │  ", style=theme.border)
         
         # Memory
         text.append("Memory: ", style=theme.fg_muted)
-        text.append("52%", style=f"bold {theme.success}")
+        text.append(f"{memory_percent}%", style=f"bold {get_color(memory_percent)}")
         text.append("  │  ", style=theme.border)
         
         # Backends
         text.append("Backends: ", style=theme.fg_muted)
-        text.append("3/6 healthy", style=f"bold {theme.success}")
+        backend_color = theme.success if backends_healthy >= backends_total // 2 else theme.warning
+        text.append(f"{backends_healthy}/{backends_total} healthy", style=f"bold {backend_color}")
         
         return text
