@@ -10,6 +10,7 @@ from .results import ResultsScreen
 from .backends import BackendsScreen
 from .settings import SettingsScreen
 from .help import HelpScreen
+from .benchmark_comparison import BenchmarkComparisonScreen
 
 __all__ = [
     "BaseScreen",
@@ -19,4 +20,5 @@ __all__ = [
     "BackendsScreen",
     "SettingsScreen",
     "HelpScreen",
+    "BenchmarkComparisonScreen",
 ]

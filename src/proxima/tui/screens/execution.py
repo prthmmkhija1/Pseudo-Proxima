@@ -97,19 +97,43 @@ class ExecutionScreen(BaseScreen):
     
     def __init__(self, **kwargs):
         """Initialize the execution screen."""
+        self.__log_visible = True
+        self.__update_timer = None
+        self.__controller = None
         super().__init__(**kwargs)
-        self._log_visible = True
-        self._update_timer = None
         
         # Initialize execution controller
-        self._controller = None
         if CONTROLLER_AVAILABLE:
             try:
-                self._controller = ExecutionController(self.state)
+                self.__controller = ExecutionController(self.state)
             except Exception as e:
                 # Controller init failed, will use fallback mode
                 pass
     
+    @property
+    def _log_visible(self):
+        return self.__log_visible
+    
+    @_log_visible.setter
+    def _log_visible(self, value):
+        self.__log_visible = value
+    
+    @property
+    def _update_timer(self):
+        return self.__update_timer
+    
+    @_update_timer.setter
+    def _update_timer(self, value):
+        self.__update_timer = value
+    
+    @property
+    def _controller(self):
+        return self.__controller
+    
+    @_controller.setter
+    def _controller(self, value):
+        self.__controller = value
+
     def on_mount(self) -> None:
         """Set up progress update timer on mount."""
         # Start periodic progress updates

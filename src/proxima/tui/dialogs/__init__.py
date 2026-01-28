@@ -14,6 +14,8 @@ from .backends import BackendsDialog
 from .sessions import SessionsDialog, SessionItem, SessionInfo
 from .error import ErrorDialog
 from .simulation import SimulationDialog, SimulationConfig
+from .ai_thinking import AIThinkingDialog
+from .lret import LRETInstallerDialog, LRETConfigDialog, LRETBenchmarkDialog, PennyLaneAlgorithmDialog, Phase7Dialog, VariantAnalysisDialog
 
 __all__ = [
     # Base
@@ -50,4 +52,13 @@ __all__ = [
     # Simulation
     "SimulationDialog",
     "SimulationConfig",
+    # AI Thinking
+    "AIThinkingDialog",
+    # LRET
+    "LRETInstallerDialog",
+    "LRETConfigDialog",
+    "LRETBenchmarkDialog",
+    "PennyLaneAlgorithmDialog",
+    "Phase7Dialog",
+    "VariantAnalysisDialog",
 ]

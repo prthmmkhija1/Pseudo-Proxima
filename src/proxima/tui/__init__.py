@@ -10,6 +10,8 @@ Features:
 - Permission dialogs for consent management
 - Real-time execution monitoring
 - Quantum-specific visualizations
+- LRET variant management and benchmarking
+- PennyLane algorithm wizard
 """
 
 from .app import ProximaTUI, launch
@@ -22,6 +24,7 @@ from .screens import (
     BackendsScreen,
     SettingsScreen,
     HelpScreen,
+    BenchmarkComparisonScreen,
 )
 from .dialogs import (
     CommandPalette,
@@ -33,6 +36,14 @@ from .dialogs import (
     SessionsDialog,
     ErrorDialog,
 )
+
+# Wizards
+try:
+    from .wizards import PennyLaneAlgorithmWizard
+    _WIZARDS_AVAILABLE = True
+except ImportError:
+    _WIZARDS_AVAILABLE = False
+
 from . import util
 
 # Backward compatibility aliases
@@ -58,6 +69,7 @@ __all__ = [
     "BackendsScreen",
     "SettingsScreen",
     "HelpScreen",
+    "BenchmarkComparisonScreen",
     # Dialogs
     "CommandPalette",
     "PermissionsDialog",
@@ -67,6 +79,8 @@ __all__ = [
     "BackendsDialog",
     "SessionsDialog",
     "ErrorDialog",
+    # Wizards
+    "PennyLaneAlgorithmWizard",
     # Backward compatibility - styles
     "Theme",
     "ColorPalette",
@@ -88,4 +102,14 @@ __all__ = [
     "NavigationController",
     # Utilities
     "util",
+    # Phase 4: Testing package
+    "testing",
 ]
+
+# Add wizard to __all__ only if available
+if _WIZARDS_AVAILABLE:
+    pass  # Already in __all__
+
+# Phase 4: Testing & Validation Interface
+from . import testing
+

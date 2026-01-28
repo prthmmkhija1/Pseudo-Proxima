@@ -421,8 +421,17 @@ class ResultsScreen(BaseScreen):
             self.notify(f"Selected: {self._selected_result.get('name', 'Unknown')}")
         else:
             # Fallback for sample data - create a minimal result dict
-            label = item.query_one(Label)
-            result_name = str(label.renderable) if label else "Unknown"
+            try:
+                label = item.query_one(Label)
+                # Get the label text - Label content is in _content or we can use str()
+                if hasattr(label, '_content'):
+                    result_name = str(label._content)
+                else:
+                    # Alternative: get text from the label's render result
+                    result_name = str(label.render()) if hasattr(label, 'render') else "Unknown"
+            except Exception:
+                result_name = "Unknown"
+            
             self._selected_result = {
                 'id': result_name.replace('.json', ''),
                 'name': result_name,

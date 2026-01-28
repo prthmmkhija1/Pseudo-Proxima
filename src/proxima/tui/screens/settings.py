@@ -37,6 +37,7 @@ class SettingsScreen(BaseScreen):
     SettingsScreen .settings-container {
         padding: 1;
         overflow-y: auto;
+        height: 1fr;
     }
 
     SettingsScreen .settings-section {
@@ -44,6 +45,7 @@ class SettingsScreen(BaseScreen):
         padding: 1;
         border: solid $primary-darken-2;
         background: $surface;
+        height: auto;
     }
 
     SettingsScreen .section-title {
@@ -123,7 +125,8 @@ class SettingsScreen(BaseScreen):
 
     def compose_main(self):
         """Compose the settings screen content."""
-        with Vertical(classes="main-content settings-container"):
+        from textual.containers import ScrollableContainer
+        with ScrollableContainer(classes="main-content settings-container"):
             # General Settings
             with Container(classes="settings-section"):
                 yield Static("?? General Settings", classes="section-title")
@@ -198,7 +201,7 @@ class SettingsScreen(BaseScreen):
                         )
 
                     yield Button(
-                        "Test Connection",
+                        "🔗 Test Connection",
                         id="btn-test-local",
                         variant="primary",
                     )
@@ -272,6 +275,24 @@ class SettingsScreen(BaseScreen):
                         "Verify API Key",
                         id="btn-test-anthropic",
                         variant="primary",
+                    )
+
+                # AI Thinking Panel Access
+                with Container(classes="subsection", id="ai-thinking-settings"):
+                    yield Static("🧠 AI Thinking Panel", classes="subsection-title")
+                    yield Static(
+                        "View what the AI is thinking in real-time. Shows prompts, responses, and token usage.",
+                        classes="hint-text",
+                    )
+                    
+                    with Horizontal(classes="setting-row"):
+                        yield Static("Enable Thinking:", classes="setting-label")
+                        yield Switch(value=False, id="switch-thinking-enabled")
+                    
+                    yield Button(
+                        "🧠 Open AI Thinking Panel (Ctrl+T)",
+                        id="btn-open-thinking",
+                        variant="success",
                     )
 
             # Display Settings
@@ -374,6 +395,8 @@ class SettingsScreen(BaseScreen):
             self._test_openai()
         elif button_id == "btn-test-anthropic":
             self._test_anthropic()
+        elif button_id == "btn-open-thinking":
+            self._open_ai_thinking()
 
     def _save_settings(self) -> None:
         """Save current settings to disk."""
@@ -706,3 +729,18 @@ class SettingsScreen(BaseScreen):
             
         except Exception as e:
             self.notify(f"✗ Import failed: {e}", severity="error")
+
+    def _open_ai_thinking(self) -> None:
+        """Open the AI Thinking panel dialog."""
+        from ..dialogs import AIThinkingDialog
+        
+        # Update the thinking enabled state
+        try:
+            thinking_enabled = self.query_one("#switch-thinking-enabled", Switch).value
+            if hasattr(self, 'state') and self.state:
+                self.state.thinking_enabled = thinking_enabled
+        except Exception:
+            pass
+        
+        # Push the AI thinking dialog
+        self.app.push_screen(AIThinkingDialog(state=getattr(self, 'state', None)))

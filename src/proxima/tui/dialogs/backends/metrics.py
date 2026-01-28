@@ -25,7 +25,8 @@ class BackendMetricsDialog(ModalScreen):
         border: thick $accent;
         background: $surface;
         width: 80;
-        height: 35;
+        height: 40;
+        overflow-y: auto;
     }
     BackendMetricsDialog .dialog-title {
         text-style: bold;
@@ -61,9 +62,11 @@ class BackendMetricsDialog(ModalScreen):
         height: auto;
         layout: horizontal;
         margin-top: 1;
+        padding: 1 0;
     }
-    BackendMetricsDialog Button {
+    BackendMetricsDialog .footer Button {
         margin-right: 1;
+        min-width: 14;
     }
     """
 
@@ -112,10 +115,10 @@ class BackendMetricsDialog(ModalScreen):
             yield table
             
             with Horizontal(classes="footer"):
-                yield Button("[R] Refresh", id="btn-refresh", variant="primary")
-                yield Button("[T] Trends", id="btn-trends", variant="default")
-                yield Button("[E] Export", id="btn-export", variant="default")
-                yield Button("[X] Close", id="btn-close", variant="error")
+                yield Button("Refresh", id="btn-refresh", variant="primary")
+                yield Button("Trends", id="btn-trends", variant="default")
+                yield Button("Export", id="btn-export", variant="default")
+                yield Button("Close", id="btn-close", variant="error")
 
     def on_mount(self):
         """Load metrics on mount."""

@@ -63,10 +63,21 @@ def get_default_commands() -> List[Command]:
         Command("Health Check", "Run backend health checks", None, "Backend", action_name="run_health_check"),
         Command("Compare Backends", "Compare backend performance", None, "Backend", action_name="compare_backends"),
         
+        # LRET Variants
+        Command("Install LRET Variants", "Install LRET backend variants", None, "LRET", action_name="show_lret_installer"),
+        Command("Configure LRET", "Configure LRET variant settings", None, "LRET", action_name="show_lret_config"),
+        Command("LRET Benchmarks", "Run LRET vs Cirq benchmark comparison", None, "LRET", action_name="show_lret_benchmark"),
+        Command("Variational Algorithms", "Run VQE, QAOA, QNN with PennyLane", None, "LRET", action_name="show_pennylane_algorithms"),
+        Command("Phase 7 Unified", "Configure multi-framework unified execution", None, "LRET", action_name="show_phase7_unified"),
+        Command("Variant Analysis", "Analyze and compare LRET backend variants", None, "LRET", action_name="show_variant_analysis"),
+        Command("Benchmark Comparison", "Compare LRET vs Cirq with visualization", None, "LRET", action_name="show_benchmark_comparison"),
+        Command("Algorithm Wizard", "6-step wizard for VQE/QAOA/QNN", None, "LRET", action_name="show_algorithm_wizard"),
+        
         # LLM
         Command("Configure LLM", "Configure language model", None, "LLM", action_name="configure_llm"),
         Command("Toggle Thinking", "Toggle LLM thinking mode", None, "LLM", action_name="toggle_thinking"),
         Command("Switch Provider", "Change LLM provider", None, "LLM", action_name="switch_provider"),
+        Command("Show AI Thinking", "View AI reasoning panel", "Ctrl+T", "LLM", action_name="show_ai_thinking"),
         
         # Navigation
         Command("Go to Dashboard", "Navigate to dashboard", "1", "Navigation", action_name="goto_dashboard"),

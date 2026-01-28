@@ -14,6 +14,26 @@ from .execution import ExecutionController
 from .session import SessionController
 from .backends import BackendController
 
+# Phase 2: Backend Configuration Interface
+from .backend_generator import BackendCodeGenerator
+from .backend_test_runner import (
+    BackendTestRunner,
+    TestResult,
+    EnhancedBackendTestRunner,
+    create_test_runner,
+)
+from .backend_file_writer import BackendFileWriter
+
+# Phase 5: Integration & Deployment
+from .deployment_manager import (
+    DeploymentManager,
+    DeploymentStage,
+    DeploymentStatus,
+    DeploymentProgress,
+    DeploymentResult,
+    BatchDeploymentManager,
+)
+
 
 # ======================== BACKWARD COMPAT ENUMS ========================
 
@@ -269,6 +289,21 @@ __all__ = [
     "ExecutionController",
     "SessionController",
     "BackendController",
+    # Phase 2: Backend Configuration Interface
+    "BackendCodeGenerator",
+    "BackendTestRunner",
+    "TestResult",
+    "BackendFileWriter",
+    # Phase 4: Enhanced Test Runner
+    "EnhancedBackendTestRunner",
+    "create_test_runner",
+    # Phase 5: Integration & Deployment
+    "DeploymentManager",
+    "DeploymentStage",
+    "DeploymentStatus",
+    "DeploymentProgress",
+    "DeploymentResult",
+    "BatchDeploymentManager",
     # Real controllers (require state)
     "_RealNavigationController",
     "_RealExecutionController",

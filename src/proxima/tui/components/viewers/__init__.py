@@ -7,6 +7,14 @@ from .log_viewer import LogViewer
 from .result_viewer import ResultViewer
 from .diff_viewer import DiffViewer, DiffLine, DiffHunk
 from .code_viewer import CodeViewer
+from .ai_thinking_viewer import (
+    AIThinkingViewer,
+    ThinkingPhase,
+    MessageRole,
+    ThinkingEntry,
+    ThinkingStats,
+    create_thinking_panel,
+)
 
 __all__ = [
     "LogViewer",
@@ -15,4 +23,11 @@ __all__ = [
     "DiffLine",
     "DiffHunk",
     "CodeViewer",
+    # AI Thinking
+    "AIThinkingViewer",
+    "ThinkingPhase",
+    "MessageRole",
+    "ThinkingEntry",
+    "ThinkingStats",
+    "create_thinking_panel",
 ]

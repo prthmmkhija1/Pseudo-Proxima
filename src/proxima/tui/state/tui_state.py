@@ -113,11 +113,16 @@ class TUIState:
     llm_model: Optional[str] = None
     llm_connected: bool = False
     thinking_enabled: bool = False
+    thinking_panel_visible: bool = False  # Whether AI thinking panel is shown
     
     # Token/Cost Tracking
     prompt_tokens: int = 0
     completion_tokens: int = 0
     total_cost: float = 0.0
+    
+    # AI Thinking State
+    current_thinking_content: str = ""
+    thinking_history: List[Dict[str, Any]] = field(default_factory=list)
     
     # ==================== Results State ====================
     latest_result: Optional[ResultInfo] = None
