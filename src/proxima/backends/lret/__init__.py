@@ -8,6 +8,28 @@ This module provides support for three LRET backend variants:
 Each variant can be installed and configured independently.
 """
 
+# Import legacy LRET components from the standalone lret.py module
+# These are needed for backward compatibility with test_lret_comprehensive.py
+import sys
+import os
+
+# Import from the parent's lret.py file (sibling to this package)
+from proxima.backends.lret_adapter import (
+    LRETResultFormat,
+    NormalizedResult,
+    LRETBatchExecutionResult,
+    LRETResultNormalizer,
+    LRETAPIVerification,
+    LRETAPIVerifier,
+    LRETPerformanceMetrics,
+    LRETBenchmarkResult,
+    LRETPerformanceMonitor,
+    LRETBenchmarkRunner,
+    MockLRETSimulator,
+    MockLRETResult,
+    get_mock_lret_module,
+)
+
 from proxima.backends.lret.config import (
     LRETConfig,
     LRETVariantConfig,
@@ -83,6 +105,20 @@ from proxima.backends.lret.variant_registry import (
 )
 
 __all__ = [
+    # Legacy LRET components (from lret_adapter.py)
+    "LRETResultFormat",
+    "NormalizedResult",
+    "LRETBatchExecutionResult",
+    "LRETResultNormalizer",
+    "LRETAPIVerification",
+    "LRETAPIVerifier",
+    "LRETPerformanceMetrics",
+    "LRETBenchmarkResult",
+    "LRETPerformanceMonitor",
+    "LRETBenchmarkRunner",
+    "MockLRETSimulator",
+    "MockLRETResult",
+    "get_mock_lret_module",
     # Configuration
     "LRETConfig",
     "LRETVariantConfig",
