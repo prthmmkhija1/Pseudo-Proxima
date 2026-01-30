@@ -84,7 +84,8 @@ jobs:
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: test-results-core-${{ matrix.python-version }}`n          path: junit/
+          name: test-results-core-${{ matrix.python-version }}
+          path: junit/
 
   # ============================================
   # Backend Tests - QuEST
