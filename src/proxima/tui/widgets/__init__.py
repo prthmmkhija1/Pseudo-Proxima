@@ -116,38 +116,53 @@ class LogPanel(Static):
 
 class LogViewer(Static):
     """Log viewer widget."""
-    def __init__(self, max_lines: int = 100, **kwargs):
+    def __init__(self, max_entries: int = 100, auto_scroll: bool = True, **kwargs):
         super().__init__(**kwargs)
-        self._max_lines = max_lines
+        self._max_entries = max_entries
+        self._auto_scroll = auto_scroll
         self._entries: List[LogEntry] = []
 
 
 class BackendCard(Static):
     """Backend card widget."""
-    def __init__(self, info: Optional[BackendInfo] = None, **kwargs):
+    def __init__(self, backend: Optional[BackendInfo] = None, info: Optional[BackendInfo] = None, **kwargs):
         super().__init__(**kwargs)
-        self._info = info
+        # Support both 'backend' and 'info' parameter names for compatibility
+        self._backend = backend or info
+        self._info = self._backend
 
 
 class ResultsTable(Static):
     """Results table widget."""
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
+        self._results: List[Any] = []
 
 
 class ExecutionTimer(Static):
     """Execution timer widget."""
-    def __init__(self, **kwargs):
+    def __init__(self, label: str = "", **kwargs):
         super().__init__(**kwargs)
+        self._label = label
         self._start_time: Optional[float] = None
+        self._elapsed: float = 0.0
+    
+    @property
+    def elapsed(self) -> float:
+        return self._elapsed
 
 
 class MetricDisplay(Static):
     """Metric display widget."""
-    def __init__(self, label: str = "", value: str = "", **kwargs):
+    def __init__(self, label: str = "", value: str = "", unit: str = "", **kwargs):
         super().__init__(**kwargs)
         self._label = label
         self._value = value
+        self._unit = unit
+    
+    @property
+    def value(self) -> str:
+        return self._value
 
 
 class MetricsDisplay(Static):
@@ -158,15 +173,36 @@ class MetricsDisplay(Static):
 
 class ExecutionProgress(Static):
     """Execution progress widget."""
-    def __init__(self, **kwargs):
+    def __init__(self, title: str = "", **kwargs):
         super().__init__(**kwargs)
+        self._title = title
+        self._progress: float = 0.0
+    
+    @property
+    def progress(self) -> float:
+        return self._progress
 
 
 class StatusIndicator(Static):
     """Status indicator widget."""
-    def __init__(self, status: str = "unknown", **kwargs):
+    
+    ICONS = {
+        "success": "✓",
+        "error": "✗",
+        "warning": "⚠",
+        "info": "ℹ",
+        "pending": "⏳",
+        "unknown": "?",
+    }
+    
+    def __init__(self, status: str = "unknown", label: str = "", **kwargs):
         super().__init__(**kwargs)
         self._status = status
+        self._label = label
+    
+    @property
+    def status(self) -> str:
+        return self._status
 
 
 class HelpModal(ModalScreen):
@@ -177,20 +213,39 @@ class HelpModal(ModalScreen):
 
 class ConfigInput(Static):
     """Config input widget."""
-    def __init__(self, label: str = "", value: str = "", **kwargs):
+    def __init__(self, key: str = "", label: str = "", value: str = "", **kwargs):
         super().__init__(**kwargs)
+        self._key = key
+        self._label = label
+        self._value = value
 
 
 class ConfigToggle(Static):
     """Config toggle widget."""
-    def __init__(self, label: str = "", value: bool = False, **kwargs):
+    def __init__(self, key: str = "", label: str = "", value: bool = False, **kwargs):
         super().__init__(**kwargs)
+        self._key = key
+        self._label = label
+        self._value = value
 
 
 class ExecutionCard(Static):
     """Execution card widget."""
-    def __init__(self, execution_id: str = "", backend: str = "", status: str = "", **kwargs):
+    def __init__(
+        self, 
+        execution_id: str = "", 
+        backend: str = "", 
+        status: str = "",
+        duration_ms: float = 0.0,
+        timestamp: Optional[float] = None,
+        **kwargs
+    ):
         super().__init__(**kwargs)
+        self._id = execution_id
+        self._backend = backend
+        self._status = status
+        self._duration_ms = duration_ms
+        self._timestamp = timestamp
 
 
 class ProgressBar(Static):

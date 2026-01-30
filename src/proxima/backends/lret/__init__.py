@@ -28,6 +28,7 @@ from proxima.backends.lret_adapter import (
     MockLRETSimulator,
     MockLRETResult,
     get_mock_lret_module,
+    LRETBackendAdapter,  # Import the actual adapter class
 )
 
 from proxima.backends.lret.config import (
@@ -183,9 +184,6 @@ __all__ = [
     "list_available_variants",
     "get_variant_adapter",
     "get_best_variant_adapter",
-    # Backward compatibility alias
+    # LRET Backend Adapter (from lret_adapter.py)
     "LRETBackendAdapter",
 ]
-
-# Backward compatibility alias - LRETBackendAdapter points to Phase7UnifiedAdapter
-LRETBackendAdapter = LRETPhase7UnifiedAdapter
