@@ -56,8 +56,8 @@ class TestQLRETDeviceBasic:
                 noise_model='depolarizing'
             )
             
-            assert dev._noise_level == 0.01
-            assert dev._noise_model == 'depolarizing'
+            assert dev.noise_level == 0.01
+            assert dev.noise_model == 'depolarizing'
         except ImportError:
             pytest.skip("QLRETDevice not installed")
     

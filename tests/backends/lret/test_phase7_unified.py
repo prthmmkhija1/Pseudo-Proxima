@@ -307,11 +307,15 @@ class TestPhase7Mocked:
                 return 'qiskit'
             return 'unknown'
         
-        cirq_mock = Mock()
-        cirq_mock.all_qubits = Mock()
+        # Create mock objects with spec to control which attributes exist
+        class CirqCircuit:
+            all_qubits = None
         
-        pennylane_mock = Mock()
-        pennylane_mock.tape = Mock()
+        class PennyLaneCircuit:
+            tape = None
+        
+        cirq_mock = Mock(spec=CirqCircuit)
+        pennylane_mock = Mock(spec=PennyLaneCircuit)
         
         assert detect_framework(cirq_mock) == 'cirq'
         assert detect_framework(pennylane_mock) == 'pennylane'

@@ -22,10 +22,12 @@ class TestLRETVariantWorkflow:
         """Test complete workflow with LRET variants."""
         try:
             # 1. Check variant availability
-            from proxima.backends.lret.installer import check_variant_availability
+            from proxima.backends.lret.installer import check_variant_availability, VariantStatus
             
             cirq_status = check_variant_availability('cirq_scalability')
-            assert 'installed' in cirq_status or isinstance(cirq_status, dict)
+            # VariantStatus is a dataclass with an 'installed' attribute
+            assert isinstance(cirq_status, VariantStatus)
+            assert hasattr(cirq_status, 'installed')
             
         except ImportError:
             pytest.skip("LRET variants not installed")
