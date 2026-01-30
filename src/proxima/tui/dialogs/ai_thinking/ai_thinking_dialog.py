@@ -85,12 +85,14 @@ class AIThinkingDialog(ModalScreen):
         width: auto;
         content-align: right middle;
         color: $accent;
+        margin-right: 1;
     }
     
     AIThinkingDialog .close-btn {
-        width: auto;
+        width: 10;
         min-width: 10;
-        height: auto;
+        height: 3;
+        margin-left: 1;
     }
     
     AIThinkingDialog .main-content {
@@ -232,7 +234,7 @@ class AIThinkingDialog(ModalScreen):
             with Horizontal(classes="dialog-header"):
                 yield Static(f"{ICON_THINKING} AI Thinking Panel", classes="dialog-title")
                 yield Static(self._get_model_badge(), classes="model-badge", id="model-badge")
-                yield Button("Close", variant="error", classes="close-btn", id="close-btn")
+                yield Button("✕ Close", variant="error", classes="close-btn", id="close-btn", tooltip="Close panel")
             
             # Main content
             with Horizontal(classes="main-content"):
@@ -286,7 +288,7 @@ class AIThinkingDialog(ModalScreen):
                             yield Label("Show Tokens")
                             yield Switch(value=True, id="show-tokens-switch")
                         
-                        yield Button("🗑️ Clear History", id="clear-btn", variant="warning")
+                        yield Button("🗑 Clear", id="clear-btn", variant="warning", tooltip="Clear conversation history")
             
             # Footer
             with Horizontal(classes="dialog-footer"):

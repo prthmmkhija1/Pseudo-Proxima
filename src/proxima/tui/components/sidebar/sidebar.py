@@ -1,6 +1,7 @@
 """Main Sidebar component for Proxima TUI.
 
 Right-aligned status panel displaying session info, backends, memory, etc.
+Real-time updates every 500ms for dynamic stats.
 """
 
 from typing import Optional
@@ -9,6 +10,7 @@ from textual.widget import Widget
 from textual.widgets import Static
 from textual.containers import Vertical, Container
 from textual.reactive import reactive
+from textual.timer import Timer
 from rich.text import Text
 
 from ...state import TUIState
@@ -31,6 +33,8 @@ class Sidebar(Vertical):
     5. Backends (dynamic)
     6. Memory (3 lines)
     7. Checkpoints (during execution)
+    
+    Auto-refreshes every 500ms for real-time stats.
     """
     
     DEFAULT_CSS = """
@@ -63,6 +67,7 @@ class Sidebar(Vertical):
     """
     
     compact_mode = reactive(False)
+    _refresh_timer: Optional[Timer] = None
     
     def __init__(
         self,
@@ -79,6 +84,30 @@ class Sidebar(Vertical):
         super().__init__(**kwargs)
         self.state = state
         self.compact_mode = compact
+    
+    def on_mount(self) -> None:
+        """Start the real-time refresh timer when mounted."""
+        # Update every 500ms for real-time stats
+        self._refresh_timer = self.set_interval(0.5, self._refresh_stats)
+    
+    def on_unmount(self) -> None:
+        """Stop the timer when unmounted."""
+        if self._refresh_timer:
+            self._refresh_timer.stop()
+            self._refresh_timer = None
+    
+    def _refresh_stats(self) -> None:
+        """Refresh all sidebar sections for real-time updates."""
+        try:
+            # Update memory stats from system
+            self.state.update_memory_stats()
+            
+            # Refresh all section widgets
+            for child in self.children:
+                if hasattr(child, 'refresh'):
+                    child.refresh()
+        except Exception:
+            pass  # Silently ignore refresh errors
     
     def compose(self):
         """Compose the sidebar layout."""

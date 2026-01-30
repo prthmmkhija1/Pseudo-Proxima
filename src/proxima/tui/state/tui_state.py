@@ -136,6 +136,22 @@ class TUIState:
         'session_start': 0,
     })
     
+    # Add Custom Backend Dialog AI Chat State (persistent)
+    add_backend_chat_messages: List[Dict[str, Any]] = field(default_factory=list)
+    add_backend_chat_stats: Dict[str, Any] = field(default_factory=lambda: {
+        'prompt_tokens': 0,
+        'completion_tokens': 0,
+        'total_tokens': 0,
+        'requests': 0,
+        'thinking_time_ms': 0,
+    })
+    
+    # Multi-Backend Comparison AI Chat State (persistent)
+    comparison_chat_messages: List[Dict[str, Any]] = field(default_factory=list)
+    comparison_chat_stats: Dict[str, Any] = field(default_factory=lambda: {
+        'requests': 0,
+    })
+    
     # ==================== Results State ====================
     latest_result: Optional[ResultInfo] = None
     result_history: List[ResultInfo] = field(default_factory=list)
@@ -187,6 +203,33 @@ class TUIState:
         self.memory_level = level
         self.memory_used_mb = used_mb
         self.memory_available_mb = available_mb
+    
+    def update_memory_stats(self) -> None:
+        """Update memory stats from system (real-time monitoring)."""
+        try:
+            import psutil
+            mem = psutil.virtual_memory()
+            self.memory_percent = mem.percent
+            self.memory_used_mb = mem.used / (1024 * 1024)
+            self.memory_available_mb = mem.available / (1024 * 1024)
+            
+            # Determine level based on percentage
+            if self.memory_percent >= 95:
+                self.memory_level = "ABORT"
+            elif self.memory_percent >= 90:
+                self.memory_level = "CRITICAL"
+            elif self.memory_percent >= 80:
+                self.memory_level = "WARNING"
+            elif self.memory_percent >= 70:
+                self.memory_level = "INFO"
+            else:
+                self.memory_level = "OK"
+        except ImportError:
+            # psutil not available, use default values
+            pass
+        except Exception:
+            # Any other error, ignore
+            pass
     
     def add_log_entry(
         self,

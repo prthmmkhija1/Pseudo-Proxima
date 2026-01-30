@@ -8,7 +8,7 @@ from textual.screen import ModalScreen
 from textual.containers import Vertical, Horizontal, ScrollableContainer, Container
 from textual.widgets import Static, Button, Input, Switch, Select, Label, TextArea, RichLog
 from rich.text import Text
-from typing import Dict, Any, Optional, Callable
+from typing import Dict, Any, Optional, Callable, List
 from pathlib import Path
 import json
 
@@ -33,6 +33,140 @@ try:
     LLM_AVAILABLE = True
 except ImportError:
     LLM_AVAILABLE = False
+
+
+class ChatExportNameDialog(ModalScreen[str]):
+    """Dialog for entering custom export filename."""
+    
+    DEFAULT_CSS = """
+    ChatExportNameDialog {
+        align: center middle;
+    }
+    
+    ChatExportNameDialog > Vertical {
+        width: 60;
+        height: auto;
+        border: thick $accent;
+        background: $surface;
+        padding: 1 2;
+    }
+    
+    ChatExportNameDialog .dialog-title {
+        text-style: bold;
+        color: $accent;
+        margin-bottom: 1;
+    }
+    
+    ChatExportNameDialog Input {
+        margin-bottom: 1;
+    }
+    
+    ChatExportNameDialog Horizontal {
+        height: auto;
+        align: center middle;
+        margin-top: 1;
+    }
+    
+    ChatExportNameDialog Button {
+        margin: 0 1;
+        min-width: 12;
+    }
+    """
+    
+    def __init__(self, default_name: str = "") -> None:
+        super().__init__()
+        self._default_name = default_name
+    
+    def compose(self):
+        with Vertical():
+            yield Static("📤 Export Chat", classes="dialog-title")
+            yield Static("Enter a name for the exported chat:")
+            yield Input(value=self._default_name, id="export-name-input", placeholder="e.g., my_backend_config_chat")
+            with Horizontal():
+                yield Button("✓ Export", variant="primary", id="export-btn")
+                yield Button("✕ Cancel", variant="default", id="cancel-btn")
+    
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "export-btn":
+            name_input = self.query_one("#export-name-input", Input)
+            self.dismiss(name_input.value.strip())
+        else:
+            self.dismiss("")
+    
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        """Handle Enter key in input."""
+        self.dismiss(event.value.strip())
+
+
+class ChatImportSelectDialog(ModalScreen[str]):
+    """Dialog for selecting which chat to import."""
+    
+    DEFAULT_CSS = """
+    ChatImportSelectDialog {
+        align: center middle;
+    }
+    
+    ChatImportSelectDialog > Vertical {
+        width: 80;
+        height: auto;
+        max-height: 80%;
+        border: thick $accent;
+        background: $surface;
+        padding: 1 2;
+    }
+    
+    ChatImportSelectDialog .dialog-title {
+        text-style: bold;
+        color: $accent;
+        margin-bottom: 1;
+    }
+    
+    ChatImportSelectDialog Select {
+        margin-bottom: 1;
+        width: 100%;
+    }
+    
+    ChatImportSelectDialog Horizontal {
+        height: auto;
+        align: center middle;
+        margin-top: 1;
+    }
+    
+    ChatImportSelectDialog Button {
+        margin: 0 1;
+        min-width: 12;
+    }
+    
+    ChatImportSelectDialog .hint-text {
+        color: $text-muted;
+        margin-bottom: 1;
+    }
+    """
+    
+    def __init__(self, chat_files: List[tuple]) -> None:
+        """Initialize with list of (display_name, file_path) tuples."""
+        super().__init__()
+        self._chat_files = chat_files
+    
+    def compose(self):
+        with Vertical():
+            yield Static("📥 Import Chat", classes="dialog-title")
+            yield Static("Select a previously exported chat:", classes="hint-text")
+            options = [(name, path) for name, path in self._chat_files]
+            yield Select(options, id="chat-select", prompt="Choose a chat...")
+            with Horizontal():
+                yield Button("✓ Import", variant="primary", id="import-btn")
+                yield Button("✕ Cancel", variant="default", id="cancel-btn")
+    
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "import-btn":
+            select = self.query_one("#chat-select", Select)
+            if select.value and select.value != Select.BLANK:
+                self.dismiss(str(select.value))
+            else:
+                self.dismiss("")
+        else:
+            self.dismiss("")
 
 
 class AddCustomBackendDialog(ModalScreen):
@@ -148,11 +282,28 @@ class AddCustomBackendDialog(ModalScreen):
         height: 3;
         background: $primary-darken-2;
         padding: 0 1;
+        align: left middle;
     }
     
     AddCustomBackendDialog .ai-title {
         text-style: bold;
         color: $accent;
+        width: 1fr;
+    }
+    
+    AddCustomBackendDialog .ai-controls-row {
+        height: 3;
+        layout: horizontal;
+        padding: 0 1;
+        margin-top: 1;
+        align: right middle;
+    }
+    
+    AddCustomBackendDialog .chat-ctrl-btn {
+        min-width: 10;
+        width: auto;
+        height: 3;
+        margin-left: 1;
     }
     
     AddCustomBackendDialog .ai-chat-area {
@@ -216,15 +367,35 @@ class AddCustomBackendDialog(ModalScreen):
     }
     
     AddCustomBackendDialog .footer {
-        height: 3;
+        height: 4;
         layout: horizontal;
         margin-top: 1;
-        padding-top: 1;
+        padding: 1 2;
         border-top: solid $primary-darken-3;
+        background: $surface-darken-1;
+        align: left middle;
     }
     
     AddCustomBackendDialog .footer Button {
-        margin-right: 1;
+        margin-right: 2;
+        min-width: 14;
+        height: 3;
+    }
+    
+    AddCustomBackendDialog .footer-btn-save {
+        background: $success;
+    }
+    
+    AddCustomBackendDialog .footer-btn-test {
+        background: $primary;
+    }
+    
+    AddCustomBackendDialog .footer-btn-clear {
+        background: $warning-darken-1;
+    }
+    
+    AddCustomBackendDialog .footer-btn-cancel {
+        background: $error-darken-1;
     }
     
     AddCustomBackendDialog .required {
@@ -591,7 +762,6 @@ class AddCustomBackendDialog(ModalScreen):
                                 language="json"
                             )
                 
-                # Right panel: AI Assistant
                 with Vertical(classes="ai-panel"):
                     with Horizontal(classes="ai-header"):
                         yield Static("🤖 AI Assistant", classes="ai-title")
@@ -637,17 +807,86 @@ class AddCustomBackendDialog(ModalScreen):
                             classes="ai-input"
                         )
                         yield Button("Ask", id="btn-ai-ask", variant="primary", classes="ai-send-btn")
+                    
+                    # Chat control buttons at bottom
+                    with Horizontal(classes="ai-controls-row"):
+                        yield Button("📝 New", id="btn-new-chat", variant="default", classes="chat-ctrl-btn")
+                        yield Button("📤 Export", id="btn-export-chat", variant="default", classes="chat-ctrl-btn")
+                        yield Button("📥 Import", id="btn-import-chat", variant="default", classes="chat-ctrl-btn")
+                        yield Button("🗑 Clear", id="btn-clear-chat", variant="warning", classes="chat-ctrl-btn")
             
             # Footer with action buttons
             with Horizontal(classes="footer"):
-                yield Button("💾 Save Backend", id="btn-save", variant="success")
-                yield Button("🔍 Test Connection", id="btn-test", variant="primary")
-                yield Button("🗑️ Clear Form", id="btn-clear", variant="warning")
-                yield Button("❌ Cancel", id="btn-cancel", variant="error")
+                yield Button("✔ Save Backend", id="btn-save", variant="success", classes="footer-btn-save")
+                yield Button("🔍 Test Connection", id="btn-test", variant="primary", classes="footer-btn-test")
+                yield Button("🗑 Clear Form", id="btn-clear", variant="warning", classes="footer-btn-clear")
+                yield Button("✕ Cancel", id="btn-cancel", variant="error", classes="footer-btn-cancel")
 
     def on_mount(self):
-        """Initialize the dialog."""
-        self._show_ai_welcome()
+        """Initialize the dialog and restore any saved chat state."""
+        # Try to restore chat from TUIState
+        self._restore_chat_state()
+        
+        # Only show welcome if no previous chat
+        if not self._ai_conversation:
+            self._show_ai_welcome()
+
+    def on_unmount(self):
+        """Save chat state before closing."""
+        self._save_chat_state()
+
+    def _restore_chat_state(self) -> None:
+        """Restore chat messages from TUIState."""
+        try:
+            from ...state.tui_state import TUIState
+            
+            # Get TUIState from app
+            if hasattr(self.app, 'state') and isinstance(self.app.state, TUIState):
+                state = self.app.state
+                
+                if state.add_backend_chat_messages:
+                    self._ai_conversation = state.add_backend_chat_messages.copy()
+                    self._ai_stats = state.add_backend_chat_stats.copy()
+                    
+                    # Restore chat display
+                    self._restore_chat_display()
+        except Exception:
+            pass
+
+    def _save_chat_state(self) -> None:
+        """Save chat messages to TUIState."""
+        try:
+            from ...state.tui_state import TUIState
+            
+            # Get TUIState from app
+            if hasattr(self.app, 'state') and isinstance(self.app.state, TUIState):
+                state = self.app.state
+                state.add_backend_chat_messages = self._ai_conversation.copy()
+                state.add_backend_chat_stats = self._ai_stats.copy()
+        except Exception:
+            pass
+
+    def _restore_chat_display(self) -> None:
+        """Restore chat messages to the display."""
+        try:
+            theme = get_theme()
+            chat_log = self.query_one("#ai-chat-log", RichLog)
+            chat_log.clear()
+            
+            for msg in self._ai_conversation:
+                text = Text()
+                if msg.get('role') == 'user':
+                    text.append("👤 You: ", style=f"bold {theme.primary}")
+                    text.append(msg.get('content', '') + "\n\n", style=theme.fg_base)
+                else:
+                    text.append("🤖 AI: ", style=f"bold {theme.accent}")
+                    text.append(msg.get('content', '') + "\n\n", style=theme.fg_base)
+                chat_log.write(text)
+            
+            # Update stats display
+            self._update_ai_stats_display()
+        except Exception:
+            pass
 
     def _show_ai_welcome(self):
         """Show welcome message in AI chat."""
@@ -683,6 +922,193 @@ class AddCustomBackendDialog(ModalScreen):
             self.dismiss(None)
         elif button_id == "btn-ai-ask":
             self._send_ai_message()
+        elif button_id == "btn-new-chat":
+            self._new_chat()
+        elif button_id == "btn-clear-chat":
+            self._clear_chat()
+        elif button_id == "btn-export-chat":
+            self._export_chat()
+        elif button_id == "btn-import-chat":
+            self._import_chat()
+
+    def _new_chat(self) -> None:
+        """Start a new chat, clearing the current conversation."""
+        try:
+            # Clear conversation history
+            self._ai_conversation = []
+            self._ai_stats = {
+                'prompt_tokens': 0,
+                'completion_tokens': 0,
+                'total_tokens': 0,
+                'requests': 0,
+                'thinking_time_ms': 0,
+            }
+            self._prompt_history = []
+            self._prompt_history_index = -1
+            
+            # Clear display
+            chat_log = self.query_one("#ai-chat-log", RichLog)
+            chat_log.clear()
+            
+            # Show welcome again
+            self._show_ai_welcome()
+            
+            # Update stats display
+            self._update_stats_display()
+            
+            # Save cleared state
+            self._save_chat_state()
+            
+            self.notify("Started new chat", severity="information")
+        except Exception as e:
+            self.notify(f"Error: {e}", severity="error")
+
+    def _clear_chat(self) -> None:
+        """Clear chat history without resetting stats."""
+        try:
+            # Clear only the conversation but keep stats
+            self._ai_conversation = []
+            
+            # Clear display
+            chat_log = self.query_one("#ai-chat-log", RichLog)
+            chat_log.clear()
+            
+            # Show welcome again
+            self._show_ai_welcome()
+            
+            # Save state
+            self._save_chat_state()
+            
+            self.notify("Chat cleared", severity="information")
+        except Exception as e:
+            self.notify(f"Error: {e}", severity="error")
+
+    def _export_chat(self) -> None:
+        """Export chat history to a file with custom name."""
+        try:
+            from datetime import datetime
+            
+            if not self._ai_conversation:
+                self.notify("No messages to export", severity="warning")
+                return
+            
+            # Generate default name
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            default_name = f"backend_chat_{timestamp}"
+            
+            # Show export name dialog
+            def handle_export_name(name: str) -> None:
+                if not name:
+                    return  # User cancelled
+                
+                try:
+                    # Create export directory
+                    export_dir = Path.home() / ".proxima" / "chat_exports"
+                    export_dir.mkdir(parents=True, exist_ok=True)
+                    
+                    # Sanitize filename
+                    safe_name = "".join(c for c in name if c.isalnum() or c in ('_', '-', ' ')).strip()
+                    if not safe_name:
+                        safe_name = f"chat_{timestamp}"
+                    
+                    filename = f"{safe_name}.json"
+                    export_path = export_dir / filename
+                    
+                    # Prepare export data
+                    export_data = {
+                        "type": "add_backend_chat",
+                        "name": name,
+                        "timestamp": timestamp,
+                        "messages": self._ai_conversation,
+                        "stats": self._ai_stats,
+                        "prompt_history": self._prompt_history,
+                    }
+                    
+                    # Save to file
+                    with open(export_path, 'w', encoding='utf-8') as f:
+                        json.dump(export_data, f, indent=2, ensure_ascii=False)
+                    
+                    self.notify(f"✅ Chat exported: {filename}", severity="success")
+                except Exception as e:
+                    self.notify(f"Export failed: {e}", severity="error")
+            
+            self.app.push_screen(ChatExportNameDialog(default_name), handle_export_name)
+            
+        except Exception as e:
+            self.notify(f"Export failed: {e}", severity="error")
+
+    def _import_chat(self) -> None:
+        """Import chat history from a file with selection dialog."""
+        try:
+            # Look for chat exports
+            export_dir = Path.home() / ".proxima" / "chat_exports"
+            
+            if not export_dir.exists():
+                self.notify("No exported chats found", severity="warning")
+                return
+            
+            # Find all chat export files
+            chat_files = list(export_dir.glob("*.json"))
+            
+            if not chat_files:
+                self.notify("No exported chats found", severity="warning")
+                return
+            
+            # Build file list with display names
+            file_options = []
+            for f in sorted(chat_files, key=lambda x: x.stat().st_mtime, reverse=True):
+                try:
+                    with open(f, 'r', encoding='utf-8') as fp:
+                        data = json.load(fp)
+                    # Use saved name or filename
+                    display_name = data.get('name', f.stem)
+                    timestamp = data.get('timestamp', '')
+                    msg_count = len(data.get('messages', []))
+                    label = f"{display_name} ({msg_count} msgs)"
+                    if timestamp:
+                        label = f"{display_name} - {timestamp[:8]} ({msg_count} msgs)"
+                    file_options.append((label, str(f)))
+                except Exception:
+                    file_options.append((f.stem, str(f)))
+            
+            # Show import selection dialog
+            def handle_import_select(file_path: str) -> None:
+                if not file_path:
+                    return  # User cancelled
+                
+                try:
+                    # Load the chat
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        import_data = json.load(f)
+                    
+                    # Restore conversation
+                    if 'messages' in import_data:
+                        self._ai_conversation = import_data['messages']
+                    
+                    if 'stats' in import_data:
+                        self._ai_stats = import_data['stats']
+                    
+                    if 'prompt_history' in import_data:
+                        self._prompt_history = import_data['prompt_history']
+                    
+                    # Restore display
+                    self._restore_chat_display()
+                    
+                    # Update stats
+                    self._update_stats_display()
+                    
+                    # Save state
+                    self._save_chat_state()
+                    
+                    name = import_data.get('name', Path(file_path).stem)
+                    self.notify(f"✅ Chat imported: {name}", severity="success")
+                except Exception as e:
+                    self.notify(f"Import failed: {e}", severity="error")
+            
+            self.app.push_screen(ChatImportSelectDialog(file_options), handle_import_select)
+            
+        except Exception as e:
+            self.notify(f"Import failed: {e}", severity="error")
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         """Handle Enter key in input fields."""
@@ -747,6 +1173,10 @@ class AddCustomBackendDialog(ModalScreen):
         except Exception:
             pass
 
+    def _update_ai_stats_display(self) -> None:
+        """Alias for _update_stats_display for compatibility."""
+        self._update_stats_display()
+
     def _get_llm_settings(self) -> Dict:
         """Load LLM settings from storage."""
         try:
@@ -786,6 +1216,12 @@ class AddCustomBackendDialog(ModalScreen):
             user_text.append("👤 You: ", style=f"bold {theme.primary}")
             user_text.append(message + "\n", style=theme.fg_base)
             chat_log.write(user_text)
+            
+            # Save user message to conversation
+            self._ai_conversation.append({
+                'role': 'user',
+                'content': message,
+            })
             
             # Track timing
             start_time = time.time()
@@ -878,11 +1314,28 @@ class AddCustomBackendDialog(ModalScreen):
 - GPU: {form_state.get('gpu_support', False)}
 - Max Qubits: {form_state.get('max_qubits', 30)}"""
 
+            # Build conversation history for context continuity
+            # This allows imported chats to maintain context
+            conversation_context = ""
+            if self._ai_conversation:
+                # Include recent conversation history (last 10 exchanges)
+                recent_messages = self._ai_conversation[-20:]  # Last 20 messages (10 exchanges)
+                for msg in recent_messages:
+                    role = "User" if msg.get('role') == 'user' else "Assistant"
+                    content = msg.get('content', '')
+                    conversation_context += f"{role}: {content}\n\n"
+            
+            # Build the full prompt with context
+            full_prompt = f"{context}\n\n"
+            if conversation_context:
+                full_prompt += f"Previous conversation:\n{conversation_context}\n"
+            full_prompt += f"Current user question: {message}"
+
             # Build request with provider info
             model = getattr(self, '_llm_model', None)
             
             request = LLMRequest(
-                prompt=f"{context}\n\nUser question: {message}",
+                prompt=full_prompt,
                 system_prompt="""You are a helpful AI assistant for quantum computing backend configuration.
 Help users set up custom backends for the Proxima quantum simulation platform.
 Provide specific, actionable advice for backend configuration including:
@@ -890,7 +1343,9 @@ Provide specific, actionable advice for backend configuration including:
 - GPU configuration
 - Performance optimization
 - Common issues and solutions
-Keep responses concise and practical.""",
+Keep responses concise and practical.
+
+You have access to the previous conversation history, so maintain context and refer back to earlier discussions when relevant.""",
                 temperature=0.7,
                 max_tokens=512,
                 provider=router_provider,
@@ -947,6 +1402,12 @@ Keep responses concise and practical.""",
             ai_text.append(response.text + "\n\n", style=theme.fg_base)
             chat_log.write(ai_text)
             
+            # Save message to conversation history
+            self._ai_conversation.append({
+                'role': 'assistant',
+                'content': response.text,
+            })
+            
             # Update stats
             if hasattr(response, 'prompt_tokens'):
                 self._ai_stats['prompt_tokens'] += response.prompt_tokens or 0
@@ -961,7 +1422,11 @@ Keep responses concise and practical.""",
                 elapsed = int((time.time() - start_time) * 1000)
                 self._ai_stats['thinking_time_ms'] = elapsed
             
+            self._ai_stats['requests'] = self._ai_stats.get('requests', 0) + 1
             self._update_stats_display()
+            
+            # Save state
+            self._save_chat_state()
             
         except Exception as e:
             self._show_ai_error(str(e))
@@ -1034,6 +1499,12 @@ What would you like to know?"""
         ai_text.append(response + "\n\n", style=theme.fg_base)
         chat_log.write(ai_text)
         
+        # Save AI response to conversation
+        self._ai_conversation.append({
+            'role': 'assistant',
+            'content': response,
+        })
+        
         # Update stats for simulated response
         import time
         elapsed = int((time.time() - start_time) * 1000)
@@ -1042,6 +1513,9 @@ What would you like to know?"""
         self._ai_stats['completion_tokens'] += len(response.split()) * 2  # Approximate
         self._ai_stats['total_tokens'] = self._ai_stats['prompt_tokens'] + self._ai_stats['completion_tokens']
         self._update_stats_display()
+        
+        # Save state
+        self._save_chat_state()
 
     def _show_ai_error(self, error: str) -> None:
         """Show error in AI chat."""

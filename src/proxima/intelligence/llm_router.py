@@ -169,6 +169,47 @@ class _BaseProvider:
         """Check if the provider is reachable."""
         return True  # Override in subclasses
 
+    def list_models(
+        self,
+        api_base: str | None = None,
+        api_key: str | None = None,
+    ) -> list[str]:
+        """List available models from an OpenAI-compatible /v1/models endpoint.
+        
+        Override in subclasses for provider-specific implementations.
+        
+        Args:
+            api_base: Base URL for the API (e.g., http://localhost:11434)
+            api_key: API key if required
+            
+        Returns:
+            List of model IDs/names available
+        """
+        # Default implementation for OpenAI-compatible APIs
+        base_url = api_base or getattr(self, "_api_base", None) or getattr(self, "_endpoint", None)
+        if not base_url:
+            return []
+        
+        try:
+            client = self._get_client()
+            headers: dict[str, str] = {"Content-Type": "application/json"}
+            if api_key:
+                headers["Authorization"] = f"Bearer {api_key}"
+            
+            response = client.get(
+                f"{base_url.rstrip('/')}/v1/models" if not base_url.endswith("/v1") else f"{base_url}/models",
+                headers=headers,
+                timeout=5.0,
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                models = data.get("data", [])
+                return [m.get("id", m.get("name", "")) for m in models if m.get("id") or m.get("name")]
+        except Exception:
+            pass
+        return []
+
     def stream_send(
         self,
         request: LLMRequest,
@@ -339,6 +380,46 @@ class OpenAIProvider(_BaseProvider):
             return response.status_code in (200, 401)
         except Exception:
             return False
+
+    def list_models(
+        self,
+        api_base: str | None = None,
+        api_key: str | None = None,
+    ) -> list[str]:
+        """List available models from OpenAI API."""
+        if not api_key:
+            return []
+        
+        try:
+            client = self._get_client()
+            response = client.get(
+                f"{self._api_base}/models",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                timeout=10.0,
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                models = data.get("data", [])
+                # Filter to chat models only
+                chat_models = [
+                    m.get("id") for m in models 
+                    if m.get("id") and ("gpt" in m.get("id", "").lower() or "o1" in m.get("id", "").lower())
+                ]
+                # Sort with newest/best models first
+                priority = ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-4", "gpt-3.5-turbo", "o1"]
+                def sort_key(model):
+                    for i, p in enumerate(priority):
+                        if p in model:
+                            return (i, model)
+                    return (100, model)
+                return sorted(chat_models, key=sort_key)
+        except Exception:
+            pass
+        return []
 
     def stream_send(
         self,
@@ -541,6 +622,50 @@ class AnthropicProvider(_BaseProvider):
         except Exception:
             return False
 
+    def list_models(
+        self,
+        api_base: str | None = None,
+        api_key: str | None = None,
+    ) -> list[str]:
+        """List available Anthropic Claude models.
+        
+        Note: Anthropic doesn't have a public models endpoint, so we return
+        the known available models based on API key validation.
+        """
+        if not api_key:
+            return []
+        
+        # Validate the API key first
+        try:
+            client = self._get_client()
+            response = client.post(
+                f"{self._api_base}/messages",
+                headers={
+                    "x-api-key": api_key,
+                    "anthropic-version": self._api_version,
+                    "Content-Type": "application/json",
+                },
+                json={"model": "claude-3-haiku-20240307", "max_tokens": 1, "messages": [{"role": "user", "content": "hi"}]},
+                timeout=10.0,
+            )
+            
+            # If API key is valid (200) or model works, return all known models
+            if response.status_code in (200, 400, 429):
+                # Return known Claude models in order of capability
+                return [
+                    "claude-3-5-sonnet-20241022",
+                    "claude-3-5-sonnet-20240620",
+                    "claude-3-opus-20240229",
+                    "claude-3-sonnet-20240229",
+                    "claude-3-haiku-20240307",
+                    "claude-2.1",
+                    "claude-2.0",
+                    "claude-instant-1.2",
+                ]
+        except Exception:
+            pass
+        return []
+
     def stream_send(
         self,
         request: LLMRequest,
@@ -713,13 +838,54 @@ class OllamaProvider(_BaseProvider):
     def __init__(self, timeout: float = 120.0):
         super().__init__(DEFAULT_MODELS["ollama"], timeout)
         self._endpoint: str | None = None
+        self._available_models: list[str] | None = None
+        self._model_checked: set[str] = set()
+
+    def _get_available_models(self) -> list[str]:
+        """Get list of available models from Ollama."""
+        if self._available_models is not None:
+            return self._available_models
+        
+        endpoint = self._endpoint or f"http://localhost:{DEFAULT_PORTS['ollama']}"
+        try:
+            client = self._get_client()
+            response = client.get(f"{endpoint}/api/tags", timeout=5.0)
+            if response.status_code == 200:
+                data = response.json()
+                models = data.get("models", [])
+                self._available_models = [m.get("name", "").split(":")[0] for m in models]
+                return self._available_models
+        except Exception:
+            pass
+        return []
+
+    def _find_best_model(self, requested_model: str) -> str:
+        """Find the best available model, falling back if requested isn't available."""
+        available = self._get_available_models()
+        if not available:
+            return requested_model
+        
+        # Check if requested model (or a variant) is available
+        for model in available:
+            if requested_model in model or model in requested_model:
+                return model
+        
+        # Return first available model as fallback
+        return available[0] if available else requested_model
 
     def send(self, request: LLMRequest, api_key: str | None = None) -> LLMResponse:
         """Send a request to Ollama server using the chat API."""
         start = time.perf_counter()
 
         endpoint = self._endpoint or f"http://localhost:{DEFAULT_PORTS['ollama']}"
-        model = request.model or self.default_model
+        requested_model = request.model or self.default_model
+        
+        # Auto-detect best available model if not already checked
+        if requested_model not in self._model_checked:
+            model = self._find_best_model(requested_model)
+            self._model_checked.add(requested_model)
+        else:
+            model = requested_model
 
         # Use the chat API format (more reliable)
         messages = []
@@ -775,7 +941,22 @@ class OllamaProvider(_BaseProvider):
             elapsed = (time.perf_counter() - start) * 1000
             error_msg = f"HTTP {e.response.status_code}"
             if e.response.status_code == 404:
-                error_msg = f"Model '{model}' not found. Try: ollama pull {model}"
+                # Try to find an available model
+                available = self._get_available_models()
+                if available:
+                    # Retry with first available model
+                    fallback_model = available[0]
+                    request_copy = LLMRequest(
+                        prompt=request.prompt,
+                        system_prompt=request.system_prompt,
+                        temperature=request.temperature,
+                        max_tokens=request.max_tokens,
+                        provider=request.provider,
+                        model=fallback_model,
+                    )
+                    self._model_checked.add(fallback_model)
+                    return self.send(request_copy, api_key)
+                error_msg = f"Model '{model}' not found. Available models: {', '.join(available) if available else 'none'}. Try: ollama pull {model}"
             return LLMResponse(
                 text="",
                 provider=self.name,
@@ -805,6 +986,24 @@ class OllamaProvider(_BaseProvider):
         except Exception:
             return False
 
+    def list_models(
+        self,
+        api_base: str | None = None,
+        api_key: str | None = None,
+    ) -> list[str]:
+        """List available models from Ollama."""
+        endpoint = api_base or self._endpoint or f"http://localhost:{DEFAULT_PORTS['ollama']}"
+        try:
+            client = self._get_client()
+            response = client.get(f"{endpoint}/api/tags", timeout=5.0)
+            if response.status_code == 200:
+                data = response.json()
+                models = data.get("models", [])
+                return [m.get("name", "") for m in models if m.get("name")]
+        except Exception:
+            pass
+        return []
+
     def stream_send(
         self,
         request: LLMRequest,
@@ -815,7 +1014,14 @@ class OllamaProvider(_BaseProvider):
         start = time.perf_counter()
 
         endpoint = self._endpoint or f"http://localhost:{DEFAULT_PORTS['ollama']}"
-        model = request.model or self.default_model
+        requested_model = request.model or self.default_model
+        
+        # Auto-detect best available model if not already checked
+        if requested_model not in self._model_checked:
+            model = self._find_best_model(requested_model)
+            self._model_checked.add(requested_model)
+        else:
+            model = requested_model
 
         # Use the chat API format
         messages = []
@@ -1318,6 +1524,51 @@ class TogetherProvider(_BaseProvider):
         except Exception:
             return False
 
+    def list_models(
+        self,
+        api_base: str | None = None,
+        api_key: str | None = None,
+    ) -> list[str]:
+        """List available models from Together AI API."""
+        if not api_key:
+            return []
+        
+        try:
+            client = self._get_client()
+            response = client.get(
+                f"{self._api_base}/models",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                timeout=10.0,
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                # Together AI returns a list of models directly
+                models = data if isinstance(data, list) else data.get("data", data.get("models", []))
+                # Filter to chat/instruct models
+                chat_models = [
+                    m.get("id") or m.get("name") for m in models 
+                    if (m.get("id") or m.get("name")) and 
+                       ("chat" in str(m.get("id", "")).lower() or 
+                        "instruct" in str(m.get("id", "")).lower() or
+                        "llama" in str(m.get("id", "")).lower() or
+                        "mixtral" in str(m.get("id", "")).lower())
+                ]
+                # Sort by preference
+                priority = ["llama-3", "mixtral", "llama-2-70b", "codellama", "mistral"]
+                def sort_key(model):
+                    for i, p in enumerate(priority):
+                        if p in model.lower():
+                            return (i, model)
+                    return (100, model)
+                return sorted(chat_models[:50], key=sort_key)  # Limit to 50 models
+        except Exception:
+            pass
+        return []
+
 
 class GroqProvider(_BaseProvider):
     """Groq provider for ultra-fast LLM inference.
@@ -1449,6 +1700,42 @@ class GroqProvider(_BaseProvider):
             return response.status_code in (200, 401)
         except Exception:
             return False
+
+    def list_models(
+        self,
+        api_base: str | None = None,
+        api_key: str | None = None,
+    ) -> list[str]:
+        """List available models from Groq API."""
+        if not api_key:
+            return []
+        
+        try:
+            client = self._get_client()
+            response = client.get(
+                f"{self._api_base}/models",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                timeout=10.0,
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                models = data.get("data", [])
+                model_ids = [m.get("id") for m in models if m.get("id")]
+                # Sort by preference (latest/largest first)
+                priority = ["llama-3.3", "llama-3.1-70b", "llama-3.1-8b", "mixtral", "llama3-70b", "llama3-8b", "gemma"]
+                def sort_key(model):
+                    for i, p in enumerate(priority):
+                        if p in model.lower():
+                            return (i, model)
+                    return (100, model)
+                return sorted(model_ids, key=sort_key)
+        except Exception:
+            pass
+        return []
 
     def stream_send(
         self,
@@ -1666,6 +1953,42 @@ class MistralProvider(_BaseProvider):
             return response.status_code in (200, 401)
         except Exception:
             return False
+
+    def list_models(
+        self,
+        api_base: str | None = None,
+        api_key: str | None = None,
+    ) -> list[str]:
+        """List available models from Mistral AI API."""
+        if not api_key:
+            return []
+        
+        try:
+            client = self._get_client()
+            response = client.get(
+                f"{self._api_base}/models",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                timeout=10.0,
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                models = data.get("data", [])
+                model_ids = [m.get("id") for m in models if m.get("id")]
+                # Sort by preference (large > medium > small)
+                priority = ["large", "medium", "small", "codestral", "embed"]
+                def sort_key(model):
+                    for i, p in enumerate(priority):
+                        if p in model.lower():
+                            return (i, model)
+                    return (100, model)
+                return sorted(model_ids, key=sort_key)
+        except Exception:
+            pass
+        return []
 
 
 class AzureOpenAIProvider(_BaseProvider):
@@ -1980,6 +2303,46 @@ class CohereProvider(_BaseProvider):
         except Exception:
             return False
 
+    def list_models(
+        self,
+        api_base: str | None = None,
+        api_key: str | None = None,
+    ) -> list[str]:
+        """List available models from Cohere API."""
+        if not api_key:
+            return []
+        
+        try:
+            client = self._get_client()
+            response = client.get(
+                f"{self._api_base}/models",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                timeout=10.0,
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                models = data.get("models", [])
+                # Filter to chat-capable models
+                chat_models = [
+                    m.get("name") for m in models 
+                    if m.get("name") and "command" in m.get("name", "").lower()
+                ]
+                # Sort by preference
+                priority = ["command-r-plus", "command-r", "command-light", "command"]
+                def sort_key(model):
+                    for i, p in enumerate(priority):
+                        if p in model.lower():
+                            return (i, model)
+                    return (100, model)
+                return sorted(chat_models, key=sort_key) if chat_models else ["command-r-plus", "command-r", "command-light"]
+        except Exception:
+            pass
+        return ["command-r-plus", "command-r", "command-light"]
+
     def stream_send(
         self,
         request: LLMRequest,
@@ -2154,6 +2517,23 @@ class PerplexityProvider(_BaseProvider):
             return response.status_code in (200, 401)
         except Exception:
             return False
+
+    def list_models(
+        self,
+        api_base: str | None = None,
+        api_key: str | None = None,
+    ) -> list[str]:
+        """List available models from Perplexity API."""
+        # Perplexity doesn't have a public models endpoint, return known models
+        return [
+            "llama-3.1-sonar-large-128k-online",
+            "llama-3.1-sonar-small-128k-online",
+            "llama-3.1-sonar-huge-128k-online",
+            "llama-3.1-sonar-large-128k-chat",
+            "llama-3.1-sonar-small-128k-chat",
+            "sonar-pro",
+            "sonar",
+        ]
 
 
 class GoogleGeminiProvider(_BaseProvider):
@@ -2397,6 +2777,49 @@ class GoogleGeminiProvider(_BaseProvider):
         """Check if Google Gemini API is available."""
         return True  # Always return True since we need API key to check
 
+    def list_models(
+        self,
+        api_base: str | None = None,
+        api_key: str | None = None,
+    ) -> list[str]:
+        """List available models from Google Gemini API."""
+        if not api_key:
+            return []
+        
+        try:
+            client = self._get_client()
+            response = client.get(
+                f"{self._api_base}/models?key={api_key}",
+                headers={"Content-Type": "application/json"},
+                timeout=10.0,
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                models = data.get("models", [])
+                # Filter to generative models and extract clean names
+                model_names = []
+                for m in models:
+                    name = m.get("name", "")
+                    # Format: models/gemini-1.5-flash-latest -> gemini-1.5-flash-latest
+                    if name.startswith("models/"):
+                        name = name[7:]
+                    # Only include text generation models (exclude vision-only, embedding)
+                    if "generateContent" in m.get("supportedGenerationMethods", []):
+                        model_names.append(name)
+                
+                # Sort by preference
+                priority = ["gemini-1.5-pro", "gemini-1.5-flash", "gemini-pro", "gemini-1.0"]
+                def sort_key(model):
+                    for i, p in enumerate(priority):
+                        if p in model.lower():
+                            return (i, model)
+                    return (100, model)
+                return sorted(model_names, key=sort_key)
+        except Exception:
+            pass
+        return []
+
 
 class XAIProvider(_BaseProvider):
     """xAI (Grok) API provider - uses OpenAI-compatible API."""
@@ -2571,6 +2994,42 @@ class XAIProvider(_BaseProvider):
         """Check if xAI API is available."""
         return True
 
+    def list_models(
+        self,
+        api_base: str | None = None,
+        api_key: str | None = None,
+    ) -> list[str]:
+        """List available models from xAI API."""
+        if not api_key:
+            return []
+        
+        try:
+            client = self._get_client()
+            response = client.get(
+                f"{self._api_base}/models",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                timeout=10.0,
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                models = data.get("data", [])
+                model_ids = [m.get("id") for m in models if m.get("id")]
+                # Sort with grok-2 first
+                priority = ["grok-2", "grok-2-vision", "grok-2-mini", "grok-beta"]
+                def sort_key(model):
+                    for i, p in enumerate(priority):
+                        if p in model.lower():
+                            return (i, model)
+                    return (100, model)
+                return sorted(model_ids, key=sort_key) if model_ids else ["grok-2", "grok-2-vision", "grok-2-mini", "grok-beta"]
+        except Exception:
+            pass
+        return ["grok-2", "grok-2-vision", "grok-2-mini", "grok-beta"]
+
 
 class DeepSeekProvider(_BaseProvider):
     """DeepSeek AI API provider for advanced reasoning."""
@@ -2732,6 +3191,43 @@ class DeepSeekProvider(_BaseProvider):
                 error=str(e),
             )
 
+    def list_models(
+        self,
+        api_base: str | None = None,
+        api_key: str | None = None,
+    ) -> list[str]:
+        """List available models from DeepSeek API."""
+        if not api_key:
+            return []
+        
+        try:
+            client = self._get_client()
+            response = client.get(
+                f"{self._api_base}/models",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                timeout=10.0,
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                models = data.get("data", [])
+                model_ids = [m.get("id") for m in models if m.get("id")]
+                # Sort with chat/reasoner models first
+                priority = ["deepseek-reasoner", "deepseek-chat", "deepseek-coder"]
+                def sort_key(model):
+                    for i, p in enumerate(priority):
+                        if p in model.lower():
+                            return (i, model)
+                    return (100, model)
+                return sorted(model_ids, key=sort_key)
+        except Exception:
+            pass
+        # Return known models if API call fails
+        return ["deepseek-chat", "deepseek-coder", "deepseek-reasoner"]
+
 
 class FireworksProvider(_BaseProvider):
     """Fireworks AI API provider for fast inference."""
@@ -2807,6 +3303,49 @@ class FireworksProvider(_BaseProvider):
                 latency_ms=elapsed,
                 error=str(e),
             )
+
+    def list_models(
+        self,
+        api_base: str | None = None,
+        api_key: str | None = None,
+    ) -> list[str]:
+        """List available models from Fireworks AI API."""
+        if not api_key:
+            return []
+        
+        try:
+            client = self._get_client()
+            response = client.get(
+                f"{self._api_base}/models",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                timeout=10.0,
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                models = data.get("data", data) if isinstance(data, dict) else data
+                if isinstance(models, list):
+                    model_ids = [m.get("id") or m.get("name") for m in models if m.get("id") or m.get("name")]
+                    # Sort by preference
+                    priority = ["llama-v3", "llama-3", "mixtral", "qwen", "deepseek"]
+                    def sort_key(model):
+                        for i, p in enumerate(priority):
+                            if p in model.lower():
+                                return (i, model)
+                        return (100, model)
+                    return sorted(model_ids[:30], key=sort_key)
+        except Exception:
+            pass
+        # Return known models as fallback
+        return [
+            "accounts/fireworks/models/llama-v3p1-70b-instruct",
+            "accounts/fireworks/models/llama-v3p1-8b-instruct",
+            "accounts/fireworks/models/mixtral-8x7b-instruct",
+            "accounts/fireworks/models/qwen2-72b-instruct",
+        ]
 
 
 class HuggingFaceInferenceProvider(_BaseProvider):
@@ -2888,6 +3427,26 @@ class HuggingFaceInferenceProvider(_BaseProvider):
                 latency_ms=elapsed,
                 error=str(e),
             )
+
+    def list_models(
+        self,
+        api_base: str | None = None,
+        api_key: str | None = None,
+    ) -> list[str]:
+        """List popular models available on HuggingFace."""
+        # HuggingFace has too many models to list, return popular LLM models
+        return [
+            "meta-llama/Llama-3.1-70B-Instruct",
+            "meta-llama/Llama-3.1-8B-Instruct",
+            "meta-llama/Meta-Llama-3-70B-Instruct",
+            "meta-llama/Meta-Llama-3-8B-Instruct",
+            "mistralai/Mixtral-8x7B-Instruct-v0.1",
+            "mistralai/Mistral-7B-Instruct-v0.2",
+            "microsoft/Phi-3-mini-4k-instruct",
+            "google/gemma-2-9b-it",
+            "Qwen/Qwen2-72B-Instruct",
+            "bigcode/starcoder2-15b",
+        ]
 
 
 class ReplicateProvider(_BaseProvider):
@@ -3001,6 +3560,23 @@ class ReplicateProvider(_BaseProvider):
                 latency_ms=elapsed,
                 error=str(e),
             )
+
+    def list_models(
+        self,
+        api_base: str | None = None,
+        api_key: str | None = None,
+    ) -> list[str]:
+        """List popular models available on Replicate."""
+        # Return popular LLM models on Replicate
+        return [
+            "meta/llama-3.1-405b-instruct",
+            "meta/llama-3-70b-instruct",
+            "meta/llama-3-8b-instruct",
+            "mistralai/mixtral-8x7b-instruct-v0.1",
+            "mistralai/mistral-7b-instruct-v0.2",
+            "anthropic/claude-instant-1.2",
+            "stability-ai/stablelm-tuned-alpha-7b",
+        ]
 
 
 class OpenRouterProvider(_BaseProvider):
@@ -3166,15 +3742,2355 @@ class OpenRouterProvider(_BaseProvider):
                 error=str(e),
             )
 
+    def list_models(
+        self,
+        api_base: str | None = None,
+        api_key: str | None = None,
+    ) -> list[str]:
+        """List available models from OpenRouter API."""
+        if not api_key:
+            return []
+        
+        try:
+            client = self._get_client()
+            response = client.get(
+                f"{self._api_base}/models",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                timeout=15.0,
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                models = data.get("data", [])
+                model_ids = [m.get("id") for m in models if m.get("id")]
+                # Sort by popularity/preference
+                priority = ["claude-3.5", "gpt-4o", "claude-3", "llama-3.3", "gpt-4", "gemini"]
+                def sort_key(model):
+                    for i, p in enumerate(priority):
+                        if p in model.lower():
+                            return (i, model)
+                    return (100, model)
+                return sorted(model_ids[:100], key=sort_key)  # Limit to 100 models
+        except Exception:
+            pass
+        return []
+
+
+# =============================================================================
+# Additional Provider Implementations (Full Settings Coverage)
+# =============================================================================
+
+class AI21Provider(_BaseProvider):
+    """AI21 Labs (Jamba) provider - SSM-Transformer hybrid with 256K context."""
+
+    name: ProviderName = "ai21"  # type: ignore
+    is_local: bool = False
+    requires_api_key: bool = True
+
+    def __init__(self, timeout: float = 60.0):
+        super().__init__("jamba-1.5-large", timeout)
+        self._api_base = "https://api.ai21.com/studio/v1"
+
+    def send(self, request: LLMRequest, api_key: str | None) -> LLMResponse:
+        """Send a request to AI21 API."""
+        start = time.perf_counter()
+
+        if not api_key:
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=request.model or self.default_model,
+                latency_ms=0,
+                error="API key required for AI21",
+            )
+
+        model = request.model or self.default_model
+        messages = []
+        if request.system_prompt:
+            messages.append({"role": "system", "content": request.system_prompt})
+        messages.append({"role": "user", "content": request.prompt})
+
+        payload: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "temperature": request.temperature,
+        }
+        if request.max_tokens:
+            payload["max_tokens"] = request.max_tokens
+
+        try:
+            client = self._get_client()
+            response = client.post(
+                f"{self._api_base}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            elapsed = (time.perf_counter() - start) * 1000
+            text = data["choices"][0]["message"]["content"]
+            tokens = data.get("usage", {}).get("total_tokens", 0)
+
+            return LLMResponse(
+                text=text,
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                tokens_used=tokens,
+                raw=data,
+            )
+        except Exception as e:
+            elapsed = (time.perf_counter() - start) * 1000
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                error=str(e),
+            )
+
+    def list_models(
+        self,
+        api_base: str | None = None,
+        api_key: str | None = None,
+    ) -> list[str]:
+        """List available models from AI21 API."""
+        if not api_key:
+            return []
+        
+        try:
+            client = self._get_client()
+            response = client.get(
+                f"{self._api_base}/models",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                timeout=10.0,
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                models = data if isinstance(data, list) else data.get("data", data.get("models", []))
+                if isinstance(models, list):
+                    return [m.get("id") or m.get("name") or str(m) for m in models if m][:20]
+        except Exception:
+            pass
+        # Return known models as fallback
+        return ["jamba-1.5-large", "jamba-1.5-mini", "j2-ultra", "j2-mid", "j2-light"]
+
+
+class DeepInfraProvider(_BaseProvider):
+    """DeepInfra provider - fast inference for open-source models."""
+
+    name: ProviderName = "deepinfra"  # type: ignore
+    is_local: bool = False
+    requires_api_key: bool = True
+
+    def __init__(self, timeout: float = 60.0):
+        super().__init__("meta-llama/Meta-Llama-3.1-70B-Instruct", timeout)
+        self._api_base = "https://api.deepinfra.com/v1/openai"
+
+    def send(self, request: LLMRequest, api_key: str | None) -> LLMResponse:
+        """Send a request to DeepInfra API (OpenAI-compatible)."""
+        start = time.perf_counter()
+
+        if not api_key:
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=request.model or self.default_model,
+                latency_ms=0,
+                error="API key required for DeepInfra",
+            )
+
+        model = request.model or self.default_model
+        messages = []
+        if request.system_prompt:
+            messages.append({"role": "system", "content": request.system_prompt})
+        messages.append({"role": "user", "content": request.prompt})
+
+        payload: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "temperature": request.temperature,
+        }
+        if request.max_tokens:
+            payload["max_tokens"] = request.max_tokens
+
+        try:
+            client = self._get_client()
+            response = client.post(
+                f"{self._api_base}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            elapsed = (time.perf_counter() - start) * 1000
+            text = data["choices"][0]["message"]["content"]
+            tokens = data.get("usage", {}).get("total_tokens", 0)
+
+            return LLMResponse(
+                text=text,
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                tokens_used=tokens,
+                raw=data,
+            )
+        except Exception as e:
+            elapsed = (time.perf_counter() - start) * 1000
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                error=str(e),
+            )
+
+    def list_models(
+        self,
+        api_base: str | None = None,
+        api_key: str | None = None,
+    ) -> list[str]:
+        """List available models from DeepInfra API."""
+        if not api_key:
+            return []
+        
+        try:
+            client = self._get_client()
+            response = client.get(
+                f"{self._api_base}/models",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                timeout=10.0,
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                models = data.get("data", [])
+                model_ids = [m.get("id") for m in models if m.get("id")]
+                # Sort by preference
+                priority = ["llama-3", "mixtral", "qwen", "mistral", "gemma"]
+                def sort_key(model):
+                    for i, p in enumerate(priority):
+                        if p in model.lower():
+                            return (i, model)
+                    return (100, model)
+                return sorted(model_ids[:30], key=sort_key)
+        except Exception:
+            pass
+        return [
+            "meta-llama/Meta-Llama-3.1-70B-Instruct",
+            "meta-llama/Meta-Llama-3.1-8B-Instruct",
+            "mistralai/Mixtral-8x7B-Instruct-v0.1",
+            "Qwen/Qwen2-72B-Instruct",
+        ]
+
+
+class AnyscaleProvider(_BaseProvider):
+    """Anyscale Endpoints provider - scalable model serving."""
+
+    name: ProviderName = "anyscale"  # type: ignore
+    is_local: bool = False
+    requires_api_key: bool = True
+
+    def __init__(self, timeout: float = 60.0):
+        super().__init__("meta-llama/Llama-3-70b-chat-hf", timeout)
+        self._api_base = "https://api.endpoints.anyscale.com/v1"
+
+    def send(self, request: LLMRequest, api_key: str | None) -> LLMResponse:
+        """Send a request to Anyscale API (OpenAI-compatible)."""
+        start = time.perf_counter()
+
+        if not api_key:
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=request.model or self.default_model,
+                latency_ms=0,
+                error="API key required for Anyscale",
+            )
+
+        model = request.model or self.default_model
+        messages = []
+        if request.system_prompt:
+            messages.append({"role": "system", "content": request.system_prompt})
+        messages.append({"role": "user", "content": request.prompt})
+
+        payload: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "temperature": request.temperature,
+        }
+        if request.max_tokens:
+            payload["max_tokens"] = request.max_tokens
+
+        try:
+            client = self._get_client()
+            response = client.post(
+                f"{self._api_base}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            elapsed = (time.perf_counter() - start) * 1000
+            text = data["choices"][0]["message"]["content"]
+            tokens = data.get("usage", {}).get("total_tokens", 0)
+
+            return LLMResponse(
+                text=text,
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                tokens_used=tokens,
+                raw=data,
+            )
+        except Exception as e:
+            elapsed = (time.perf_counter() - start) * 1000
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                error=str(e),
+            )
+
+
+    def list_models(self, api_base: str | None = None, api_key: str | None = None) -> list[str]:
+        """List available models from Anyscale."""
+        # Return popular models available on Anyscale
+        known_models = [
+            "meta-llama/Meta-Llama-3.1-405B-Instruct",
+            "meta-llama/Meta-Llama-3.1-70B-Instruct",
+            "meta-llama/Meta-Llama-3.1-8B-Instruct",
+            "meta-llama/Llama-3-70b-chat-hf",
+            "meta-llama/Llama-3-8b-chat-hf",
+            "mistralai/Mixtral-8x22B-Instruct-v0.1",
+            "mistralai/Mixtral-8x7B-Instruct-v0.1",
+            "mistralai/Mistral-7B-Instruct-v0.1",
+            "codellama/CodeLlama-70b-Instruct-hf",
+            "codellama/CodeLlama-34b-Instruct-hf",
+        ]
+        return known_models
+
+
+class VLLMProvider(_BaseProvider):
+    """vLLM self-hosted provider - high-throughput inference server."""
+
+    name: ProviderName = "vllm"  # type: ignore
+    is_local: bool = True
+    requires_api_key: bool = False
+
+    def __init__(self, timeout: float = 120.0):
+        super().__init__("local-model", timeout)
+        self._endpoint = "http://localhost:8000"
+
+    def set_endpoint(self, endpoint: str) -> None:
+        """Set the vLLM server endpoint."""
+        self._endpoint = endpoint.rstrip("/")
+
+    def send(self, request: LLMRequest, api_key: str | None = None) -> LLMResponse:
+        """Send a request to vLLM server (OpenAI-compatible)."""
+        start = time.perf_counter()
+
+        model = request.model or self.default_model
+        messages = []
+        if request.system_prompt:
+            messages.append({"role": "system", "content": request.system_prompt})
+        messages.append({"role": "user", "content": request.prompt})
+
+        payload: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "temperature": request.temperature,
+        }
+        if request.max_tokens:
+            payload["max_tokens"] = request.max_tokens
+
+        try:
+            client = self._get_client()
+            headers = {"Content-Type": "application/json"}
+            if api_key:
+                headers["Authorization"] = f"Bearer {api_key}"
+
+            response = client.post(
+                f"{self._endpoint}/v1/chat/completions",
+                headers=headers,
+                json=payload,
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            elapsed = (time.perf_counter() - start) * 1000
+            text = data["choices"][0]["message"]["content"]
+            tokens = data.get("usage", {}).get("total_tokens", 0)
+
+            return LLMResponse(
+                text=text,
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                tokens_used=tokens,
+                raw=data,
+            )
+        except httpx.ConnectError:
+            elapsed = (time.perf_counter() - start) * 1000
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                error=f"Cannot connect to vLLM at {self._endpoint}. Is it running?",
+            )
+        except Exception as e:
+            elapsed = (time.perf_counter() - start) * 1000
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                error=str(e),
+            )
+
+    def health_check(self, endpoint: str | None = None) -> bool:
+        """Check if vLLM server is running."""
+        check_endpoint = endpoint or self._endpoint
+        try:
+            client = self._get_client()
+            response = client.get(f"{check_endpoint}/v1/models", timeout=2.0)
+            return response.status_code == 200
+        except Exception:
+            return False
+
+
+class LocalAIProvider(_BaseProvider):
+    """LocalAI provider - self-hosted OpenAI-compatible server."""
+
+    name: ProviderName = "localai"  # type: ignore
+    is_local: bool = True
+    requires_api_key: bool = False
+
+    def __init__(self, timeout: float = 120.0):
+        super().__init__("gpt-3.5-turbo", timeout)
+        self._endpoint = "http://localhost:8080"
+
+    def set_endpoint(self, endpoint: str) -> None:
+        """Set the LocalAI server endpoint."""
+        self._endpoint = endpoint.rstrip("/")
+
+    def send(self, request: LLMRequest, api_key: str | None = None) -> LLMResponse:
+        """Send a request to LocalAI server."""
+        start = time.perf_counter()
+
+        model = request.model or self.default_model
+        messages = []
+        if request.system_prompt:
+            messages.append({"role": "system", "content": request.system_prompt})
+        messages.append({"role": "user", "content": request.prompt})
+
+        payload: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "temperature": request.temperature,
+        }
+        if request.max_tokens:
+            payload["max_tokens"] = request.max_tokens
+
+        try:
+            client = self._get_client()
+            response = client.post(
+                f"{self._endpoint}/v1/chat/completions",
+                headers={"Content-Type": "application/json"},
+                json=payload,
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            elapsed = (time.perf_counter() - start) * 1000
+            text = data["choices"][0]["message"]["content"]
+            tokens = data.get("usage", {}).get("total_tokens", 0)
+
+            return LLMResponse(
+                text=text,
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                tokens_used=tokens,
+                raw=data,
+            )
+        except httpx.ConnectError:
+            elapsed = (time.perf_counter() - start) * 1000
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                error=f"Cannot connect to LocalAI at {self._endpoint}. Is it running?",
+            )
+        except Exception as e:
+            elapsed = (time.perf_counter() - start) * 1000
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                error=str(e),
+            )
+
+    def health_check(self, endpoint: str | None = None) -> bool:
+        """Check if LocalAI server is running."""
+        check_endpoint = endpoint or self._endpoint
+        try:
+            client = self._get_client()
+            response = client.get(f"{check_endpoint}/v1/models", timeout=2.0)
+            return response.status_code == 200
+        except Exception:
+            return False
+
+
+class TextGenWebUIProvider(_BaseProvider):
+    """Text Generation WebUI (Oobabooga) provider."""
+
+    name: ProviderName = "textgen_webui"  # type: ignore
+    is_local: bool = True
+    requires_api_key: bool = False
+
+    def __init__(self, timeout: float = 120.0):
+        super().__init__("local-model", timeout)
+        self._endpoint = "http://localhost:5000"
+
+    def set_endpoint(self, endpoint: str) -> None:
+        """Set the server endpoint."""
+        self._endpoint = endpoint.rstrip("/")
+
+    def send(self, request: LLMRequest, api_key: str | None = None) -> LLMResponse:
+        """Send a request to Text Generation WebUI (OpenAI-compatible API)."""
+        start = time.perf_counter()
+
+        model = request.model or self.default_model
+        messages = []
+        if request.system_prompt:
+            messages.append({"role": "system", "content": request.system_prompt})
+        messages.append({"role": "user", "content": request.prompt})
+
+        payload: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "temperature": request.temperature,
+            "mode": "instruct",
+        }
+        if request.max_tokens:
+            payload["max_tokens"] = request.max_tokens
+
+        try:
+            client = self._get_client()
+            response = client.post(
+                f"{self._endpoint}/v1/chat/completions",
+                headers={"Content-Type": "application/json"},
+                json=payload,
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            elapsed = (time.perf_counter() - start) * 1000
+            text = data["choices"][0]["message"]["content"]
+            tokens = data.get("usage", {}).get("total_tokens", 0)
+
+            return LLMResponse(
+                text=text,
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                tokens_used=tokens,
+                raw=data,
+            )
+        except httpx.ConnectError:
+            elapsed = (time.perf_counter() - start) * 1000
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                error=f"Cannot connect to TextGen WebUI at {self._endpoint}. Is it running?",
+            )
+        except Exception as e:
+            elapsed = (time.perf_counter() - start) * 1000
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                error=str(e),
+            )
+
+    def health_check(self, endpoint: str | None = None) -> bool:
+        """Check if server is running."""
+        check_endpoint = endpoint or self._endpoint
+        try:
+            client = self._get_client()
+            response = client.get(f"{check_endpoint}/v1/models", timeout=2.0)
+            return response.status_code == 200
+        except Exception:
+            return False
+
+
+# Alias for Oobabooga (same as TextGenWebUI)
+class OobaboogaProvider(TextGenWebUIProvider):
+    """Oobabooga (Text Generation WebUI) - alias for TextGenWebUIProvider."""
+    name: ProviderName = "oobabooga"  # type: ignore
+
+
+class AWSBedrockProvider(_BaseProvider):
+    """AWS Bedrock provider for Claude, Llama, and Titan models."""
+
+    name: ProviderName = "aws_bedrock"  # type: ignore
+    is_local: bool = False
+    requires_api_key: bool = True
+
+    def __init__(self, timeout: float = 60.0):
+        super().__init__("anthropic.claude-3-5-sonnet-20241022-v2:0", timeout)
+        self._region = "us-east-1"
+
+    def set_region(self, region: str) -> None:
+        """Set the AWS region."""
+        self._region = region
+
+    def send(self, request: LLMRequest, api_key: str | None) -> LLMResponse:
+        """Send a request to AWS Bedrock (requires boto3 + AWS creds)."""
+        start = time.perf_counter()
+        model = request.model or self.default_model
+
+        try:
+            import boto3
+
+            # Parse credentials if provided as "access_key:secret_key"
+            if api_key and ":" in api_key:
+                access_key, secret_key = api_key.split(":", 1)
+                client = boto3.client(
+                    "bedrock-runtime",
+                    region_name=self._region,
+                    aws_access_key_id=access_key,
+                    aws_secret_access_key=secret_key,
+                )
+            else:
+                client = boto3.client("bedrock-runtime", region_name=self._region)
+
+            # Build request based on model type
+            if "anthropic" in model.lower():
+                messages = [{"role": "user", "content": request.prompt}]
+                body: dict[str, Any] = {
+                    "anthropic_version": "bedrock-2023-05-31",
+                    "max_tokens": request.max_tokens or 4096,
+                    "messages": messages,
+                }
+                if request.system_prompt:
+                    body["system"] = request.system_prompt
+                if request.temperature > 0:
+                    body["temperature"] = request.temperature
+            else:
+                prompt = request.prompt
+                if request.system_prompt:
+                    prompt = f"{request.system_prompt}\n\n{prompt}"
+                body = {
+                    "prompt": prompt,
+                    "max_gen_len": request.max_tokens or 2048,
+                    "temperature": request.temperature,
+                }
+
+            response = client.invoke_model(
+                modelId=model,
+                body=json.dumps(body),
+                contentType="application/json",
+            )
+            response_body = json.loads(response["body"].read())
+            elapsed = (time.perf_counter() - start) * 1000
+
+            if "anthropic" in model.lower():
+                text = response_body.get("content", [{}])[0].get("text", "")
+                tokens = response_body.get("usage", {}).get("input_tokens", 0) + \
+                         response_body.get("usage", {}).get("output_tokens", 0)
+            else:
+                text = response_body.get("generation", response_body.get("output", ""))
+                tokens = 0
+
+            return LLMResponse(
+                text=text,
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                tokens_used=tokens,
+                raw=response_body,
+            )
+        except ImportError:
+            elapsed = (time.perf_counter() - start) * 1000
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                error="AWS Bedrock requires boto3. Install with: pip install boto3",
+            )
+        except Exception as e:
+            elapsed = (time.perf_counter() - start) * 1000
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                error=str(e),
+            )
+
+
+class VertexAIProvider(_BaseProvider):
+    """Google Vertex AI provider for Gemini models."""
+
+    name: ProviderName = "vertex_ai"  # type: ignore
+    is_local: bool = False
+    requires_api_key: bool = True
+
+    def __init__(self, timeout: float = 60.0):
+        super().__init__("gemini-1.5-pro", timeout)
+        self._project_id: str | None = None
+        self._location = "us-central1"
+
+    def set_project(self, project_id: str, location: str = "us-central1") -> None:
+        """Set the GCP project and location."""
+        self._project_id = project_id
+        self._location = location
+
+    def send(self, request: LLMRequest, api_key: str | None) -> LLMResponse:
+        """Send a request to Vertex AI (requires google-cloud-aiplatform)."""
+        start = time.perf_counter()
+        model = request.model or self.default_model
+
+        try:
+            from google.cloud import aiplatform
+            from vertexai.generative_models import GenerativeModel
+
+            if self._project_id:
+                aiplatform.init(project=self._project_id, location=self._location)
+
+            gen_model = GenerativeModel(model)
+            prompt = request.prompt
+            if request.system_prompt:
+                prompt = f"{request.system_prompt}\n\n{prompt}"
+
+            generation_config: dict[str, Any] = {"temperature": request.temperature}
+            if request.max_tokens:
+                generation_config["max_output_tokens"] = request.max_tokens
+
+            response = gen_model.generate_content(
+                prompt, generation_config=generation_config
+            )
+            elapsed = (time.perf_counter() - start) * 1000
+            text = response.text if hasattr(response, "text") else str(response)
+
+            return LLMResponse(
+                text=text,
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+            )
+        except ImportError:
+            elapsed = (time.perf_counter() - start) * 1000
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                error="Vertex AI requires google-cloud-aiplatform. Install with: pip install google-cloud-aiplatform",
+            )
+        except Exception as e:
+            elapsed = (time.perf_counter() - start) * 1000
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                error=str(e),
+            )
+
+
+class WatsonxProvider(_BaseProvider):
+    """IBM watsonx.ai provider."""
+
+    name: ProviderName = "watsonx"  # type: ignore
+    is_local: bool = False
+    requires_api_key: bool = True
+
+    def __init__(self, timeout: float = 60.0):
+        super().__init__("ibm/granite-13b-chat-v2", timeout)
+        self._api_base = "https://us-south.ml.cloud.ibm.com"
+        self._project_id: str | None = None
+
+    def send(self, request: LLMRequest, api_key: str | None) -> LLMResponse:
+        """Send a request to watsonx.ai."""
+        start = time.perf_counter()
+
+        if not api_key:
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=request.model or self.default_model,
+                latency_ms=0,
+                error="API key required for watsonx.ai",
+            )
+
+        model = request.model or self.default_model
+        prompt = request.prompt
+        if request.system_prompt:
+            prompt = f"{request.system_prompt}\n\n{prompt}"
+
+        payload: dict[str, Any] = {
+            "model_id": model,
+            "input": prompt,
+            "parameters": {
+                "decoding_method": "greedy",
+                "max_new_tokens": request.max_tokens or 1024,
+                "temperature": request.temperature,
+            },
+        }
+        if self._project_id:
+            payload["project_id"] = self._project_id
+
+        try:
+            client = self._get_client()
+            response = client.post(
+                f"{self._api_base}/ml/v1/text/generation?version=2024-03-14",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            elapsed = (time.perf_counter() - start) * 1000
+            text = data.get("results", [{}])[0].get("generated_text", "")
+            tokens = data.get("results", [{}])[0].get("generated_token_count", 0)
+
+            return LLMResponse(
+                text=text,
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                tokens_used=tokens,
+                raw=data,
+            )
+        except Exception as e:
+            elapsed = (time.perf_counter() - start) * 1000
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                error=str(e),
+            )
+
+
+class SambaNovaProvider(_BaseProvider):
+    """SambaNova provider - ultra-fast RDU-based inference."""
+
+    name: ProviderName = "sambanova"  # type: ignore
+    is_local: bool = False
+    requires_api_key: bool = True
+
+    def __init__(self, timeout: float = 60.0):
+        super().__init__("Meta-Llama-3.1-70B-Instruct", timeout)
+        self._api_base = "https://api.sambanova.ai/v1"
+
+    def send(self, request: LLMRequest, api_key: str | None) -> LLMResponse:
+        """Send a request to SambaNova API (OpenAI-compatible)."""
+        start = time.perf_counter()
+
+        if not api_key:
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=request.model or self.default_model,
+                latency_ms=0,
+                error="API key required for SambaNova",
+            )
+
+        model = request.model or self.default_model
+        messages = []
+        if request.system_prompt:
+            messages.append({"role": "system", "content": request.system_prompt})
+        messages.append({"role": "user", "content": request.prompt})
+
+        payload: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "temperature": request.temperature,
+        }
+        if request.max_tokens:
+            payload["max_tokens"] = request.max_tokens
+
+        try:
+            client = self._get_client()
+            response = client.post(
+                f"{self._api_base}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            elapsed = (time.perf_counter() - start) * 1000
+            text = data["choices"][0]["message"]["content"]
+            tokens = data.get("usage", {}).get("total_tokens", 0)
+
+            return LLMResponse(
+                text=text,
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                tokens_used=tokens,
+                raw=data,
+            )
+        except Exception as e:
+            elapsed = (time.perf_counter() - start) * 1000
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                error=str(e),
+            )
+
+
+    def list_models(self, api_base: str | None = None, api_key: str | None = None) -> list[str]:
+        """List available models from SambaNova."""
+        base = api_base or self._api_base
+        key = api_key
+        
+        if not key:
+            return [
+                "Meta-Llama-3.1-405B-Instruct",
+                "Meta-Llama-3.1-70B-Instruct",
+                "Meta-Llama-3.1-8B-Instruct",
+                "Meta-Llama-3.2-3B-Instruct",
+                "Meta-Llama-3.2-1B-Instruct",
+                "Qwen2.5-72B-Instruct",
+                "Qwen2.5-Coder-32B-Instruct",
+            ]
+        
+        try:
+            client = self._get_client()
+            response = client.get(
+                f"{base}/models",
+                headers={"Authorization": f"Bearer {key}"},
+            )
+            response.raise_for_status()
+            data = response.json()
+            
+            models = [m["id"] for m in data.get("data", [])]
+            # Prioritize larger models
+            priority = ["405B", "70B", "72B", "32B", "8B", "3B", "1B"]
+            def sort_key(m: str) -> tuple[int, str]:
+                for i, p in enumerate(priority):
+                    if p in m:
+                        return (i, m)
+                return (100, m)
+            
+            return sorted(models, key=sort_key) if models else self.list_models(api_base, None)
+        except Exception:
+            return self.list_models(api_base, None)
+
+
+class CerebrasProvider(_BaseProvider):
+    """Cerebras provider - fastest inference with custom AI accelerators."""
+
+    name: ProviderName = "cerebras"  # type: ignore
+    is_local: bool = False
+    requires_api_key: bool = True
+
+    def __init__(self, timeout: float = 30.0):
+        super().__init__("llama3.1-70b", timeout)
+        self._api_base = "https://api.cerebras.ai/v1"
+
+    def send(self, request: LLMRequest, api_key: str | None) -> LLMResponse:
+        """Send a request to Cerebras API (OpenAI-compatible)."""
+        start = time.perf_counter()
+
+        if not api_key:
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=request.model or self.default_model,
+                latency_ms=0,
+                error="API key required for Cerebras",
+            )
+
+        model = request.model or self.default_model
+        messages = []
+        if request.system_prompt:
+            messages.append({"role": "system", "content": request.system_prompt})
+        messages.append({"role": "user", "content": request.prompt})
+
+        payload: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "temperature": request.temperature,
+        }
+        if request.max_tokens:
+            payload["max_tokens"] = request.max_tokens
+
+        try:
+            client = self._get_client()
+            response = client.post(
+                f"{self._api_base}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            elapsed = (time.perf_counter() - start) * 1000
+            text = data["choices"][0]["message"]["content"]
+            tokens = data.get("usage", {}).get("total_tokens", 0)
+
+            return LLMResponse(
+                text=text,
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                tokens_used=tokens,
+                raw=data,
+            )
+        except Exception as e:
+            elapsed = (time.perf_counter() - start) * 1000
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                error=str(e),
+            )
+
+
+    def list_models(self, api_base: str | None = None, api_key: str | None = None) -> list[str]:
+        """List available models from Cerebras (ultra-fast inference)."""
+        base = api_base or self._api_base
+        key = api_key
+        
+        if not key:
+            return [
+                "llama3.1-70b",
+                "llama3.1-8b",
+                "llama-3.3-70b",
+            ]
+        
+        try:
+            client = self._get_client()
+            response = client.get(
+                f"{base}/models",
+                headers={"Authorization": f"Bearer {key}"},
+            )
+            response.raise_for_status()
+            data = response.json()
+            
+            models = [m["id"] for m in data.get("data", [])]
+            # Prioritize larger models
+            priority = ["70b", "8b", "3b"]
+            def sort_key(m: str) -> tuple[int, str]:
+                m_lower = m.lower()
+                for i, p in enumerate(priority):
+                    if p in m_lower:
+                        return (i, m)
+                return (100, m)
+            
+            return sorted(models, key=sort_key) if models else self.list_models(api_base, None)
+        except Exception:
+            return self.list_models(api_base, None)
+
+
+class LeptonProvider(_BaseProvider):
+    """Lepton AI provider - serverless GPU inference."""
+
+    name: ProviderName = "lepton"  # type: ignore
+    is_local: bool = False
+    requires_api_key: bool = True
+
+    def __init__(self, timeout: float = 60.0):
+        super().__init__("llama3-70b", timeout)
+        self._api_base = "https://llama3-70b.lepton.run/api/v1"
+
+    def send(self, request: LLMRequest, api_key: str | None) -> LLMResponse:
+        """Send a request to Lepton AI (OpenAI-compatible)."""
+        start = time.perf_counter()
+
+        if not api_key:
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=request.model or self.default_model,
+                latency_ms=0,
+                error="API key required for Lepton AI",
+            )
+
+        model = request.model or self.default_model
+        api_base = f"https://{model}.lepton.run/api/v1"
+
+        messages = []
+        if request.system_prompt:
+            messages.append({"role": "system", "content": request.system_prompt})
+        messages.append({"role": "user", "content": request.prompt})
+
+        payload: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "temperature": request.temperature,
+        }
+        if request.max_tokens:
+            payload["max_tokens"] = request.max_tokens
+
+        try:
+            client = self._get_client()
+            response = client.post(
+                f"{api_base}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            elapsed = (time.perf_counter() - start) * 1000
+            text = data["choices"][0]["message"]["content"]
+            tokens = data.get("usage", {}).get("total_tokens", 0)
+
+            return LLMResponse(
+                text=text,
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                tokens_used=tokens,
+                raw=data,
+            )
+        except Exception as e:
+            elapsed = (time.perf_counter() - start) * 1000
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                error=str(e),
+            )
+
+    def list_models(self, api_base: str | None = None, api_key: str | None = None) -> list[str]:
+        """List available models from Lepton AI."""
+        # Lepton has dynamic model endpoints; return popular ones
+        return [
+            "llama3.1-405b",
+            "llama3.1-70b",
+            "llama3.1-8b",
+            "llama3-70b",
+            "llama3-8b",
+            "mixtral-8x22b",
+            "mixtral-8x7b",
+            "qwen2-72b",
+        ]
+
+
+class NovitaProvider(_BaseProvider):
+    """Novita AI provider - GPU cloud for AI models."""
+
+    name: ProviderName = "novita"  # type: ignore
+    is_local: bool = False
+    requires_api_key: bool = True
+
+    def __init__(self, timeout: float = 60.0):
+        super().__init__("meta-llama/llama-3.1-70b-instruct", timeout)
+        self._api_base = "https://api.novita.ai/v3/openai"
+
+    def send(self, request: LLMRequest, api_key: str | None) -> LLMResponse:
+        """Send a request to Novita AI (OpenAI-compatible)."""
+        start = time.perf_counter()
+
+        if not api_key:
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=request.model or self.default_model,
+                latency_ms=0,
+                error="API key required for Novita AI",
+            )
+
+        model = request.model or self.default_model
+        messages = []
+        if request.system_prompt:
+            messages.append({"role": "system", "content": request.system_prompt})
+        messages.append({"role": "user", "content": request.prompt})
+
+        payload: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "temperature": request.temperature,
+        }
+        if request.max_tokens:
+            payload["max_tokens"] = request.max_tokens
+
+        try:
+            client = self._get_client()
+            response = client.post(
+                f"{self._api_base}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            elapsed = (time.perf_counter() - start) * 1000
+            text = data["choices"][0]["message"]["content"]
+            tokens = data.get("usage", {}).get("total_tokens", 0)
+
+            return LLMResponse(
+                text=text,
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                tokens_used=tokens,
+                raw=data,
+            )
+        except Exception as e:
+            elapsed = (time.perf_counter() - start) * 1000
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                error=str(e),
+            )
+
+
+    def list_models(self, api_base: str | None = None, api_key: str | None = None) -> list[str]:
+        """List available models from Novita AI."""
+        base = api_base or self._api_base
+        key = api_key
+        
+        if not key:
+            return [
+                "meta-llama/llama-3.1-405b-instruct",
+                "meta-llama/llama-3.1-70b-instruct",
+                "meta-llama/llama-3.1-8b-instruct",
+                "qwen/qwen-2.5-72b-instruct",
+                "mistralai/mixtral-8x22b-instruct",
+                "deepseek/deepseek-v2.5",
+            ]
+        
+        try:
+            client = self._get_client()
+            response = client.get(
+                f"{base}/models",
+                headers={"Authorization": f"Bearer {key}"},
+            )
+            response.raise_for_status()
+            data = response.json()
+            
+            models = [m["id"] for m in data.get("data", [])]
+            return models if models else self.list_models(api_base, None)
+        except Exception:
+            return self.list_models(api_base, None)
+
+
+class FriendliProvider(_BaseProvider):
+    """Friendli AI provider - optimized inference serving."""
+
+    name: ProviderName = "friendli"  # type: ignore
+    is_local: bool = False
+    requires_api_key: bool = True
+
+    def __init__(self, timeout: float = 60.0):
+        super().__init__("meta-llama-3.1-70b-instruct", timeout)
+        self._api_base = "https://inference.friendli.ai/v1"
+
+    def send(self, request: LLMRequest, api_key: str | None) -> LLMResponse:
+        """Send a request to Friendli AI (OpenAI-compatible)."""
+        start = time.perf_counter()
+
+        if not api_key:
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=request.model or self.default_model,
+                latency_ms=0,
+                error="API key required for Friendli AI",
+            )
+
+        model = request.model or self.default_model
+        messages = []
+        if request.system_prompt:
+            messages.append({"role": "system", "content": request.system_prompt})
+        messages.append({"role": "user", "content": request.prompt})
+
+        payload: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "temperature": request.temperature,
+        }
+        if request.max_tokens:
+            payload["max_tokens"] = request.max_tokens
+
+        try:
+            client = self._get_client()
+            response = client.post(
+                f"{self._api_base}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            elapsed = (time.perf_counter() - start) * 1000
+            text = data["choices"][0]["message"]["content"]
+            tokens = data.get("usage", {}).get("total_tokens", 0)
+
+            return LLMResponse(
+                text=text,
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                tokens_used=tokens,
+                raw=data,
+            )
+        except Exception as e:
+            elapsed = (time.perf_counter() - start) * 1000
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                error=str(e),
+            )
+
+
+    def list_models(self, api_base: str | None = None, api_key: str | None = None) -> list[str]:
+        """List available models from Friendli AI."""
+        base = api_base or self._api_base
+        key = api_key
+        
+        if not key:
+            return [
+                "meta-llama-3.1-70b-instruct",
+                "meta-llama-3.1-8b-instruct",
+                "mistral-7b-instruct-v0.3",
+                "mixtral-8x7b-instruct-v0.1",
+            ]
+        
+        try:
+            client = self._get_client()
+            response = client.get(
+                f"{base}/models",
+                headers={"Authorization": f"Bearer {key}"},
+            )
+            response.raise_for_status()
+            data = response.json()
+            
+            models = [m["id"] for m in data.get("data", [])]
+            return models if models else self.list_models(api_base, None)
+        except Exception:
+            return self.list_models(api_base, None)
+
+
+class RekaProvider(_BaseProvider):
+    """Reka AI provider - multimodal foundation models."""
+
+    name: ProviderName = "reka"  # type: ignore
+    is_local: bool = False
+    requires_api_key: bool = True
+
+    def __init__(self, timeout: float = 60.0):
+        super().__init__("reka-flash", timeout)
+        self._api_base = "https://api.reka.ai/v1"
+
+    def send(self, request: LLMRequest, api_key: str | None) -> LLMResponse:
+        """Send a request to Reka AI."""
+        start = time.perf_counter()
+
+        if not api_key:
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=request.model or self.default_model,
+                latency_ms=0,
+                error="API key required for Reka AI",
+            )
+
+        model = request.model or self.default_model
+        messages = []
+        if request.system_prompt:
+            messages.append({"role": "system", "content": request.system_prompt})
+        messages.append({"role": "user", "content": request.prompt})
+
+        payload: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "temperature": request.temperature,
+        }
+        if request.max_tokens:
+            payload["max_tokens"] = request.max_tokens
+
+        try:
+            client = self._get_client()
+            response = client.post(
+                f"{self._api_base}/chat/completions",
+                headers={
+                    "X-Api-Key": api_key,
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            elapsed = (time.perf_counter() - start) * 1000
+            text = data["choices"][0]["message"]["content"]
+            tokens = data.get("usage", {}).get("total_tokens", 0)
+
+            return LLMResponse(
+                text=text,
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                tokens_used=tokens,
+                raw=data,
+            )
+        except Exception as e:
+            elapsed = (time.perf_counter() - start) * 1000
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                error=str(e),
+            )
+
+
+    def list_models(self, api_base: str | None = None, api_key: str | None = None) -> list[str]:
+        """List available models from Reka AI."""
+        # Reka has limited models
+        return [
+            "reka-core",
+            "reka-flash",
+            "reka-edge",
+        ]
+
+
+class WriterProvider(_BaseProvider):
+    """Writer AI provider - enterprise AI platform."""
+
+    name: ProviderName = "writer"  # type: ignore
+    is_local: bool = False
+    requires_api_key: bool = True
+
+    def __init__(self, timeout: float = 60.0):
+        super().__init__("palmyra-x-004", timeout)
+        self._api_base = "https://api.writer.com/v1"
+
+    def send(self, request: LLMRequest, api_key: str | None) -> LLMResponse:
+        """Send a request to Writer AI (OpenAI-compatible)."""
+        start = time.perf_counter()
+
+        if not api_key:
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=request.model or self.default_model,
+                latency_ms=0,
+                error="API key required for Writer AI",
+            )
+
+        model = request.model or self.default_model
+        messages = []
+        if request.system_prompt:
+            messages.append({"role": "system", "content": request.system_prompt})
+        messages.append({"role": "user", "content": request.prompt})
+
+        payload: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "temperature": request.temperature,
+        }
+        if request.max_tokens:
+            payload["max_tokens"] = request.max_tokens
+
+        try:
+            client = self._get_client()
+            response = client.post(
+                f"{self._api_base}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            elapsed = (time.perf_counter() - start) * 1000
+            text = data["choices"][0]["message"]["content"]
+            tokens = data.get("usage", {}).get("total_tokens", 0)
+
+            return LLMResponse(
+                text=text,
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                tokens_used=tokens,
+                raw=data,
+            )
+        except Exception as e:
+            elapsed = (time.perf_counter() - start) * 1000
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                error=str(e),
+            )
+
+
+    def list_models(self, api_base: str | None = None, api_key: str | None = None) -> list[str]:
+        """List available models from Writer AI."""
+        # Writer's Palmyra models
+        return [
+            "palmyra-x-004",
+            "palmyra-x-003-instruct",
+            "palmyra-x-002-32k",
+            "palmyra-med",
+            "palmyra-fin",
+        ]
+
+
+class BasetenProvider(_BaseProvider):
+    """Baseten provider - model deployment platform."""
+
+    name: ProviderName = "baseten"  # type: ignore
+    is_local: bool = False
+    requires_api_key: bool = True
+
+    def __init__(self, timeout: float = 60.0):
+        super().__init__("llama-3.1-70b", timeout)
+        self._api_base = "https://bridge.baseten.co/v1"
+
+    def send(self, request: LLMRequest, api_key: str | None) -> LLMResponse:
+        """Send a request to Baseten (OpenAI-compatible)."""
+        start = time.perf_counter()
+
+        if not api_key:
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=request.model or self.default_model,
+                latency_ms=0,
+                error="API key required for Baseten",
+            )
+
+        model = request.model or self.default_model
+        messages = []
+        if request.system_prompt:
+            messages.append({"role": "system", "content": request.system_prompt})
+        messages.append({"role": "user", "content": request.prompt})
+
+        payload: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "temperature": request.temperature,
+        }
+        if request.max_tokens:
+            payload["max_tokens"] = request.max_tokens
+
+        try:
+            client = self._get_client()
+            response = client.post(
+                f"{self._api_base}/chat/completions",
+                headers={
+                    "Authorization": f"Api-Key {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            elapsed = (time.perf_counter() - start) * 1000
+            text = data["choices"][0]["message"]["content"]
+            tokens = data.get("usage", {}).get("total_tokens", 0)
+
+            return LLMResponse(
+                text=text,
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                tokens_used=tokens,
+                raw=data,
+            )
+        except Exception as e:
+            elapsed = (time.perf_counter() - start) * 1000
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                error=str(e),
+            )
+
+
+class ModalProvider(_BaseProvider):
+    """Modal provider - serverless cloud for ML."""
+
+    name: ProviderName = "modal"  # type: ignore
+    is_local: bool = False
+    requires_api_key: bool = True
+
+    def __init__(self, timeout: float = 60.0):
+        super().__init__("local-model", timeout)
+        self._endpoint = "https://your-app.modal.run/v1"
+
+    def set_endpoint(self, endpoint: str) -> None:
+        """Set the Modal endpoint (user must deploy their own)."""
+        self._endpoint = endpoint.rstrip("/")
+
+    def send(self, request: LLMRequest, api_key: str | None) -> LLMResponse:
+        """Send a request to Modal (OpenAI-compatible)."""
+        start = time.perf_counter()
+
+        model = request.model or self.default_model
+        messages = []
+        if request.system_prompt:
+            messages.append({"role": "system", "content": request.system_prompt})
+        messages.append({"role": "user", "content": request.prompt})
+
+        payload: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "temperature": request.temperature,
+        }
+        if request.max_tokens:
+            payload["max_tokens"] = request.max_tokens
+
+        try:
+            client = self._get_client()
+            headers: dict[str, str] = {"Content-Type": "application/json"}
+            if api_key:
+                headers["Authorization"] = f"Bearer {api_key}"
+
+            response = client.post(
+                f"{self._endpoint}/chat/completions",
+                headers=headers,
+                json=payload,
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            elapsed = (time.perf_counter() - start) * 1000
+            text = data["choices"][0]["message"]["content"]
+            tokens = data.get("usage", {}).get("total_tokens", 0)
+
+            return LLMResponse(
+                text=text,
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                tokens_used=tokens,
+                raw=data,
+            )
+        except Exception as e:
+            elapsed = (time.perf_counter() - start) * 1000
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                error=str(e),
+            )
+
+
+class RunPodProvider(_BaseProvider):
+    """RunPod provider - GPU cloud for AI inference."""
+
+    name: ProviderName = "runpod"  # type: ignore
+    is_local: bool = False
+    requires_api_key: bool = True
+
+    def __init__(self, timeout: float = 60.0):
+        super().__init__("llama-3.1-70b", timeout)
+        self._endpoint = "https://api.runpod.ai/v2"
+
+    def set_endpoint(self, endpoint: str) -> None:
+        """Set the RunPod serverless endpoint."""
+        self._endpoint = endpoint.rstrip("/")
+
+    def send(self, request: LLMRequest, api_key: str | None) -> LLMResponse:
+        """Send a request to RunPod (OpenAI-compatible)."""
+        start = time.perf_counter()
+
+        if not api_key:
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=request.model or self.default_model,
+                latency_ms=0,
+                error="API key required for RunPod",
+            )
+
+        model = request.model or self.default_model
+        messages = []
+        if request.system_prompt:
+            messages.append({"role": "system", "content": request.system_prompt})
+        messages.append({"role": "user", "content": request.prompt})
+
+        payload: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "temperature": request.temperature,
+        }
+        if request.max_tokens:
+            payload["max_tokens"] = request.max_tokens
+
+        try:
+            client = self._get_client()
+            response = client.post(
+                f"{self._endpoint}/openai/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            elapsed = (time.perf_counter() - start) * 1000
+            text = data["choices"][0]["message"]["content"]
+            tokens = data.get("usage", {}).get("total_tokens", 0)
+
+            return LLMResponse(
+                text=text,
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                tokens_used=tokens,
+                raw=data,
+            )
+        except Exception as e:
+            elapsed = (time.perf_counter() - start) * 1000
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                error=str(e),
+            )
+
+
+class LambdaProvider(_BaseProvider):
+    """Lambda Labs provider - GPU cloud inference."""
+
+    name: ProviderName = "lambda"  # type: ignore
+    is_local: bool = False
+    requires_api_key: bool = True
+
+    def __init__(self, timeout: float = 60.0):
+        super().__init__("llama3.1-70b-instruct-fp8", timeout)
+        self._api_base = "https://api.lambdalabs.com/v1"
+
+    def send(self, request: LLMRequest, api_key: str | None) -> LLMResponse:
+        """Send a request to Lambda Labs (OpenAI-compatible)."""
+        start = time.perf_counter()
+
+        if not api_key:
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=request.model or self.default_model,
+                latency_ms=0,
+                error="API key required for Lambda Labs",
+            )
+
+        model = request.model or self.default_model
+        messages = []
+        if request.system_prompt:
+            messages.append({"role": "system", "content": request.system_prompt})
+        messages.append({"role": "user", "content": request.prompt})
+
+        payload: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "temperature": request.temperature,
+        }
+        if request.max_tokens:
+            payload["max_tokens"] = request.max_tokens
+
+        try:
+            client = self._get_client()
+            response = client.post(
+                f"{self._api_base}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            elapsed = (time.perf_counter() - start) * 1000
+            text = data["choices"][0]["message"]["content"]
+            tokens = data.get("usage", {}).get("total_tokens", 0)
+
+            return LLMResponse(
+                text=text,
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                tokens_used=tokens,
+                raw=data,
+            )
+        except Exception as e:
+            elapsed = (time.perf_counter() - start) * 1000
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                error=str(e),
+            )
+
+
+    def list_models(self, api_base: str | None = None, api_key: str | None = None) -> list[str]:
+        """List available models from Lambda Labs."""
+        base = api_base or self._api_base
+        key = api_key
+        
+        if not key:
+            return [
+                "llama3.1-70b-instruct-fp8",
+                "llama3.1-8b-instruct-fp8",
+                "llama3.1-405b-instruct-fp8",
+                "hermes-3-llama-3.1-405b-fp8",
+            ]
+        
+        try:
+            client = self._get_client()
+            response = client.get(
+                f"{base}/models",
+                headers={"Authorization": f"Bearer {key}"},
+            )
+            response.raise_for_status()
+            data = response.json()
+            
+            models = [m["id"] for m in data.get("data", [])]
+            return models if models else self.list_models(api_base, None)
+        except Exception:
+            return self.list_models(api_base, None)
+
+
+class MonsterProvider(_BaseProvider):
+    """Monster API provider - GPU cloud for AI."""
+
+    name: ProviderName = "monster"  # type: ignore
+    is_local: bool = False
+    requires_api_key: bool = True
+
+    def __init__(self, timeout: float = 60.0):
+        super().__init__("meta-llama/Meta-Llama-3.1-70B-Instruct", timeout)
+        self._api_base = "https://llm.monsterapi.ai/v1"
+
+    def send(self, request: LLMRequest, api_key: str | None) -> LLMResponse:
+        """Send a request to Monster API (OpenAI-compatible)."""
+        start = time.perf_counter()
+
+        if not api_key:
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=request.model or self.default_model,
+                latency_ms=0,
+                error="API key required for Monster API",
+            )
+
+        model = request.model or self.default_model
+        messages = []
+        if request.system_prompt:
+            messages.append({"role": "system", "content": request.system_prompt})
+        messages.append({"role": "user", "content": request.prompt})
+
+        payload: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "temperature": request.temperature,
+        }
+        if request.max_tokens:
+            payload["max_tokens"] = request.max_tokens
+
+        try:
+            client = self._get_client()
+            response = client.post(
+                f"{self._api_base}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            elapsed = (time.perf_counter() - start) * 1000
+            text = data["choices"][0]["message"]["content"]
+            tokens = data.get("usage", {}).get("total_tokens", 0)
+
+            return LLMResponse(
+                text=text,
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                tokens_used=tokens,
+                raw=data,
+            )
+        except Exception as e:
+            elapsed = (time.perf_counter() - start) * 1000
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                error=str(e),
+            )
+
+
+    def list_models(self, api_base: str | None = None, api_key: str | None = None) -> list[str]:
+        """List available models from Monster API."""
+        base = api_base or self._api_base
+        key = api_key
+        
+        if not key:
+            return [
+                "meta-llama/Meta-Llama-3.1-70B-Instruct",
+                "meta-llama/Meta-Llama-3.1-8B-Instruct",
+                "microsoft/Phi-3.5-mini-instruct",
+                "google/gemma-2-27b-it",
+            ]
+        
+        try:
+            client = self._get_client()
+            response = client.get(
+                f"{base}/models",
+                headers={"Authorization": f"Bearer {key}"},
+            )
+            response.raise_for_status()
+            data = response.json()
+            
+            models = [m["id"] for m in data.get("data", [])]
+            return models if models else self.list_models(api_base, None)
+        except Exception:
+            return self.list_models(api_base, None)
+
+
+class HyperbolicProvider(_BaseProvider):
+    """Hyperbolic provider - decentralized AI compute."""
+
+    name: ProviderName = "hyperbolic"  # type: ignore
+    is_local: bool = False
+    requires_api_key: bool = True
+
+    def __init__(self, timeout: float = 60.0):
+        super().__init__("meta-llama/Meta-Llama-3.1-70B-Instruct", timeout)
+        self._api_base = "https://api.hyperbolic.xyz/v1"
+
+    def send(self, request: LLMRequest, api_key: str | None) -> LLMResponse:
+        """Send a request to Hyperbolic (OpenAI-compatible)."""
+        start = time.perf_counter()
+
+        if not api_key:
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=request.model or self.default_model,
+                latency_ms=0,
+                error="API key required for Hyperbolic",
+            )
+
+        model = request.model or self.default_model
+        messages = []
+        if request.system_prompt:
+            messages.append({"role": "system", "content": request.system_prompt})
+        messages.append({"role": "user", "content": request.prompt})
+
+        payload: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "temperature": request.temperature,
+        }
+        if request.max_tokens:
+            payload["max_tokens"] = request.max_tokens
+
+        try:
+            client = self._get_client()
+            response = client.post(
+                f"{self._api_base}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            elapsed = (time.perf_counter() - start) * 1000
+            text = data["choices"][0]["message"]["content"]
+            tokens = data.get("usage", {}).get("total_tokens", 0)
+
+            return LLMResponse(
+                text=text,
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                tokens_used=tokens,
+                raw=data,
+            )
+        except Exception as e:
+            elapsed = (time.perf_counter() - start) * 1000
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                error=str(e),
+            )
+
+    def list_models(self, api_base: str | None = None, api_key: str | None = None) -> list[str]:
+        """List available models from Hyperbolic."""
+        base = api_base or self._api_base
+        key = api_key
+        
+        if not key:
+            return [
+                "meta-llama/Meta-Llama-3.1-405B-Instruct",
+                "meta-llama/Meta-Llama-3.1-70B-Instruct",
+                "meta-llama/Meta-Llama-3.1-8B-Instruct",
+                "Qwen/Qwen2.5-72B-Instruct",
+                "deepseek-ai/DeepSeek-V2.5",
+                "mistralai/Mixtral-8x22B-Instruct-v0.1",
+            ]
+        
+        try:
+            client = self._get_client()
+            response = client.get(
+                f"{base}/models",
+                headers={"Authorization": f"Bearer {key}"},
+            )
+            response.raise_for_status()
+            data = response.json()
+            
+            models = [m["id"] for m in data.get("data", [])]
+            return models if models else self.list_models(api_base, None)
+        except Exception:
+            return self.list_models(api_base, None)
+
+
+class KlusterProvider(_BaseProvider):
+    """Kluster AI provider - distributed GPU cloud."""
+
+    name: ProviderName = "kluster"  # type: ignore
+    is_local: bool = False
+    requires_api_key: bool = True
+
+    def __init__(self, timeout: float = 60.0):
+        super().__init__("llama-3.1-70b", timeout)
+        self._api_base = "https://api.kluster.ai/v1"
+
+    def send(self, request: LLMRequest, api_key: str | None) -> LLMResponse:
+        """Send a request to Kluster AI (OpenAI-compatible)."""
+        start = time.perf_counter()
+
+        if not api_key:
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=request.model or self.default_model,
+                latency_ms=0,
+                error="API key required for Kluster AI",
+            )
+
+        model = request.model or self.default_model
+        messages = []
+        if request.system_prompt:
+            messages.append({"role": "system", "content": request.system_prompt})
+        messages.append({"role": "user", "content": request.prompt})
+
+        payload: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "temperature": request.temperature,
+        }
+        if request.max_tokens:
+            payload["max_tokens"] = request.max_tokens
+
+        try:
+            client = self._get_client()
+            response = client.post(
+                f"{self._api_base}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            elapsed = (time.perf_counter() - start) * 1000
+            text = data["choices"][0]["message"]["content"]
+            tokens = data.get("usage", {}).get("total_tokens", 0)
+
+            return LLMResponse(
+                text=text,
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                tokens_used=tokens,
+                raw=data,
+            )
+        except Exception as e:
+            elapsed = (time.perf_counter() - start) * 1000
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                error=str(e),
+            )
+
+    def list_models(self, api_base: str | None = None, api_key: str | None = None) -> list[str]:
+        """List available models from Kluster AI."""
+        base = api_base or self._api_base
+        key = api_key
+        
+        if not key:
+            return [
+                "llama-3.1-405b-instruct",
+                "llama-3.1-70b-instruct",
+                "llama-3.1-8b-instruct",
+                "mixtral-8x22b-instruct",
+                "qwen-2.5-72b-instruct",
+            ]
+        
+        try:
+            client = self._get_client()
+            response = client.get(
+                f"{base}/models",
+                headers={"Authorization": f"Bearer {key}"},
+            )
+            response.raise_for_status()
+            data = response.json()
+            
+            models = [m["id"] for m in data.get("data", [])]
+            return models if models else self.list_models(api_base, None)
+        except Exception:
+            return self.list_models(api_base, None)
+
+
+class OracleAIProvider(_BaseProvider):
+    """Oracle OCI Generative AI provider."""
+
+    name: ProviderName = "oracle_ai"  # type: ignore
+    is_local: bool = False
+    requires_api_key: bool = True
+
+    def __init__(self, timeout: float = 60.0):
+        super().__init__("cohere.command-r-plus", timeout)
+        self._api_base = "https://inference.generativeai.us-chicago-1.oci.oraclecloud.com/20231130"
+        self._compartment_id: str | None = None
+
+    def send(self, request: LLMRequest, api_key: str | None) -> LLMResponse:
+        """Send a request to Oracle OCI Generative AI."""
+        start = time.perf_counter()
+
+        if not api_key:
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=request.model or self.default_model,
+                latency_ms=0,
+                error="API key required for Oracle AI",
+            )
+
+        model = request.model or self.default_model
+        prompt = request.prompt
+        if request.system_prompt:
+            prompt = f"{request.system_prompt}\n\n{prompt}"
+
+        payload: dict[str, Any] = {
+            "servingMode": {"servingType": "ON_DEMAND", "modelId": model},
+            "inferenceRequest": {
+                "runtimeType": "COHERE",
+                "prompt": prompt,
+                "maxTokens": request.max_tokens or 1024,
+                "temperature": request.temperature,
+            },
+        }
+        if self._compartment_id:
+            payload["compartmentId"] = self._compartment_id
+
+        try:
+            client = self._get_client()
+            response = client.post(
+                f"{self._api_base}/actions/generateText",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            elapsed = (time.perf_counter() - start) * 1000
+            text = data.get("inferenceResponse", {}).get("generatedTexts", [{}])[0].get("text", "")
+
+            return LLMResponse(
+                text=text,
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                raw=data,
+            )
+        except Exception as e:
+            elapsed = (time.perf_counter() - start) * 1000
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                error=str(e),
+            )
+
+
+class AlibabaQwenProvider(_BaseProvider):
+    """Alibaba Cloud DashScope provider for Qwen models."""
+
+    name: ProviderName = "alibaba_qwen"  # type: ignore
+    is_local: bool = False
+    requires_api_key: bool = True
+
+    def __init__(self, timeout: float = 60.0):
+        super().__init__("qwen-max", timeout)
+        self._api_base = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+
+    def send(self, request: LLMRequest, api_key: str | None) -> LLMResponse:
+        """Send a request to Alibaba DashScope (OpenAI-compatible)."""
+        start = time.perf_counter()
+
+        if not api_key:
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=request.model or self.default_model,
+                latency_ms=0,
+                error="API key required for Alibaba Qwen",
+            )
+
+        model = request.model or self.default_model
+        messages = []
+        if request.system_prompt:
+            messages.append({"role": "system", "content": request.system_prompt})
+        messages.append({"role": "user", "content": request.prompt})
+
+        payload: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "temperature": request.temperature,
+        }
+        if request.max_tokens:
+            payload["max_tokens"] = request.max_tokens
+
+        try:
+            client = self._get_client()
+            response = client.post(
+                f"{self._api_base}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            elapsed = (time.perf_counter() - start) * 1000
+            text = data["choices"][0]["message"]["content"]
+            tokens = data.get("usage", {}).get("total_tokens", 0)
+
+            return LLMResponse(
+                text=text,
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                tokens_used=tokens,
+                raw=data,
+            )
+        except Exception as e:
+            elapsed = (time.perf_counter() - start) * 1000
+            return LLMResponse(
+                text="",
+                provider=self.name,
+                model=model,
+                latency_ms=elapsed,
+                error=str(e),
+            )
+
 
 class ProviderRegistry:
     """Registry of available LLM providers.
-    
+
     Includes both core providers and extended integrations:
     - Core: OpenAI, Anthropic, Ollama, LM Studio, llama.cpp
     - Extended: Together AI, Groq, Mistral, Azure OpenAI, Cohere
     - Additional: Perplexity, DeepSeek, Fireworks, HuggingFace, Replicate, OpenRouter
     - Custom: Google Gemini, xAI (Grok)
+    - New: AI21, DeepInfra, Anyscale, vLLM, LocalAI, TextGen WebUI, Oobabooga
+    - Enterprise: AWS Bedrock, Vertex AI, watsonx, Oracle AI, Alibaba Qwen
+    - Fast Inference: SambaNova, Cerebras, Lepton, Novita, Friendli
+    - Specialized: Reka, Writer, Baseten, Modal, RunPod, Lambda, Monster, Hyperbolic, Kluster
     """
 
     def __init__(self) -> None:
@@ -3201,6 +6117,37 @@ class ProviderRegistry:
             # Google Gemini and xAI
             "google": GoogleGeminiProvider(),  # type: ignore
             "xai": XAIProvider(),  # type: ignore
+            # NEW: Additional cloud providers
+            "ai21": AI21Provider(),  # type: ignore
+            "deepinfra": DeepInfraProvider(),  # type: ignore
+            "anyscale": AnyscaleProvider(),  # type: ignore
+            # NEW: Local inference servers
+            "vllm": VLLMProvider(),  # type: ignore
+            "localai": LocalAIProvider(),  # type: ignore
+            "textgen_webui": TextGenWebUIProvider(),  # type: ignore
+            "oobabooga": OobaboogaProvider(),  # type: ignore
+            # NEW: Enterprise cloud providers
+            "aws_bedrock": AWSBedrockProvider(),  # type: ignore
+            "vertex_ai": VertexAIProvider(),  # type: ignore
+            "watsonx": WatsonxProvider(),  # type: ignore
+            "oracle_ai": OracleAIProvider(),  # type: ignore
+            "alibaba_qwen": AlibabaQwenProvider(),  # type: ignore
+            # NEW: Fast inference providers
+            "sambanova": SambaNovaProvider(),  # type: ignore
+            "cerebras": CerebrasProvider(),  # type: ignore
+            "lepton": LeptonProvider(),  # type: ignore
+            "novita": NovitaProvider(),  # type: ignore
+            "friendli": FriendliProvider(),  # type: ignore
+            # NEW: Specialized providers
+            "reka": RekaProvider(),  # type: ignore
+            "writer": WriterProvider(),  # type: ignore
+            "baseten": BasetenProvider(),  # type: ignore
+            "modal": ModalProvider(),  # type: ignore
+            "runpod": RunPodProvider(),  # type: ignore
+            "lambda": LambdaProvider(),  # type: ignore
+            "monster": MonsterProvider(),  # type: ignore
+            "hyperbolic": HyperbolicProvider(),  # type: ignore
+            "kluster": KlusterProvider(),  # type: ignore
         }
 
     def get(self, name: ProviderName) -> LLMProvider:
@@ -3328,8 +6275,48 @@ class APIKeyManager:
 
     # Environment variable names for each provider
     ENV_VAR_NAMES: dict[str, str] = {
+        # Core providers
         "openai": "OPENAI_API_KEY",
         "anthropic": "ANTHROPIC_API_KEY",
+        "google": "GOOGLE_API_KEY",
+        "xai": "XAI_API_KEY",
+        "deepseek": "DEEPSEEK_API_KEY",
+        "mistral": "MISTRAL_API_KEY",
+        "cohere": "COHERE_API_KEY",
+        "perplexity": "PERPLEXITY_API_KEY",
+        "groq": "GROQ_API_KEY",
+        "together": "TOGETHER_API_KEY",
+        "fireworks": "FIREWORKS_API_KEY",
+        "replicate": "REPLICATE_API_TOKEN",
+        "openrouter": "OPENROUTER_API_KEY",
+        # Enterprise providers
+        "azure_openai": "AZURE_OPENAI_API_KEY",
+        "aws_bedrock": "AWS_ACCESS_KEY_ID",  # Uses AWS creds format
+        "vertex_ai": "GOOGLE_APPLICATION_CREDENTIALS",  # Uses GCP creds
+        "watsonx": "WATSONX_API_KEY",
+        "oracle_ai": "OCI_API_KEY",
+        "alibaba_qwen": "DASHSCOPE_API_KEY",
+        "huggingface": "HF_TOKEN",
+        # New cloud providers
+        "ai21": "AI21_API_KEY",
+        "deepinfra": "DEEPINFRA_API_KEY",
+        "anyscale": "ANYSCALE_API_KEY",
+        # Fast inference providers
+        "sambanova": "SAMBANOVA_API_KEY",
+        "cerebras": "CEREBRAS_API_KEY",
+        "lepton": "LEPTON_API_KEY",
+        "novita": "NOVITA_API_KEY",
+        "friendli": "FRIENDLI_API_KEY",
+        # Specialized providers
+        "reka": "REKA_API_KEY",
+        "writer": "WRITER_API_KEY",
+        "baseten": "BASETEN_API_KEY",
+        "modal": "MODAL_API_KEY",
+        "runpod": "RUNPOD_API_KEY",
+        "lambda": "LAMBDA_API_KEY",
+        "monster": "MONSTER_API_KEY",
+        "hyperbolic": "HYPERBOLIC_API_KEY",
+        "kluster": "KLUSTER_API_KEY",
     }
 
     def __init__(self, settings: Settings, storage_path: str | None = None):

@@ -5,6 +5,7 @@ Configuration management.
 
 import asyncio
 from pathlib import Path
+from typing import Optional
 
 from textual.containers import Horizontal, Vertical, Container
 from textual.widgets import Static, Button, Input, Switch, Select, RadioSet, RadioButton
@@ -14,7 +15,7 @@ from .base import BaseScreen
 from ..styles.theme import get_theme
 
 try:
-    from proxima.intelligence.llm_router import LocalLLMDetector, OllamaProvider, OpenAIProvider, AnthropicProvider
+    from proxima.intelligence.llm_router import LocalLLMDetector, OllamaProvider, OpenAIProvider, AnthropicProvider, ProviderRegistry
     from proxima.config.export_import import export_config, import_config
     LLM_AVAILABLE = True
 except ImportError:
@@ -116,6 +117,16 @@ class SettingsScreen(BaseScreen):
 
     SettingsScreen .api-key-input {
         width: 50;
+    }
+    
+    SettingsScreen .custom-model-input {
+        display: none;
+        width: 30;
+        margin-left: 1;
+    }
+    
+    SettingsScreen .custom-model-input.visible {
+        display: block;
     }
     """
 
@@ -254,7 +265,7 @@ class SettingsScreen(BaseScreen):
 
                 # Option 2: OpenAI API Settings
                 with Container(classes="subsection", id="openai-settings"):
-                    yield Static("?? OpenAI API Settings", classes="subsection-title")
+                    yield Static("🔑 OpenAI API Settings", classes="subsection-title")
                     yield Static(
                         "Uses OpenAI's servers. Requires API key. Costs money per use.",
                         classes="hint-text",
@@ -277,20 +288,32 @@ class SettingsScreen(BaseScreen):
                                 ("GPT-4o Mini (Cheaper)", "gpt-4o-mini"),
                                 ("GPT-4 Turbo", "gpt-4-turbo"),
                                 ("GPT-3.5 Turbo (Cheapest)", "gpt-3.5-turbo"),
+                                ("📝 Enter custom model...", "__custom__"),
                             ],
                             value="gpt-4o-mini",
                             id="select-openai-model",
                         )
+                        yield Input(
+                            placeholder="Custom model name",
+                            classes="setting-input custom-model-input",
+                            id="input-openai-custom-model",
+                        )
 
-                    yield Button(
-                        "Verify API Key",
-                        id="btn-test-openai",
-                        variant="primary",
-                    )
+                    with Horizontal(classes="setting-row"):
+                        yield Button(
+                            "🔍 Auto-Detect Models",
+                            id="btn-detect-openai",
+                            variant="default",
+                        )
+                        yield Button(
+                            "Verify API Key",
+                            id="btn-test-openai",
+                            variant="primary",
+                        )
 
                 # Option 3: Anthropic API Settings
                 with Container(classes="subsection", id="anthropic-settings"):
-                    yield Static("?? Anthropic API Settings", classes="subsection-title")
+                    yield Static("🔑 Anthropic API Settings", classes="subsection-title")
                     yield Static(
                         "Uses Anthropic's Claude. Requires API key. Costs money per use.",
                         classes="hint-text",
@@ -312,16 +335,28 @@ class SettingsScreen(BaseScreen):
                                 ("Claude 3.5 Sonnet (Recommended)", "claude-3-5-sonnet-20241022"),
                                 ("Claude 3.5 Haiku (Faster)", "claude-3-5-haiku-20241022"),
                                 ("Claude 3 Opus (Most Capable)", "claude-3-opus-20240229"),
+                                ("📝 Enter custom model...", "__custom__"),
                             ],
                             value="claude-3-5-sonnet-20241022",
                             id="select-anthropic-model",
                         )
+                        yield Input(
+                            placeholder="Custom model name",
+                            classes="setting-input custom-model-input",
+                            id="input-anthropic-custom-model",
+                        )
 
-                    yield Button(
-                        "Verify API Key",
-                        id="btn-test-anthropic",
-                        variant="primary",
-                    )
+                    with Horizontal(classes="setting-row"):
+                        yield Button(
+                            "🔍 Auto-Detect Models",
+                            id="btn-detect-anthropic",
+                            variant="default",
+                        )
+                        yield Button(
+                            "Verify API Key",
+                            id="btn-test-anthropic",
+                            variant="primary",
+                        )
 
                 # Google Gemini API Settings
                 with Container(classes="subsection", id="google-settings"):
@@ -349,16 +384,28 @@ class SettingsScreen(BaseScreen):
                                 ("Gemini 1.5 Flash-8B", "gemini-1.5-flash-8b"),
                                 ("Gemini Pro", "gemini-pro"),
                                 ("Gemini 2.0 Flash Exp", "gemini-2.0-flash-exp"),
+                                ("📝 Enter custom model...", "__custom__"),
                             ],
                             value="gemini-1.5-flash-latest",
                             id="select-google-model",
                         )
+                        yield Input(
+                            placeholder="Custom model name",
+                            classes="setting-input custom-model-input",
+                            id="input-google-custom-model",
+                        )
 
-                    yield Button(
-                        "Verify API Key",
-                        id="btn-test-google",
-                        variant="primary",
-                    )
+                    with Horizontal(classes="setting-row"):
+                        yield Button(
+                            "🔍 Auto-Detect Models",
+                            id="btn-detect-google",
+                            variant="default",
+                        )
+                        yield Button(
+                            "Verify API Key",
+                            id="btn-test-google",
+                            variant="primary",
+                        )
 
                 # xAI Grok Settings
                 with Container(classes="subsection", id="xai-settings"):
@@ -385,9 +432,15 @@ class SettingsScreen(BaseScreen):
                                 ("Grok-2 Vision", "grok-2-vision"),
                                 ("Grok-2 Mini", "grok-2-mini"),
                                 ("Grok-Beta", "grok-beta"),
+                                ("📝 Enter custom model...", "__custom__"),
                             ],
                             value="grok-2",
                             id="select-xai-model",
+                        )
+                        yield Input(
+                            placeholder="Custom model name",
+                            classes="setting-input custom-model-input",
+                            id="input-xai-custom-model",
                         )
 
                     yield Button(
@@ -420,9 +473,15 @@ class SettingsScreen(BaseScreen):
                                 ("DeepSeek-V3 (Latest)", "deepseek-chat"),
                                 ("DeepSeek-R1 (Reasoning)", "deepseek-reasoner"),
                                 ("DeepSeek Coder V2", "deepseek-coder"),
+                                ("📝 Enter custom model...", "__custom__"),
                             ],
                             value="deepseek-chat",
                             id="select-deepseek-model",
+                        )
+                        yield Input(
+                            placeholder="Custom model name",
+                            classes="setting-input custom-model-input",
+                            id="input-deepseek-custom-model",
                         )
 
                     yield Button(
@@ -459,9 +518,15 @@ class SettingsScreen(BaseScreen):
                                 ("Mixtral 8x22B", "open-mixtral-8x22b"),
                                 ("Codestral", "codestral-latest"),
                                 ("Pixtral Large", "pixtral-large-latest"),
+                                ("📝 Enter custom model...", "__custom__"),
                             ],
                             value="mistral-large-latest",
                             id="select-mistral-model",
+                        )
+                        yield Input(
+                            placeholder="Custom model name",
+                            classes="setting-input custom-model-input",
+                            id="input-mistral-custom-model",
                         )
 
                     yield Button(
@@ -497,16 +562,28 @@ class SettingsScreen(BaseScreen):
                                 ("Mixtral 8x7B", "mixtral-8x7b-32768"),
                                 ("Gemma 2 9B", "gemma2-9b-it"),
                                 ("DeepSeek R1 Distill Llama 70B", "deepseek-r1-distill-llama-70b"),
+                                ("📝 Enter custom model...", "__custom__"),
                             ],
                             value="llama-3.3-70b-versatile",
                             id="select-groq-model",
                         )
+                        yield Input(
+                            placeholder="Custom model name",
+                            classes="setting-input custom-model-input",
+                            id="input-groq-custom-model",
+                        )
 
-                    yield Button(
-                        "Verify API Key",
-                        id="btn-test-groq",
-                        variant="primary",
-                    )
+                    with Horizontal(classes="setting-row"):
+                        yield Button(
+                            "🔍 Auto-Detect Models",
+                            id="btn-detect-groq",
+                            variant="default",
+                        )
+                        yield Button(
+                            "Verify API Key",
+                            id="btn-test-groq",
+                            variant="primary",
+                        )
 
                 # Together AI Settings
                 with Container(classes="subsection", id="together-settings"):
@@ -535,9 +612,15 @@ class SettingsScreen(BaseScreen):
                                 ("Qwen 2.5 72B", "Qwen/Qwen2.5-72B-Instruct-Turbo"),
                                 ("Mixtral 8x22B", "mistralai/Mixtral-8x22B-Instruct-v0.1"),
                                 ("WizardLM 2 8x22B", "microsoft/WizardLM-2-8x22B"),
+                                ("📝 Enter custom model...", "__custom__"),
                             ],
                             value="meta-llama/Llama-3.3-70B-Instruct-Turbo",
                             id="select-together-model",
+                        )
+                        yield Input(
+                            placeholder="Custom model name",
+                            classes="setting-input custom-model-input",
+                            id="input-together-custom-model",
                         )
 
                     yield Button(
@@ -574,9 +657,15 @@ class SettingsScreen(BaseScreen):
                                 ("Llama 3.1 405B", "meta-llama/llama-3.1-405b-instruct"),
                                 ("DeepSeek V3", "deepseek/deepseek-chat"),
                                 ("Perplexity Online", "perplexity/llama-3.1-sonar-large-128k-online"),
+                                ("📝 Enter custom model...", "__custom__"),
                             ],
                             value="openrouter/auto",
                             id="select-openrouter-model",
+                        )
+                        yield Input(
+                            placeholder="Custom model name",
+                            classes="setting-input custom-model-input",
+                            id="input-openrouter-custom-model",
                         )
 
                     yield Button(
@@ -610,9 +699,15 @@ class SettingsScreen(BaseScreen):
                                 ("Command R", "command-r"),
                                 ("Command Light", "command-light"),
                                 ("Command Nightly", "command-nightly"),
+                                ("📝 Enter custom model...", "__custom__"),
                             ],
                             value="command-r-plus",
                             id="select-cohere-model",
+                        )
+                        yield Input(
+                            placeholder="Custom model name",
+                            classes="setting-input custom-model-input",
+                            id="input-cohere-custom-model",
                         )
 
                     yield Button(
@@ -646,9 +741,15 @@ class SettingsScreen(BaseScreen):
                                 ("Sonar Small Online", "llama-3.1-sonar-small-128k-online"),
                                 ("Sonar Large Chat", "llama-3.1-sonar-large-128k-chat"),
                                 ("Sonar Huge", "llama-3.1-sonar-huge-128k-online"),
+                                ("📝 Enter custom model...", "__custom__"),
                             ],
                             value="llama-3.1-sonar-large-128k-online",
                             id="select-perplexity-model",
+                        )
+                        yield Input(
+                            placeholder="Custom model name",
+                            classes="setting-input custom-model-input",
+                            id="input-perplexity-custom-model",
                         )
 
                     yield Button(
@@ -744,9 +845,15 @@ class SettingsScreen(BaseScreen):
                                 ("Llama 3.1 70B", "meta.llama3-1-70b-instruct-v1:0"),
                                 ("Amazon Titan Text", "amazon.titan-text-premier-v1:0"),
                                 ("Mistral Large", "mistral.mistral-large-2407-v1:0"),
+                                ("📝 Enter custom model...", "__custom__"),
                             ],
                             value="anthropic.claude-3-5-sonnet-20241022-v2:0",
                             id="select-aws-model",
+                        )
+                        yield Input(
+                            placeholder="Custom model name",
+                            classes="setting-input custom-model-input",
+                            id="input-aws-custom-model",
                         )
 
                     yield Button(
@@ -812,9 +919,15 @@ class SettingsScreen(BaseScreen):
                                 ("DeepSeek V3", "accounts/fireworks/models/deepseek-v3"),
                                 ("Qwen 2.5 72B", "accounts/fireworks/models/qwen2p5-72b-instruct"),
                                 ("Mixtral 8x22B", "accounts/fireworks/models/mixtral-8x22b-instruct"),
+                                ("📝 Enter custom model...", "__custom__"),
                             ],
                             value="accounts/fireworks/models/llama-v3p1-70b-instruct",
                             id="select-fireworks-model",
+                        )
+                        yield Input(
+                            placeholder="Custom model name",
+                            classes="setting-input custom-model-input",
+                            id="input-fireworks-custom-model",
                         )
 
                     yield Button(
@@ -878,9 +991,15 @@ class SettingsScreen(BaseScreen):
                                 ("Jamba 1.5 Large", "jamba-1.5-large"),
                                 ("Jamba 1.5 Mini", "jamba-1.5-mini"),
                                 ("Jamba Instruct", "jamba-instruct"),
+                                ("📝 Enter custom model...", "__custom__"),
                             ],
                             value="jamba-1.5-large",
                             id="select-ai21-model",
+                        )
+                        yield Input(
+                            placeholder="Custom model name",
+                            classes="setting-input custom-model-input",
+                            id="input-ai21-custom-model",
                         )
 
                     yield Button(
@@ -915,9 +1034,15 @@ class SettingsScreen(BaseScreen):
                                 ("Qwen 2.5 72B", "Qwen/Qwen2.5-72B-Instruct"),
                                 ("DeepSeek V3", "deepseek-ai/DeepSeek-V3"),
                                 ("Phi-3 Medium", "microsoft/Phi-3-medium-128k-instruct"),
+                                ("📝 Enter custom model...", "__custom__"),
                             ],
                             value="meta-llama/Meta-Llama-3.1-70B-Instruct",
                             id="select-deepinfra-model",
+                        )
+                        yield Input(
+                            placeholder="Custom model name",
+                            classes="setting-input custom-model-input",
+                            id="input-deepinfra-custom-model",
                         )
 
                     yield Button(
@@ -985,16 +1110,25 @@ class SettingsScreen(BaseScreen):
 
             # Display Settings
             with Container(classes="settings-section"):
-                yield Static("?? Display Settings", classes="section-title")
+                yield Static("🎨 Display Settings", classes="section-title")
 
                 with Horizontal(classes="setting-row"):
                     yield Static("Theme:", classes="setting-label")
                     yield Select(
                         [
-                            ("Dark (Default)", "dark"),
-                            ("Light", "light"),
+                            ("Proxima Dark (Default)", "proxima-dark"),
+                            ("Ocean Deep", "ocean-deep"),
+                            ("Forest Night", "forest-night"),
+                            ("Sunset Glow", "sunset-glow"),
+                            ("Arctic Ice", "arctic-ice"),
+                            ("Neon Nights", "neon-nights"),
+                            ("Midnight Rose", "midnight-rose"),
+                            ("Golden Hour", "golden-hour"),
+                            ("Emerald City", "emerald-city"),
+                            ("Violet Dreams", "violet-dreams"),
+                            ("Light Mode", "light-mode"),
                         ],
-                        value="dark",
+                        value="proxima-dark",
                         id="select-theme",
                     )
 
@@ -1019,29 +1153,328 @@ class SettingsScreen(BaseScreen):
             self._update_llm_sections(event.value)
         elif event.select.id == "select-theme":
             self._apply_theme(event.value)
+        
+        # Handle custom model selection for all model selects
+        select_id = event.select.id
+        if select_id and select_id.startswith("select-") and select_id.endswith("-model"):
+            # Extract provider name (e.g., "openai" from "select-openai-model")
+            provider = select_id.replace("select-", "").replace("-model", "")
+            custom_input_id = f"input-{provider}-custom-model"
+            
+            try:
+                custom_input = self.query_one(f"#{custom_input_id}", Input)
+                if event.value == "__custom__":
+                    # Show custom input field
+                    custom_input.add_class("visible")
+                    custom_input.focus()
+                else:
+                    # Hide custom input field
+                    custom_input.remove_class("visible")
+            except Exception:
+                pass  # Custom input might not exist for all providers
     
+    def on_input_changed(self, event: Input.Changed) -> None:
+        """Handle input changes - auto-detect models when API key is entered."""
+        input_id = event.input.id
+        if not input_id:
+            return
+        
+        # Map API key inputs to their providers and model selects
+        api_key_to_provider = {
+            "input-openai-key": ("openai", "select-openai-model"),
+            "input-anthropic-key": ("anthropic", "select-anthropic-model"),
+            "input-google-key": ("google", "select-google-model"),
+            "input-xai-key": ("xai", "select-xai-model"),
+            "input-deepseek-key": ("deepseek", "select-deepseek-model"),
+            "input-mistral-key": ("mistral", "select-mistral-model"),
+            "input-groq-key": ("groq", "select-groq-model"),
+            "input-together-key": ("together", "select-together-model"),
+            "input-openrouter-key": ("openrouter", "select-openrouter-model"),
+            "input-cohere-key": ("cohere", "select-cohere-model"),
+            "input-perplexity-key": ("perplexity", "select-perplexity-model"),
+            "input-fireworks-key": ("fireworks", "select-fireworks-model"),
+            "input-replicate-token": ("replicate", "select-replicate-model"),
+            "input-ai21-key": ("ai21", "select-ai21-model"),
+            "input-deepinfra-key": ("deepinfra", "select-deepinfra-model"),
+            "input-anyscale-key": ("anyscale", "select-anyscale-model"),
+            "input-sambanova-key": ("sambanova", "select-sambanova-model"),
+            "input-cerebras-key": ("cerebras", "select-cerebras-model"),
+            "input-novita-key": ("novita", "select-novita-model"),
+            "input-friendli-key": ("friendli", "select-friendli-model"),
+            "input-reka-key": ("reka", "select-reka-model"),
+            "input-writer-key": ("writer", "select-writer-model"),
+            "input-lambda-key": ("lambda", "select-lambda-model"),
+            "input-monster-key": ("monster", "select-monster-model"),
+            "input-hyperbolic-key": ("hyperbolic", "select-hyperbolic-model"),
+            "input-kluster-key": ("kluster", "select-kluster-model"),
+        }
+        
+        # Check if this is an API key input
+        if input_id in api_key_to_provider:
+            api_key = event.value
+            # Only auto-detect if key looks valid (min length)
+            if len(api_key) >= 10:
+                provider_name, select_id = api_key_to_provider[input_id]
+                # Debounce - delay auto-detection to avoid too many API calls
+                self._schedule_model_detection(provider_name, select_id, api_key)
+        
+        # Handle local endpoint inputs for model detection
+        local_endpoint_to_provider = {
+            "input-ollama-url": ("ollama", "input-local-model"),
+            "input-vllm-endpoint": ("vllm", "input-vllm-model"),
+            "input-localai-endpoint": ("localai", "input-localai-model"),
+            "input-textgen-endpoint": ("textgen_webui", "input-textgen-model"),
+        }
+        
+        if input_id in local_endpoint_to_provider:
+            endpoint = event.value
+            if endpoint and (endpoint.startswith("http://") or endpoint.startswith("https://")):
+                provider_name, model_input_id = local_endpoint_to_provider[input_id]
+                self._schedule_local_model_detection(provider_name, model_input_id, endpoint)
+    
+    def _schedule_model_detection(self, provider_name: str, select_id: str, api_key: str) -> None:
+        """Schedule model detection with debouncing."""
+        # Cancel any pending detection for this provider
+        if hasattr(self, '_detection_tasks'):
+            task_key = f"detect_{provider_name}"
+            if task_key in self._detection_tasks:
+                self._detection_tasks[task_key].cancel()
+        else:
+            self._detection_tasks = {}
+        
+        # Schedule new detection after a short delay
+        async def delayed_detection():
+            await asyncio.sleep(0.8)  # Debounce delay
+            await self._auto_detect_models(provider_name, select_id, api_key)
+        
+        task = asyncio.create_task(delayed_detection())
+        self._detection_tasks[f"detect_{provider_name}"] = task
+    
+    def _schedule_local_model_detection(self, provider_name: str, model_input_id: str, endpoint: str) -> None:
+        """Schedule local model detection with debouncing."""
+        if hasattr(self, '_detection_tasks'):
+            task_key = f"detect_local_{provider_name}"
+            if task_key in self._detection_tasks:
+                self._detection_tasks[task_key].cancel()
+        else:
+            self._detection_tasks = {}
+        
+        async def delayed_detection():
+            await asyncio.sleep(1.0)  # Longer delay for local endpoints
+            await self._auto_detect_local_models(provider_name, model_input_id, endpoint)
+        
+        task = asyncio.create_task(delayed_detection())
+        self._detection_tasks[f"detect_local_{provider_name}"] = task
+    
+    async def _auto_detect_models(self, provider_name: str, select_id: str, api_key: str) -> None:
+        """Auto-detect available models from API provider."""
+        if not LLM_AVAILABLE:
+            return
+        
+        try:
+            from proxima.intelligence.llm_router import ProviderRegistry
+            registry = ProviderRegistry()
+            provider = registry.get(provider_name)
+            
+            # Show detecting status
+            self.notify(f"🔍 Detecting {provider_name} models...", severity="information")
+            
+            # Get models from provider - try different signatures
+            # Some providers expect (api_base, api_key), others just (api_key)
+            def fetch_models():
+                try:
+                    # Try the new signature with api_base and api_key
+                    return provider.list_models(api_base=None, api_key=api_key)
+                except TypeError:
+                    try:
+                        # Fall back to just api_key
+                        return provider.list_models(api_key)
+                    except TypeError:
+                        # Or no arguments
+                        return provider.list_models()
+            
+            models = await asyncio.get_event_loop().run_in_executor(
+                None, fetch_models
+            )
+            
+            if models:
+                # Update the select with detected models
+                try:
+                    select = self.query_one(f"#{select_id}", Select)
+                    
+                    # Create options from detected models
+                    # Mark the first/best model as recommended
+                    options = []
+                    best_model = self._get_best_model(provider_name, models)
+                    
+                    for model in models[:20]:  # Limit to 20 models
+                        if model == best_model:
+                            options.append((f"✨ {model} (Recommended)", model))
+                        else:
+                            options.append((model, model))
+                    
+                    # Add manual entry option
+                    options.append(("📝 Enter custom model...", "__custom__"))
+                    
+                    # Update select options
+                    select.set_options(options)
+                    
+                    # Auto-select the best model
+                    if best_model:
+                        select.value = best_model
+                    
+                    self.notify(f"✅ Found {len(models)} models for {provider_name}", severity="success")
+                except Exception as e:
+                    self.notify(f"Could not update model list: {e}", severity="warning")
+            else:
+                self.notify(f"No models found for {provider_name}", severity="warning")
+                
+        except Exception as e:
+            # Silently fail - user can still manually select
+            self.notify(f"Auto-detect failed: {str(e)[:50]}", severity="warning")
+    
+    async def _auto_detect_local_models(self, provider_name: str, model_input_id: str, endpoint: str) -> None:
+        """Auto-detect available models from local LLM server."""
+        if not LLM_AVAILABLE:
+            return
+        
+        try:
+            from proxima.intelligence.llm_router import ProviderRegistry
+            registry = ProviderRegistry()
+            
+            # For local providers, we need to set the endpoint first
+            if provider_name == "ollama":
+                provider = registry.get("ollama")
+                if hasattr(provider, 'set_endpoint'):
+                    provider.set_endpoint(endpoint)
+            else:
+                provider = registry.get(provider_name)
+            
+            self.notify(f"🔍 Detecting local models at {endpoint}...", severity="information")
+            
+            # Get models - for local providers, pass endpoint instead of API key
+            models = await asyncio.get_event_loop().run_in_executor(
+                None, lambda: provider.list_models(endpoint)
+            )
+            
+            if models:
+                # For local providers with input fields (not select), show available models
+                self.notify(f"✅ Found {len(models)} local models: {', '.join(models[:5])}{'...' if len(models) > 5 else ''}", severity="success")
+                
+                # If we can find the input, suggest the first model
+                try:
+                    model_input = self.query_one(f"#{model_input_id}", Input)
+                    if not model_input.value:
+                        model_input.value = models[0]
+                except Exception:
+                    pass
+            else:
+                self.notify(f"No models found at {endpoint}", severity="warning")
+                
+        except Exception as e:
+            self.notify(f"Could not detect local models: {str(e)[:50]}", severity="warning")
+    
+    def _get_best_model(self, provider_name: str, models: list[str]) -> Optional[str]:
+        """Get the best/recommended model for a provider.
+        
+        Args:
+            provider_name: Name of the provider
+            models: List of available model names
+            
+        Returns:
+            The recommended model name, or None
+        """
+        # Define preferred models for each provider (in order of preference)
+        preferred_models = {
+            "openai": ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-4", "gpt-3.5-turbo"],
+            "anthropic": ["claude-3-5-sonnet", "claude-3-opus", "claude-3-sonnet", "claude-3-haiku", "claude-2"],
+            "google": ["gemini-1.5-pro", "gemini-1.5-flash", "gemini-pro", "gemini-1.0-pro"],
+            "xai": ["grok-2", "grok-beta", "grok-1"],
+            "deepseek": ["deepseek-chat", "deepseek-coder", "deepseek-reasoner"],
+            "mistral": ["mistral-large", "mistral-medium", "mistral-small", "mistral-tiny", "open-mixtral"],
+            "groq": ["llama-3.3-70b", "llama-3.1-70b", "mixtral-8x7b", "llama3-70b", "llama3-8b"],
+            "together": ["meta-llama/Llama-3", "mistralai/Mixtral", "meta-llama/Meta-Llama-3"],
+            "openrouter": ["anthropic/claude-3", "openai/gpt-4", "meta-llama/llama-3"],
+            "cohere": ["command-r-plus", "command-r", "command", "command-light"],
+            "perplexity": ["llama-3.1-sonar-large", "llama-3.1-sonar-small", "sonar-pro"],
+            "fireworks": ["accounts/fireworks/models/llama", "accounts/fireworks/models/mixtral"],
+            "replicate": ["meta/llama", "meta/meta-llama-3"],
+            "ai21": ["jamba-1.5-large", "jamba-1.5-mini", "j2-ultra", "j2-mid"],
+            "deepinfra": ["meta-llama/Meta-Llama-3", "mistralai/Mixtral"],
+            "anyscale": ["meta-llama/Llama", "mistralai/Mixtral"],
+            "sambanova": ["Meta-Llama-3", "Mistral"],
+            "cerebras": ["llama3.1-70b", "llama3.1-8b"],
+            "novita": ["meta-llama/llama", "mistralai/mixtral"],
+            "friendli": ["meta-llama-3", "mixtral"],
+            "reka": ["reka-core", "reka-flash", "reka-edge"],
+            "writer": ["palmyra-x", "palmyra"],
+            "lambda": ["llama3", "hermes"],
+            "monster": ["llama", "mistral"],
+            "hyperbolic": ["meta-llama", "mistral"],
+            "kluster": ["llama", "mixtral"],
+        }
+        
+        preferred = preferred_models.get(provider_name, [])
+        
+        # Find the first preferred model that's available
+        for pref in preferred:
+            for model in models:
+                if pref.lower() in model.lower():
+                    return model
+        
+        # If no preferred model found, return the first one
+        return models[0] if models else None
+
     def _apply_theme(self, theme_name: str) -> None:
         """Apply the selected theme immediately.
         
         Args:
-            theme_name: Name of the theme to apply ('dark' or 'light')
+            theme_name: Name of the theme to apply
         """
         try:
-            app = self.app
-            if theme_name == "dark":
-                app.dark = True
-                app.theme_name = "dark"
-            elif theme_name == "light":
-                app.dark = False
-                app.theme_name = "light"
-            elif theme_name == "quantum":
-                # Custom quantum theme - uses dark mode with quantum colors
-                app.dark = True
-                app.theme_name = "quantum"
+            from ..styles.theme import set_theme_by_name, get_theme
             
-            self.notify(f"Theme switched to {theme_name}", severity="information")
+            # Set our custom theme
+            if set_theme_by_name(theme_name):
+                theme = get_theme()
+                
+                # Update Textual's dark/light mode
+                app = self.app
+                if theme.is_dark:
+                    app.dark = True
+                else:
+                    app.dark = False
+                
+                # Apply CSS variables for the theme
+                self._apply_theme_css(theme)
+                
+                self.notify(f"Theme switched to {theme.name}", severity="information")
+            else:
+                self.notify(f"Theme '{theme_name}' not found", severity="warning")
         except Exception as e:
             self.notify(f"Failed to apply theme: {e}", severity="warning")
+    
+    def _apply_theme_css(self, theme) -> None:
+        """Apply theme colors as CSS variables."""
+        try:
+            # Update app-level CSS variables
+            css_vars = f"""
+                $primary: {theme.primary};
+                $primary-light: {theme.primary_light};
+                $primary-dark: {theme.primary_dark};
+                $accent: {theme.accent};
+                $success: {theme.success};
+                $error: {theme.error};
+                $warning: {theme.warning};
+                $info: {theme.info};
+                $bg-base: {theme.bg_base};
+                $fg-base: {theme.fg_base};
+                $border: {theme.border};
+            """
+            # Note: Full CSS variable application would require deeper Textual integration
+            # This serves as a marker for where theme CSS would be applied
+        except Exception:
+            pass
 
     def _update_llm_sections(self, mode: str) -> None:
         """Show/hide LLM sections based on selected mode."""
@@ -1159,9 +1592,66 @@ class SettingsScreen(BaseScreen):
             self._test_anthropic()
         elif button_id == "btn-open-thinking":
             self._open_ai_thinking()
+        # Handle model detection buttons
+        elif button_id and button_id.startswith("btn-detect-"):
+            self._manual_detect_models(button_id.replace("btn-detect-", ""))
         # Handle new provider test buttons
         elif button_id and button_id.startswith("btn-test-"):
             self._test_provider(button_id.replace("btn-test-", ""))
+
+    def _manual_detect_models(self, provider_name: str) -> None:
+        """Manually trigger model detection for a provider."""
+        # Map provider to key input and select
+        provider_map = {
+            "openai": ("input-openai-key", "select-openai-model"),
+            "anthropic": ("input-anthropic-key", "select-anthropic-model"),
+            "google": ("input-google-key", "select-google-model"),
+            "xai": ("input-xai-key", "select-xai-model"),
+            "deepseek": ("input-deepseek-key", "select-deepseek-model"),
+            "mistral": ("input-mistral-key", "select-mistral-model"),
+            "groq": ("input-groq-key", "select-groq-model"),
+            "together": ("input-together-key", "select-together-model"),
+            "openrouter": ("input-openrouter-key", "select-openrouter-model"),
+            "cohere": ("input-cohere-key", "select-cohere-model"),
+            "perplexity": ("input-perplexity-key", "select-perplexity-model"),
+            "fireworks": ("input-fireworks-key", "select-fireworks-model"),
+            "huggingface": ("input-huggingface-key", "select-huggingface-model"),
+            "replicate": ("input-replicate-key", "select-replicate-model"),
+            "ai21": ("input-ai21-key", "select-ai21-model"),
+            "deepinfra": ("input-deepinfra-key", "select-deepinfra-model"),
+            "anyscale": ("input-anyscale-key", "select-anyscale-model"),
+            "sambanova": ("input-sambanova-key", "select-sambanova-model"),
+            "cerebras": ("input-cerebras-key", "select-cerebras-model"),
+            "novita": ("input-novita-key", "select-novita-model"),
+            "friendli": ("input-friendli-key", "select-friendli-model"),
+            "reka": ("input-reka-key", "select-reka-model"),
+            "writer": ("input-writer-key", "select-writer-model"),
+            "lambda": ("input-lambda-key", "select-lambda-model"),
+            "monster": ("input-monster-key", "select-monster-model"),
+            "hyperbolic": ("input-hyperbolic-key", "select-hyperbolic-model"),
+            "kluster": ("input-kluster-key", "select-kluster-model"),
+            "lepton": ("input-lepton-key", "select-lepton-model"),
+        }
+        
+        config = provider_map.get(provider_name)
+        if not config:
+            self.notify(f"Unknown provider for detection: {provider_name}", severity="warning")
+            return
+        
+        key_input_id, select_id = config
+        
+        try:
+            api_key = self.query_one(f"#{key_input_id}", Input).value
+        except Exception:
+            self.notify("Could not find API key input", severity="error")
+            return
+        
+        if not api_key or len(api_key) < 5:
+            self.notify("Please enter an API key first", severity="warning")
+            return
+        
+        # Trigger async model detection
+        asyncio.create_task(self._auto_detect_models(provider_name, select_id, api_key))
 
     def _save_settings(self) -> None:
         """Save current settings to disk including all API keys."""
@@ -1264,6 +1754,77 @@ class SettingsScreen(BaseScreen):
                 # DeepInfra
                 'deepinfra_key': get_input_value("input-deepinfra-key"),
                 'deepinfra_model': get_select_value("select-deepinfra-model", "meta-llama/Meta-Llama-3.1-70B-Instruct"),
+                # Anyscale
+                'anyscale_key': get_input_value("input-anyscale-key"),
+                'anyscale_model': get_select_value("select-anyscale-model", "meta-llama/Llama-3-70b-chat-hf"),
+                # Vertex AI
+                'vertex_project': get_input_value("input-vertex-project"),
+                'vertex_location': get_select_value("select-vertex-location", "us-central1"),
+                'vertex_model': get_select_value("select-vertex-model", "gemini-1.5-pro"),
+                # watsonx
+                'watsonx_key': get_input_value("input-watsonx-key"),
+                'watsonx_project': get_input_value("input-watsonx-project"),
+                'watsonx_model': get_select_value("select-watsonx-model", "ibm/granite-13b-chat-v2"),
+                # Oracle AI
+                'oracle_key': get_input_value("input-oracle-key"),
+                'oracle_compartment': get_input_value("input-oracle-compartment"),
+                'oracle_model': get_select_value("select-oracle-model", "cohere.command-r-plus"),
+                # Alibaba Qwen
+                'alibaba_key': get_input_value("input-alibaba-key"),
+                'alibaba_model': get_select_value("select-alibaba-model", "qwen-max"),
+                # SambaNova
+                'sambanova_key': get_input_value("input-sambanova-key"),
+                'sambanova_model': get_select_value("select-sambanova-model", "Meta-Llama-3.1-70B-Instruct"),
+                # Cerebras
+                'cerebras_key': get_input_value("input-cerebras-key"),
+                'cerebras_model': get_select_value("select-cerebras-model", "llama3.1-70b"),
+                # Lepton
+                'lepton_key': get_input_value("input-lepton-key"),
+                'lepton_model': get_input_value("input-lepton-model", "llama3-70b"),
+                # Novita
+                'novita_key': get_input_value("input-novita-key"),
+                'novita_model': get_select_value("select-novita-model", "meta-llama/llama-3.1-70b-instruct"),
+                # Friendli
+                'friendli_key': get_input_value("input-friendli-key"),
+                'friendli_model': get_select_value("select-friendli-model", "meta-llama-3.1-70b-instruct"),
+                # Reka
+                'reka_key': get_input_value("input-reka-key"),
+                'reka_model': get_select_value("select-reka-model", "reka-flash"),
+                # Writer
+                'writer_key': get_input_value("input-writer-key"),
+                'writer_model': get_select_value("select-writer-model", "palmyra-x-004"),
+                # Baseten
+                'baseten_key': get_input_value("input-baseten-key"),
+                'baseten_model': get_input_value("input-baseten-model", "llama-3.1-70b"),
+                # Modal
+                'modal_endpoint': get_input_value("input-modal-endpoint"),
+                'modal_key': get_input_value("input-modal-key"),
+                'modal_model': get_input_value("input-modal-model"),
+                # RunPod
+                'runpod_key': get_input_value("input-runpod-key"),
+                'runpod_endpoint': get_input_value("input-runpod-endpoint"),
+                'runpod_model': get_input_value("input-runpod-model"),
+                # Lambda Labs
+                'lambda_key': get_input_value("input-lambda-key"),
+                'lambda_model': get_select_value("select-lambda-model", "llama3.1-70b-instruct-fp8"),
+                # Monster API
+                'monster_key': get_input_value("input-monster-key"),
+                'monster_model': get_select_value("select-monster-model", "meta-llama/Meta-Llama-3.1-70B-Instruct"),
+                # Hyperbolic
+                'hyperbolic_key': get_input_value("input-hyperbolic-key"),
+                'hyperbolic_model': get_select_value("select-hyperbolic-model", "meta-llama/Meta-Llama-3.1-70B-Instruct"),
+                # Kluster
+                'kluster_key': get_input_value("input-kluster-key"),
+                'kluster_model': get_select_value("select-kluster-model", "llama-3.1-70b"),
+                # vLLM (local)
+                'vllm_endpoint': get_input_value("input-vllm-endpoint", "http://localhost:8000"),
+                'vllm_model': get_input_value("input-vllm-model"),
+                # LocalAI
+                'localai_endpoint': get_input_value("input-localai-endpoint", "http://localhost:8080"),
+                'localai_model': get_input_value("input-localai-model"),
+                # TextGen WebUI
+                'textgen_endpoint': get_input_value("input-textgen-endpoint", "http://localhost:5000"),
+                'textgen_model': get_input_value("input-textgen-model"),
                 # Custom API
                 'custom_base_url': get_input_value("input-custom-base-url"),
                 'custom_key': get_input_value("input-custom-key"),
@@ -1297,9 +1858,12 @@ class SettingsScreen(BaseScreen):
                 self.state.llm_provider = llm_mode
                 self.state.thinking_enabled = settings['llm'].get('thinking_enabled', False)
                 
-                # Get the model name for the selected provider
+                # Get the model name for the selected provider - COMPLETE MAPPING
                 model_key_map = {
                     'local': 'local_model',
+                    'ollama': 'local_model',
+                    'lmstudio': 'local_model',
+                    'llamacpp': 'local_model',
                     'openai': 'openai_model',
                     'anthropic': 'anthropic_model',
                     'google': 'google_model',
@@ -1318,6 +1882,29 @@ class SettingsScreen(BaseScreen):
                     'replicate': 'replicate_model',
                     'ai21': 'ai21_model',
                     'deepinfra': 'deepinfra_model',
+                    'anyscale': 'anyscale_model',
+                    'vertex_ai': 'vertex_model',
+                    'watsonx': 'watsonx_model',
+                    'oracle_ai': 'oracle_model',
+                    'alibaba_qwen': 'alibaba_model',
+                    'sambanova': 'sambanova_model',
+                    'cerebras': 'cerebras_model',
+                    'lepton': 'lepton_model',
+                    'novita': 'novita_model',
+                    'friendli': 'friendli_model',
+                    'reka': 'reka_model',
+                    'writer': 'writer_model',
+                    'baseten': 'baseten_model',
+                    'modal': 'modal_model',
+                    'runpod': 'runpod_model',
+                    'lambda': 'lambda_model',
+                    'monster': 'monster_model',
+                    'hyperbolic': 'hyperbolic_model',
+                    'kluster': 'kluster_model',
+                    'vllm': 'vllm_model',
+                    'localai': 'localai_model',
+                    'textgen_webui': 'textgen_model',
+                    'oobabooga': 'textgen_model',
                 }
                 
                 if llm_mode in model_key_map:
@@ -1471,6 +2058,99 @@ class SettingsScreen(BaseScreen):
             set_input_value("input-deepinfra-key", llm.get('deepinfra_key', ''))
             set_select_value("select-deepinfra-model", llm.get('deepinfra_model', ''))
             
+            # Anyscale
+            set_input_value("input-anyscale-key", llm.get('anyscale_key', ''))
+            set_select_value("select-anyscale-model", llm.get('anyscale_model', ''))
+            
+            # Vertex AI
+            set_input_value("input-vertex-project", llm.get('vertex_project', ''))
+            set_select_value("select-vertex-location", llm.get('vertex_location', ''))
+            set_select_value("select-vertex-model", llm.get('vertex_model', ''))
+            
+            # watsonx
+            set_input_value("input-watsonx-key", llm.get('watsonx_key', ''))
+            set_input_value("input-watsonx-project", llm.get('watsonx_project', ''))
+            set_select_value("select-watsonx-model", llm.get('watsonx_model', ''))
+            
+            # Oracle AI
+            set_input_value("input-oracle-key", llm.get('oracle_key', ''))
+            set_input_value("input-oracle-compartment", llm.get('oracle_compartment', ''))
+            set_select_value("select-oracle-model", llm.get('oracle_model', ''))
+            
+            # Alibaba Qwen
+            set_input_value("input-alibaba-key", llm.get('alibaba_key', ''))
+            set_select_value("select-alibaba-model", llm.get('alibaba_model', ''))
+            
+            # SambaNova
+            set_input_value("input-sambanova-key", llm.get('sambanova_key', ''))
+            set_select_value("select-sambanova-model", llm.get('sambanova_model', ''))
+            
+            # Cerebras
+            set_input_value("input-cerebras-key", llm.get('cerebras_key', ''))
+            set_select_value("select-cerebras-model", llm.get('cerebras_model', ''))
+            
+            # Lepton
+            set_input_value("input-lepton-key", llm.get('lepton_key', ''))
+            set_input_value("input-lepton-model", llm.get('lepton_model', ''))
+            
+            # Novita
+            set_input_value("input-novita-key", llm.get('novita_key', ''))
+            set_select_value("select-novita-model", llm.get('novita_model', ''))
+            
+            # Friendli
+            set_input_value("input-friendli-key", llm.get('friendli_key', ''))
+            set_select_value("select-friendli-model", llm.get('friendli_model', ''))
+            
+            # Reka
+            set_input_value("input-reka-key", llm.get('reka_key', ''))
+            set_select_value("select-reka-model", llm.get('reka_model', ''))
+            
+            # Writer
+            set_input_value("input-writer-key", llm.get('writer_key', ''))
+            set_select_value("select-writer-model", llm.get('writer_model', ''))
+            
+            # Baseten
+            set_input_value("input-baseten-key", llm.get('baseten_key', ''))
+            set_input_value("input-baseten-model", llm.get('baseten_model', ''))
+            
+            # Modal
+            set_input_value("input-modal-endpoint", llm.get('modal_endpoint', ''))
+            set_input_value("input-modal-key", llm.get('modal_key', ''))
+            set_input_value("input-modal-model", llm.get('modal_model', ''))
+            
+            # RunPod
+            set_input_value("input-runpod-key", llm.get('runpod_key', ''))
+            set_input_value("input-runpod-endpoint", llm.get('runpod_endpoint', ''))
+            set_input_value("input-runpod-model", llm.get('runpod_model', ''))
+            
+            # Lambda Labs
+            set_input_value("input-lambda-key", llm.get('lambda_key', ''))
+            set_select_value("select-lambda-model", llm.get('lambda_model', ''))
+            
+            # Monster API
+            set_input_value("input-monster-key", llm.get('monster_key', ''))
+            set_select_value("select-monster-model", llm.get('monster_model', ''))
+            
+            # Hyperbolic
+            set_input_value("input-hyperbolic-key", llm.get('hyperbolic_key', ''))
+            set_select_value("select-hyperbolic-model", llm.get('hyperbolic_model', ''))
+            
+            # Kluster
+            set_input_value("input-kluster-key", llm.get('kluster_key', ''))
+            set_select_value("select-kluster-model", llm.get('kluster_model', ''))
+            
+            # vLLM (local)
+            set_input_value("input-vllm-endpoint", llm.get('vllm_endpoint', ''))
+            set_input_value("input-vllm-model", llm.get('vllm_model', ''))
+            
+            # LocalAI
+            set_input_value("input-localai-endpoint", llm.get('localai_endpoint', ''))
+            set_input_value("input-localai-model", llm.get('localai_model', ''))
+            
+            # TextGen WebUI
+            set_input_value("input-textgen-endpoint", llm.get('textgen_endpoint', ''))
+            set_input_value("input-textgen-model", llm.get('textgen_model', ''))
+            
             # Custom API
             set_input_value("input-custom-base-url", llm.get('custom_base_url', ''))
             set_input_value("input-custom-key", llm.get('custom_key', ''))
@@ -1485,9 +2165,12 @@ class SettingsScreen(BaseScreen):
                 self.state.llm_provider = mode
                 self.state.thinking_enabled = llm.get('thinking_enabled', False)
                 
-                # Get the model name for the selected provider
+                # Get the model name for the selected provider - COMPLETE MAPPING
                 model_key_map = {
                     'local': 'local_model',
+                    'ollama': 'local_model',
+                    'lmstudio': 'local_model',
+                    'llamacpp': 'local_model',
                     'openai': 'openai_model',
                     'anthropic': 'anthropic_model',
                     'google': 'google_model',
@@ -1506,6 +2189,29 @@ class SettingsScreen(BaseScreen):
                     'replicate': 'replicate_model',
                     'ai21': 'ai21_model',
                     'deepinfra': 'deepinfra_model',
+                    'anyscale': 'anyscale_model',
+                    'vertex_ai': 'vertex_model',
+                    'watsonx': 'watsonx_model',
+                    'oracle_ai': 'oracle_model',
+                    'alibaba_qwen': 'alibaba_model',
+                    'sambanova': 'sambanova_model',
+                    'cerebras': 'cerebras_model',
+                    'lepton': 'lepton_model',
+                    'novita': 'novita_model',
+                    'friendli': 'friendli_model',
+                    'reka': 'reka_model',
+                    'writer': 'writer_model',
+                    'baseten': 'baseten_model',
+                    'modal': 'modal_model',
+                    'runpod': 'runpod_model',
+                    'lambda': 'lambda_model',
+                    'monster': 'monster_model',
+                    'hyperbolic': 'hyperbolic_model',
+                    'kluster': 'kluster_model',
+                    'vllm': 'vllm_model',
+                    'localai': 'localai_model',
+                    'textgen_webui': 'textgen_model',
+                    'oobabooga': 'textgen_model',
                 }
                 
                 if mode in model_key_map:
@@ -1883,6 +2589,138 @@ class SettingsScreen(BaseScreen):
                 "name": "DeepInfra",
                 "key_prefix": "",
             },
+            # NEW: Additional providers
+            "anyscale": {
+                "key_input": "#input-anyscale-key",
+                "endpoint": "https://api.endpoints.anyscale.com/v1/models",
+                "name": "Anyscale",
+                "key_prefix": "esecret_",
+            },
+            "vertex_ai": {
+                "key_input": "#input-vertex-project",
+                "name": "Google Vertex AI",
+                "key_prefix": "",
+            },
+            "watsonx": {
+                "key_input": "#input-watsonx-key",
+                "endpoint": "https://us-south.ml.cloud.ibm.com/ml/v1/foundation_model_specs",
+                "name": "IBM watsonx.ai",
+                "key_prefix": "",
+            },
+            "oracle_ai": {
+                "key_input": "#input-oracle-key",
+                "name": "Oracle OCI AI",
+                "key_prefix": "",
+            },
+            "alibaba_qwen": {
+                "key_input": "#input-alibaba-key",
+                "endpoint": "https://dashscope.aliyuncs.com/api/v1/services/aigc/text-generation/generation",
+                "name": "Alibaba Cloud Qwen",
+                "key_prefix": "sk-",
+            },
+            "sambanova": {
+                "key_input": "#input-sambanova-key",
+                "endpoint": "https://api.sambanova.ai/v1/models",
+                "name": "SambaNova",
+                "key_prefix": "",
+            },
+            "cerebras": {
+                "key_input": "#input-cerebras-key",
+                "endpoint": "https://api.cerebras.ai/v1/models",
+                "name": "Cerebras",
+                "key_prefix": "csk-",
+            },
+            "lepton": {
+                "key_input": "#input-lepton-key",
+                "endpoint": "https://api.lepton.ai/v1/models",
+                "name": "Lepton AI",
+                "key_prefix": "",
+            },
+            "novita": {
+                "key_input": "#input-novita-key",
+                "endpoint": "https://api.novita.ai/v3/openai/models",
+                "name": "Novita AI",
+                "key_prefix": "",
+            },
+            "friendli": {
+                "key_input": "#input-friendli-key",
+                "endpoint": "https://inference.friendli.ai/v1/models",
+                "name": "Friendli AI",
+                "key_prefix": "",
+            },
+            "reka": {
+                "key_input": "#input-reka-key",
+                "endpoint": "https://api.reka.ai/v1/models",
+                "name": "Reka AI",
+                "key_prefix": "",
+            },
+            "writer": {
+                "key_input": "#input-writer-key",
+                "endpoint": "https://api.writer.com/v1/models",
+                "name": "Writer AI",
+                "key_prefix": "",
+            },
+            "baseten": {
+                "key_input": "#input-baseten-key",
+                "name": "Baseten",
+                "key_prefix": "",
+            },
+            "modal": {
+                "key_input": "#input-modal-key",
+                "endpoint_input": "#input-modal-endpoint",
+                "name": "Modal",
+                "key_prefix": "",
+            },
+            "runpod": {
+                "key_input": "#input-runpod-key",
+                "endpoint_input": "#input-runpod-endpoint",
+                "name": "RunPod",
+                "key_prefix": "",
+            },
+            "lambda": {
+                "key_input": "#input-lambda-key",
+                "endpoint": "https://api.lambdalabs.com/v1/models",
+                "name": "Lambda Labs",
+                "key_prefix": "",
+            },
+            "monster": {
+                "key_input": "#input-monster-key",
+                "endpoint": "https://api.monsterapi.ai/v1/models",
+                "name": "Monster API",
+                "key_prefix": "",
+            },
+            "hyperbolic": {
+                "key_input": "#input-hyperbolic-key",
+                "endpoint": "https://api.hyperbolic.xyz/v1/models",
+                "name": "Hyperbolic",
+                "key_prefix": "",
+            },
+            "kluster": {
+                "key_input": "#input-kluster-key",
+                "endpoint": "https://api.kluster.ai/v1/models",
+                "name": "Kluster.ai",
+                "key_prefix": "",
+            },
+            "vllm": {
+                "endpoint_input": "#input-vllm-endpoint",
+                "name": "vLLM (Self-Hosted)",
+                "key_prefix": "",
+            },
+            "localai": {
+                "endpoint_input": "#input-localai-endpoint",
+                "name": "LocalAI",
+                "key_prefix": "",
+            },
+            "textgen_webui": {
+                "endpoint_input": "#input-textgen-endpoint",
+                "name": "Text Generation WebUI",
+                "key_prefix": "",
+            },
+            "oobabooga": {
+                "endpoint_input": "#input-textgen-endpoint",
+                "name": "Oobabooga",
+                "key_prefix": "",
+            },
             "custom": {
                 "key_input": "#input-custom-key",
                 "endpoint_input": "#input-custom-base-url",
@@ -1896,20 +2734,23 @@ class SettingsScreen(BaseScreen):
             self.notify(f"Unknown provider: {provider_name}", severity="warning")
             return
         
-        # Get API key
-        try:
-            api_key = self.query_one(config["key_input"], Input).value
-        except Exception:
-            self.notify(f"Could not find API key input for {config['name']}", severity="error")
-            return
+        # Get API key (optional for local endpoints)
+        api_key = ""
+        if "key_input" in config:
+            try:
+                api_key = self.query_one(config["key_input"], Input).value
+            except Exception:
+                pass
         
-        if not api_key:
+        # For providers that require API key
+        requires_key = provider_name not in ("vllm", "localai", "textgen_webui", "oobabooga")
+        if requires_key and not api_key:
             self.notify("Please enter an API key first", severity="warning")
             return
         
         # Validate key prefix if specified
         key_prefix = config.get("key_prefix", "")
-        if key_prefix and not api_key.startswith(key_prefix):
+        if api_key and key_prefix and not api_key.startswith(key_prefix):
             self.notify(f"API key should start with '{key_prefix}'", severity="warning")
         
         self.notify(f"Testing {config['name']} connection...")

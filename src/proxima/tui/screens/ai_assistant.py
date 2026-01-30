@@ -19,12 +19,14 @@ from textual.containers import Horizontal, Vertical, Container, ScrollableContai
 from textual.widgets import Static, Button, Input, RichLog, TextArea, Label, Select
 from textual.binding import Binding
 from textual.screen import ModalScreen
+from textual import events
 from rich.text import Text
 from rich.panel import Panel
 from rich.markdown import Markdown
 
 from .base import BaseScreen
 from ..styles.theme import get_theme
+from textual.message import Message
 
 # Import LLM components
 try:
@@ -32,6 +34,25 @@ try:
     LLM_AVAILABLE = True
 except ImportError:
     LLM_AVAILABLE = False
+
+
+class SendableTextArea(TextArea):
+    """Custom TextArea that sends a message on Ctrl+Enter."""
+    
+    class SendRequested(Message):
+        """Posted when user presses Ctrl+Enter."""
+        pass
+    
+    async def _on_key(self, event: events.Key) -> None:
+        """Intercept Ctrl+Enter before parent handles it."""
+        # Ctrl+Enter to send - ctrl+m is the terminal code for Ctrl+Enter
+        if event.key in ("ctrl+m", "ctrl+enter", "ctrl+j"):
+            event.stop()
+            event.prevent_default()
+            self.post_message(self.SendRequested())
+            return
+        # Let parent TextArea handle everything else
+        await super()._on_key(event)
 
 
 @dataclass
@@ -214,7 +235,7 @@ class AIAssistantScreen(BaseScreen):
     
     Features:
     - Persistent chat history (survives tab switches)
-    - Multi-line input (Shift+Enter for new line)
+    - Multi-line input (Enter for new line, Ctrl+Enter to send)
     - Import/export conversations with custom names
     - Real-time statistics
     - Keyboard shortcuts
@@ -225,6 +246,7 @@ class AIAssistantScreen(BaseScreen):
     SHOW_SIDEBAR = False  # Full screen mode
     
     BINDINGS = [
+        Binding("ctrl+m", "send_on_enter", "Send", show=False, priority=True),
         Binding("ctrl+z", "undo", "Undo", show=True),
         Binding("ctrl+y", "redo", "Redo", show=True),
         Binding("ctrl+a", "select_all", "Select All", show=False),
@@ -726,12 +748,12 @@ class AIAssistantScreen(BaseScreen):
                 # Input section
                 with Vertical(classes="input-section"):
                     with Horizontal(classes="input-container"):
-                        yield TextArea(
+                        yield SendableTextArea(
                             id="prompt-input",
                             classes="prompt-input",
                         )
                         yield Button(
-                            "Send ↵",
+                            "Send",
                             id="btn-send",
                             classes="send-btn",
                             variant="primary",
@@ -745,7 +767,7 @@ class AIAssistantScreen(BaseScreen):
                         yield Button("🆕 New Chat", id="btn-new", classes="control-btn", variant="success")
                     
                     yield Static(
-                        "Enter = Send | Shift+Enter = New Line | Ctrl+J/L = History | F1 = Shortcuts",
+                        "Enter = New Line | Ctrl+Enter = Send | Ctrl+J/L = History | F1 = Shortcuts",
                         classes="input-hint"
                     )
             
@@ -783,10 +805,10 @@ class AIAssistantScreen(BaseScreen):
                     with Vertical(classes="shortcuts-list"):
                         with Horizontal(classes="shortcut-row"):
                             yield Static("Enter", classes="shortcut-key")
-                            yield Static("Send message", classes="shortcut-desc")
-                        with Horizontal(classes="shortcut-row"):
-                            yield Static("Shift+↵", classes="shortcut-key")
                             yield Static("New line", classes="shortcut-desc")
+                        with Horizontal(classes="shortcut-row"):
+                            yield Static("Ctrl+↵", classes="shortcut-key")
+                            yield Static("Send message", classes="shortcut-desc")
                         with Horizontal(classes="shortcut-row"):
                             yield Static("Ctrl+J", classes="shortcut-key")
                             yield Static("Previous prompt", classes="shortcut-desc")
@@ -923,27 +945,18 @@ class AIAssistantScreen(BaseScreen):
                 self._undo_stack.pop(0)
             self._redo_stack.clear()
     
-    def on_key(self, event) -> None:
-        """Handle key events - Enter sends, Shift+Enter new line."""
-        # Only handle Enter key
-        if event.key != "enter":
-            return
-        
+    def action_send_on_enter(self) -> None:
+        """Send message when Ctrl+Enter is pressed (binding action)."""
         try:
             input_widget = self.query_one("#prompt-input", TextArea)
-            if not input_widget.has_focus:
-                return
-            
-            # Shift+Enter = new line (let it pass through)
-            if event.shift:
-                return
-            
-            # Plain Enter = send message
-            event.prevent_default()
-            event.stop()
-            self._send_message()
+            if input_widget.has_focus:
+                self._send_message()
         except Exception:
             pass
+    
+    def on_sendable_text_area_send_requested(self, event: SendableTextArea.SendRequested) -> None:
+        """Handle Ctrl+Enter from the custom TextArea."""
+        self._send_message()
     
     def _send_message(self) -> None:
         """Send the current message."""
@@ -1458,7 +1471,7 @@ Could you provide more details about what you'd like to accomplish?"""
     def action_show_shortcuts(self) -> None:
         """Show keyboard shortcuts help."""
         self.notify(
-            "Enter=Send | Shift+Enter=New Line | Ctrl+J/L=History | Ctrl+N=New | Ctrl+S=Export | Ctrl+O=Import",
+            "Enter=New Line | Ctrl+Enter=Send | Ctrl+J/L=History | Ctrl+N=New | Ctrl+S=Export | Ctrl+O=Import",
             severity="information",
             timeout=5
         )

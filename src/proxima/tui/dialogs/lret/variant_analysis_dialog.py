@@ -62,8 +62,8 @@ VariantAnalysisDialog {
 }
 
 VariantAnalysisDialog > Container {
-    width: 95;
-    height: 42;
+    width: 100%;
+    height: 100%;
     border: thick $primary;
     background: $surface;
     padding: 1 2;
@@ -96,6 +96,19 @@ VariantAnalysisDialog .variant-name {
 
 VariantAnalysisDialog .variant-description {
     color: $text-muted;
+}
+
+VariantAnalysisDialog TabbedContent {
+    height: 1fr;
+}
+
+VariantAnalysisDialog TabPane {
+    height: 1fr;
+    overflow-y: auto;
+}
+
+VariantAnalysisDialog ScrollableContainer {
+    height: 1fr;
 }
 
 VariantAnalysisDialog .status-functional {
