@@ -283,12 +283,19 @@ class AddCustomBackendDialog(ModalScreen):
         background: $primary-darken-2;
         padding: 0 1;
         align: left middle;
+        layout: horizontal;
     }
     
     AddCustomBackendDialog .ai-title {
         text-style: bold;
         color: $accent;
         width: 1fr;
+    }
+    
+    AddCustomBackendDialog .stats-toggle-btn {
+        width: auto;
+        min-width: 4;
+        height: 3;
     }
     
     AddCustomBackendDialog .ai-controls-row {
@@ -309,8 +316,12 @@ class AddCustomBackendDialog(ModalScreen):
     AddCustomBackendDialog .ai-chat-area {
         height: 1fr;
         padding: 1;
-        background: $surface-darken-2;
+        /* Eye-pleasing gray background instead of black */
+        background: #2d3748;
         border: solid $primary-darken-3;
+        /* Word wrap enabled, no horizontal scroll */
+        overflow-x: hidden;
+        overflow-y: auto;
     }
     
     AddCustomBackendDialog .ai-stats-section {
@@ -319,6 +330,10 @@ class AddCustomBackendDialog(ModalScreen):
         margin-bottom: 1;
         border: solid $primary-darken-3;
         background: $surface-darken-1;
+    }
+    
+    AddCustomBackendDialog .ai-stats-section.hidden {
+        display: none;
     }
     
     AddCustomBackendDialog .stats-title {
@@ -765,8 +780,9 @@ class AddCustomBackendDialog(ModalScreen):
                 with Vertical(classes="ai-panel"):
                     with Horizontal(classes="ai-header"):
                         yield Static("🤖 AI Assistant", classes="ai-title")
+                        yield Button("👁", id="btn-toggle-ai-stats", variant="default", classes="stats-toggle-btn")
                     
-                    # Statistics Section
+                    # Statistics Section - toggleable (continuous show/hide)
                     with Container(classes="ai-stats-section", id="ai-stats-section"):
                         yield Static("📊 Statistics", classes="stats-title")
                         with Horizontal(classes="stats-row"):
@@ -776,13 +792,15 @@ class AddCustomBackendDialog(ModalScreen):
                             yield Static("Provider:", classes="stats-label")
                             yield Static("—", classes="stats-value", id="stat-provider")
                         with Horizontal(classes="stats-row"):
-                            yield Static("Prompt Tokens:", classes="stats-label")
+                            yield Static("Prompt", classes="stats-label")
+                            yield Static("Tokens:", classes="stats-label")
                             yield Static("0", classes="stats-value", id="stat-prompt-tokens")
                         with Horizontal(classes="stats-row"):
                             yield Static("Completion:", classes="stats-label")
                             yield Static("0", classes="stats-value", id="stat-completion-tokens")
                         with Horizontal(classes="stats-row"):
-                            yield Static("Total Tokens:", classes="stats-label")
+                            yield Static("Total", classes="stats-label")
+                            yield Static("Tokens:", classes="stats-label")
                             yield Static("0", classes="stats-value", id="stat-total-tokens")
                         with Horizontal(classes="stats-row"):
                             yield Static("Requests:", classes="stats-label")
@@ -793,6 +811,7 @@ class AddCustomBackendDialog(ModalScreen):
                     
                     yield RichLog(
                         auto_scroll=True,
+                        wrap=True,  # Enable word wrap
                         classes="ai-chat-area",
                         id="ai-chat-log"
                     )
@@ -930,6 +949,23 @@ class AddCustomBackendDialog(ModalScreen):
             self._export_chat()
         elif button_id == "btn-import-chat":
             self._import_chat()
+        elif button_id == "btn-toggle-ai-stats":
+            self._toggle_ai_stats()
+    
+    def _toggle_ai_stats(self) -> None:
+        """Toggle AI stats visibility (continuous show/hide, not momentary)."""
+        try:
+            stats_section = self.query_one("#ai-stats-section")
+            toggle_btn = self.query_one("#btn-toggle-ai-stats", Button)
+            
+            if stats_section.has_class("hidden"):
+                stats_section.remove_class("hidden")
+                toggle_btn.label = "👁"
+            else:
+                stats_section.add_class("hidden")
+                toggle_btn.label = "👁‍🗨"
+        except Exception:
+            pass
 
     def _new_chat(self) -> None:
         """Start a new chat, clearing the current conversation."""

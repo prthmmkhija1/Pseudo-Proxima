@@ -505,3 +505,50 @@ Label {
 .superposition {
     color: #00FFFF;
 }
+
+/* ============================================ */
+/* SLIDER STYLES - TRANSPARENT UNTIL HOVER     */
+/* ============================================ */
+
+Slider {
+    background: transparent;
+    border: none;
+    opacity: 0;
+}
+
+Slider:hover {
+    opacity: 1;
+    background: #242424;
+}
+
+Slider:focus {
+    opacity: 1;
+    background: #242424;
+}
+
+Slider > .slider--slider {
+    color: transparent;
+    background: transparent;
+}
+
+Slider:hover > .slider--slider {
+    color: #FF00FF;
+    background: #333333;
+}
+
+Slider:focus > .slider--slider {
+    color: #FF00FF;
+    background: #333333;
+}
+
+Slider > .slider--track {
+    background: transparent;
+}
+
+Slider:hover > .slider--track {
+    background: #333333;
+}
+
+Slider:focus > .slider--track {
+    background: #333333;
+}

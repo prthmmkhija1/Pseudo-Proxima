@@ -543,3 +543,70 @@ def random_state_vector():
 def random_density_matrix():
     """Provide a random valid density matrix."""
     return MockDataFactory.density_matrix(num_qubits=2)
+
+
+# =============================================================================
+# AGENT MODULE FIXTURES (Phase 10)
+# =============================================================================
+
+try:
+    from tests.fixtures.mock_agent import (
+        MockLLMClient as AgentMockLLMClient,
+        MockSubprocessFactory,
+        MockFileSystem as AgentMockFileSystem,
+        MockGitRepository,
+        MockTelemetry,
+        MockConsentManager as AgentMockConsentManager,
+        create_mock_llm_client,
+        create_mock_subprocess_factory,
+        create_mock_file_system as create_agent_mock_file_system,
+        create_mock_git_repo,
+        create_mock_telemetry,
+        create_mock_consent_manager as create_agent_mock_consent_manager,
+    )
+
+    @pytest.fixture
+    def agent_llm_client() -> AgentMockLLMClient:
+        """Provide a mock LLM client for agent testing."""
+        return create_mock_llm_client()
+
+    @pytest.fixture
+    def agent_subprocess_factory() -> MockSubprocessFactory:
+        """Provide a mock subprocess factory for agent testing."""
+        return create_mock_subprocess_factory()
+
+    @pytest.fixture
+    def agent_file_system() -> AgentMockFileSystem:
+        """Provide a mock file system for agent testing."""
+        return create_agent_mock_file_system()
+
+    @pytest.fixture
+    def agent_git_repo() -> MockGitRepository:
+        """Provide a mock git repository for agent testing."""
+        return create_mock_git_repo()
+
+    @pytest.fixture
+    def agent_telemetry() -> MockTelemetry:
+        """Provide a mock telemetry instance for agent testing."""
+        return create_mock_telemetry()
+
+    @pytest.fixture
+    def agent_consent_manager() -> AgentMockConsentManager:
+        """Provide a mock consent manager for agent testing."""
+        return create_agent_mock_consent_manager()
+
+    @pytest.fixture
+    def agent_components() -> dict:
+        """Provide all mock agent components."""
+        return {
+            "llm": create_mock_llm_client(),
+            "subprocess": create_mock_subprocess_factory(),
+            "fs": create_agent_mock_file_system(),
+            "git": create_mock_git_repo(),
+            "telemetry": create_mock_telemetry(),
+            "consent": create_agent_mock_consent_manager(),
+        }
+
+except ImportError:
+    # Agent fixtures not available, skip
+    pass

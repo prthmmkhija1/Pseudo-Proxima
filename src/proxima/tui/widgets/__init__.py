@@ -30,6 +30,63 @@ from .change_history import (
     ApprovalProgressWidget,
 )
 
+# Agent UI Widgets
+from .agent_widgets import (
+    ConsentDialog,
+    ConsentDisplayInfo,
+    TerminalOutputPanel,
+    ToolExecutionView,
+    MultiTerminalView,
+    AgentPlanView,
+    UndoRedoPanel,
+)
+
+# Phase 2: Agent UI/UX Enhanced Widgets
+from .agent_ui_enhanced import (
+    WrappedMessage,
+    ChatMessageBubble,
+    WordWrappedRichLog,
+    ResizablePanelContainer,
+    ResizeHandle,
+    CollapsibleStatsPanel,
+    AgentStats,
+    StatsCard,
+    AgentHeader,
+    ToolExecutionCard,
+    InputSection,
+)
+
+# Phase 1: Real-Time Execution Monitor Widgets
+from .execution_monitor import (
+    TerminalSession,
+    ProcessStatusBar,
+    OutputStreamPanel,
+    ProgressIndicator,
+    SingleTerminalView,
+    MultiTerminalGrid,
+    ExecutionMonitor,
+)
+
+# Phase 1: Real-Time Results Viewer Widgets
+from .results_viewer import (
+    ExecutionResult,
+    ResultsDatabase,
+    ResultSummaryCard,
+    ResultDetailsPanel,
+    ResultsTable,
+    RealTimeResultsViewer,
+)
+
+# Phase 3: Enhanced Execution Monitor
+from .execution_monitor_enhanced import (
+    EnhancedStatusBar,
+    SessionSelector,
+    TerminalDashboard,
+    EnhancedOutputPanel,
+    EnhancedTerminalView,
+    EnhancedExecutionMonitor,
+)
+
 # Backward compatibility imports from widgets_compat module
 # These were originally in the old widgets.py file
 from dataclasses import dataclass, field
@@ -276,6 +333,25 @@ __all__ = [
     "ChangeTimelineWidget",
     "ChangeSummaryTable",
     "ApprovalProgressWidget",
+    # Phase 2: Agent UI/UX Enhanced Widgets
+    "WrappedMessage",
+    "ChatMessageBubble",
+    "WordWrappedRichLog",
+    "ResizablePanelContainer",
+    "ResizeHandle",
+    "CollapsibleStatsPanel",
+    "AgentStats",
+    "StatsCard",
+    "AgentHeader",
+    "ToolExecutionCard",
+    "InputSection",
+    # Phase 3: Enhanced Execution Monitor
+    "EnhancedStatusBar",
+    "SessionSelector",
+    "TerminalDashboard",
+    "EnhancedOutputPanel",
+    "EnhancedTerminalView",
+    "EnhancedExecutionMonitor",
     # Backward compatibility widgets
     "StatusLevel",
     "BackendStatus",

@@ -156,6 +156,14 @@ class TUIState:
     latest_result: Optional[ResultInfo] = None
     result_history: List[ResultInfo] = field(default_factory=list)
     
+    # ==================== Experiment Execution State ====================
+    # Used by AI Assistant to track experiments and share with Execution/Results screens
+    current_experiment: Optional[Dict[str, Any]] = None  # Current running experiment
+    experiment_results: List[Dict[str, Any]] = field(default_factory=list)  # Results from AI Assistant experiments
+    pending_execution_logs: List[Dict[str, Any]] = field(default_factory=list)  # Logs pending for Execution screen
+    execution_history: List[Dict[str, Any]] = field(default_factory=list)  # History of all executions
+    active_processes: Dict[str, Dict[str, Any]] = field(default_factory=dict)  # Multi-terminal process info
+    
     # ==================== UI State ====================
     current_screen: str = "dashboard"
     sidebar_compact: bool = False

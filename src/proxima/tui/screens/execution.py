@@ -319,8 +319,8 @@ class ExecutionScreen(BaseScreen):
 
     def on_mount(self) -> None:
         """Set up progress update timer on mount and load LLM settings."""
-        # Start periodic progress updates
-        self._update_timer = self.set_interval(0.5, self._update_progress)
+        # Start periodic progress updates (this also loads pending logs)
+        self._update_timer = self.set_interval(0.3, self._update_progress)
         
         # Load saved LLM settings and update AI panel
         self._load_llm_settings()
@@ -329,8 +329,78 @@ class ExecutionScreen(BaseScreen):
         # Initialize AI thought stream with welcome message
         self._init_ai_welcome_message()
         
+        # Load any pending execution logs from AI Assistant immediately and with delays
+        self._load_pending_execution_logs()
+        self.set_timer(0.1, self._load_pending_execution_logs)
+        self.set_timer(0.2, self._load_pending_execution_logs)
+        
+        # Force refresh of info panel to show any AI experiment - multiple times to catch state updates
+        self._refresh_info_panel()
+        self.set_timer(0.15, self._refresh_info_panel)
+        self.set_timer(0.3, self._refresh_info_panel)
+        
         # Focus the AI input after a short delay for better UX
-        self.set_timer(0.1, self._focus_ai_input)
+        self.set_timer(0.4, self._focus_ai_input)
+    
+    def _refresh_info_panel(self) -> None:
+        """Refresh the info panel to show current state."""
+        try:
+            # Also get state from app directly in case of mismatch
+            state = self.state
+            if hasattr(self.app, 'state'):
+                app_state = self.app.state
+                # Sync current_experiment from app state if not set locally
+                if app_state.current_experiment and not state.current_experiment:
+                    state.current_experiment = app_state.current_experiment
+                if app_state.pending_execution_logs and not state.pending_execution_logs:
+                    state.pending_execution_logs = app_state.pending_execution_logs
+            
+            info_panel = self.query_one(ExecutionInfoPanel)
+            info_panel.state = state
+            info_panel.refresh()
+        except Exception:
+            pass
+    
+    def on_screen_resume(self) -> None:
+        """Called when switching back to this screen - reload pending logs."""
+        self._load_pending_execution_logs()
+        # Force refresh of the info panel
+        try:
+            info_panel = self.query_one(ExecutionInfoPanel)
+            info_panel.state = self.state
+            info_panel.refresh()
+        except Exception:
+            pass
+    
+    def _load_pending_execution_logs(self) -> None:
+        """Load any pending execution logs stored by AI Assistant."""
+        try:
+            if not hasattr(self.state, 'pending_execution_logs'):
+                return
+            
+            pending = self.state.pending_execution_logs
+            if not pending:
+                return
+            
+            log = self.query_one("#execution-log", ExecutionLog)
+            
+            # Write all unwritten logs
+            logs_written = 0
+            for entry in pending:
+                if not entry.get('written', False):
+                    if 'text' in entry:
+                        log.write(entry['text'])
+                    entry['written'] = True
+                    logs_written += 1
+            
+            # Clean up old written logs (keep last 100)
+            if len(pending) > 100:
+                # Remove old written logs
+                self.state.pending_execution_logs = [
+                    e for e in pending if not e.get('written', False)
+                ][-100:]
+        except Exception:
+            pass
     
     def on_unmount(self) -> None:
         """Clean up timer on unmount."""
@@ -609,49 +679,61 @@ class ExecutionScreen(BaseScreen):
         """
         import time
         
+        # Check if AI Assistant experiment is running
+        ai_experiment_running = (
+            hasattr(self.state, 'current_experiment') and 
+            self.state.current_experiment and 
+            self.state.current_experiment.get('status') == 'running'
+        )
+        
+        # Load any pending execution logs from AI Assistant
+        self._load_pending_execution_logs()
+        
         # Track elapsed time when running
         if self.state.execution_status == "RUNNING" and not self.state.is_paused:
             if self._start_time is None:
                 self._start_time = time.time()
             self.state.elapsed_ms = (time.time() - self._start_time) * 1000
             
-            # Simulate progress in demo mode (when no real backend is running)
+            # Only simulate progress in demo mode (when no real backend or AI experiment is running)
             if not self._controller or not getattr(self._controller, '_core_controller', None):
-                # Auto-advance progress for demo purposes
-                if self.state.progress_percent < 100:
-                    self.state.progress_percent = min(100.0, self.state.progress_percent + 0.5)
-                    # Update stage based on progress
-                    new_stage_index = int(self.state.progress_percent / 100 * self.state.total_stages)
-                    new_stage_index = min(new_stage_index, self.state.total_stages - 1)
-                    if new_stage_index != self.state.stage_index:
-                        self.state.stage_index = new_stage_index
-                        if self.state.all_stages and new_stage_index < len(self.state.all_stages):
-                            self.state.current_stage = self.state.all_stages[new_stage_index].name
-                    # Estimate ETA
-                    if self.state.progress_percent > 0:
-                        total_estimated = self.state.elapsed_ms / (self.state.progress_percent / 100)
-                        self.state.eta_ms = max(0, total_estimated - self.state.elapsed_ms)
-                    
-                    # Log progress updates periodically
-                    if int(self.state.progress_percent) % 10 == 0:
-                        try:
-                            log = self.query_one(ExecutionLog)
-                            log.write(f"[dim]Progress: {self.state.progress_percent:.0f}%[/dim]")
-                        except Exception:
-                            pass
-                else:
-                    # Simulation complete
-                    if self.state.is_running:
-                        self.state.is_running = False
-                        self.state.execution_status = "COMPLETED"
-                        self.state.eta_ms = 0
-                        self.notify("✓ Simulation completed!", severity="success")
-                        self._update_control_buttons("completed")
-                        try:
-                            log = self.query_one(ExecutionLog)
-                            log.write("[green]✓ Simulation completed successfully![/green]")
-                        except Exception:
-                            pass
+                # Don't auto-advance if AI Assistant is running an experiment
+                if not ai_experiment_running:
+                    # Auto-advance progress for demo purposes
+                    if self.state.progress_percent < 100:
+                        self.state.progress_percent = min(100.0, self.state.progress_percent + 0.5)
+                        # Update stage based on progress
+                        new_stage_index = int(self.state.progress_percent / 100 * self.state.total_stages)
+                        new_stage_index = min(new_stage_index, self.state.total_stages - 1)
+                        if new_stage_index != self.state.stage_index:
+                            self.state.stage_index = new_stage_index
+                            if self.state.all_stages and new_stage_index < len(self.state.all_stages):
+                                self.state.current_stage = self.state.all_stages[new_stage_index].name
+                        # Estimate ETA
+                        if self.state.progress_percent > 0:
+                            total_estimated = self.state.elapsed_ms / (self.state.progress_percent / 100)
+                            self.state.eta_ms = max(0, total_estimated - self.state.elapsed_ms)
+                        
+                        # Log progress updates periodically
+                        if int(self.state.progress_percent) % 10 == 0:
+                            try:
+                                log = self.query_one(ExecutionLog)
+                                log.write(f"[dim]Progress: {self.state.progress_percent:.0f}%[/dim]")
+                            except Exception:
+                                pass
+                    else:
+                        # Simulation complete
+                        if self.state.is_running:
+                            self.state.is_running = False
+                            self.state.execution_status = "COMPLETED"
+                            self.state.eta_ms = 0
+                            self.notify("✓ Simulation completed!", severity="success")
+                            self._update_control_buttons("completed")
+                            try:
+                                log = self.query_one(ExecutionLog)
+                                log.write("[green]✓ Simulation completed successfully![/green]")
+                            except Exception:
+                                pass
         elif self.state.execution_status == "IDLE":
             # Reset start time when idle
             self._start_time = None
@@ -780,7 +862,7 @@ class ExecutionScreen(BaseScreen):
                     )
                 
                 # Log viewer
-                yield ExecutionLog(classes="log-section")
+                yield ExecutionLog(classes="log-section", id="execution-log")
             
             # Right side: AI Thinking Panel
             with Vertical(classes="ai-thinking-panel", id="ai-thinking-panel"):
@@ -1678,33 +1760,89 @@ class ExecutionInfoPanel(Static):
         super().__init__(**kwargs)
         self._state = state
     
+    @property
+    def state(self):
+        """Get the state - prefer app state for freshness."""
+        # Always get fresh state from app if available
+        if hasattr(self, 'app') and self.app and hasattr(self.app, 'state'):
+            app_state = self.app.state
+            # If app state has experiment but local doesn't, use app state
+            if app_state and getattr(app_state, 'current_experiment', None):
+                return app_state
+        return self._state
+    
+    @state.setter
+    def state(self, value):
+        """Set the state and trigger refresh."""
+        self._state = value
+    
     def render(self) -> Text:
         """Render the execution info."""
         theme = get_theme()
         text = Text()
         
-        if self._state.current_task:
+        # Get state via property to ensure freshness
+        state = self.state
+        
+        # Check if there's an active execution
+        is_running = getattr(state, 'is_running', False)
+        execution_status = getattr(state, 'execution_status', 'IDLE')
+        
+        # Check for AI Assistant experiment first
+        current_experiment = getattr(state, 'current_experiment', None)
+        current_task = getattr(state, 'current_task', None)
+        
+        if current_experiment and current_experiment.get('name'):
+            experiment = current_experiment
+            exp_name = experiment.get('name', 'Experiment')
+            exp_status = experiment.get('status', 'running')
+            exp_command = experiment.get('command', '')
+            if len(exp_command) > 50:
+                exp_command = exp_command[:50] + '...'
+            
+            # Status icon
+            status_icon = {'running': '🔄', 'completed': '✅', 'failed': '❌', 'stopped': '⛔'}.get(exp_status, '❓')
+            
+            text.append("Task: ", style=theme.fg_muted)
+            text.append(f"{status_icon} {exp_name}", style=f"bold {theme.fg_base}")
+            text.append("\n")
+            
+            text.append("Status: ", style=theme.fg_muted)
+            status_color = {'running': theme.info, 'completed': theme.success, 'failed': theme.error, 'stopped': theme.warning}.get(exp_status, theme.fg_base)
+            text.append(exp_status.upper(), style=f"bold {status_color}")
+            text.append("\n")
+            
+            if exp_command:
+                text.append("Command: ", style=theme.fg_muted)
+                text.append(exp_command, style=theme.fg_subtle)
+                text.append("\n")
+            
+            backend = getattr(state, 'current_backend', None)
+            if backend:
+                text.append("Backend: ", style=theme.fg_muted)
+                text.append(f"{backend}", style=theme.fg_base)
+        elif current_task:
             # Task info
             text.append("Task: ", style=theme.fg_muted)
-            text.append(self._state.current_task, style=f"bold {theme.fg_base}")
+            text.append(current_task, style=f"bold {theme.fg_base}")
             text.append("\n")
             
             # Task ID
-            if self._state.current_task_id:
+            task_id = getattr(state, 'current_task_id', None)
+            if task_id:
                 text.append("ID: ", style=theme.fg_muted)
-                text.append(self._state.current_task_id, style=theme.fg_subtle)
+                text.append(task_id, style=theme.fg_subtle)
                 text.append("\n")
             
             # Backend info
+            backend = getattr(state, 'current_backend', 'N/A')
+            simulator = getattr(state, 'current_simulator', 'N/A')
             text.append("Backend: ", style=theme.fg_muted)
-            text.append(
-                f"{self._state.current_backend or 'N/A'} ({self._state.current_simulator or 'N/A'})",
-                style=theme.fg_base,
-            )
-            text.append(" â€¢ ", style=theme.border)
-            text.append(f"{self._state.qubits} qubits", style=theme.fg_base)
-            text.append(" â€¢ ", style=theme.border)
-            text.append(f"{self._state.shots} shots", style=theme.fg_base)
+            text.append(f"{backend} ({simulator})", style=theme.fg_base)
+            text.append(" • ", style=theme.border)
+            text.append(f"{state.qubits} qubits", style=theme.fg_base)
+            text.append(" • ", style=theme.border)
+            text.append(f"{state.shots} shots", style=theme.fg_base)
         else:
             text.append("No active execution", style=theme.fg_subtle)
             text.append("\n\n")
@@ -1723,23 +1861,39 @@ class ExecutionLog(RichLog):
     }
     """
     
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self._has_real_logs = False
+        self._sample_logs_shown = False
+    
     def on_mount(self) -> None:
         """Set up the log."""
         self.border_title = "Log"
         
-        # Add sample log entries
-        self._add_sample_logs()
+        # Only show sample logs if no real logs have been written
+        if not self._has_real_logs:
+            self._add_sample_logs()
+            self._sample_logs_shown = True
+    
+    def write(self, content, *args, **kwargs) -> None:
+        """Override write to clear sample logs on first real write."""
+        # Clear sample logs on first real write
+        if not self._has_real_logs and self._sample_logs_shown:
+            self.clear()
+            self._has_real_logs = True
+        elif not self._has_real_logs:
+            self._has_real_logs = True
+        
+        super().write(content, *args, **kwargs)
     
     def _add_sample_logs(self) -> None:
         """Add sample log entries for demo."""
         theme = get_theme()
         
         logs = [
-            ("14:30:22", "INFO", "Starting simulation with Cirq backend"),
-            ("14:30:23", "INFO", "Initialized StateVector simulator"),
-            ("14:30:24", "INFO", "Stage 1/5: Planning - completed"),
-            ("14:30:26", "INFO", "Stage 2/5: Backend Init - completed"),
-            ("14:30:27", "INFO", "Stage 3/5: Simulation - started"),
+            ("--:--:--", "INFO", "Waiting for execution..."),
+            ("--:--:--", "INFO", "Use AI Assistant (key 6) to run experiments"),
+            ("--:--:--", "INFO", "Or start from Dashboard (key 1)"),
         ]
         
         for timestamp, level, message in logs:
@@ -1755,4 +1909,5 @@ class ExecutionLog(RichLog):
             text.append(f"{level:<8}", style=f"bold {level_color}")
             text.append(message, style=theme.fg_base)
             
-            self.write(text)
+            # Use parent write to avoid triggering our override
+            super().write(text)

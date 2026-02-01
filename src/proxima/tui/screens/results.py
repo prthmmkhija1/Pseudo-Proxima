@@ -127,6 +127,15 @@ class ResultsScreen(BaseScreen):
         self._selected_result = None
         self._selected_results: List[Dict] = []  # For multi-select
     
+    def on_screen_resume(self) -> None:
+        """Refresh results list when screen becomes visible again."""
+        # Refresh the results list to show any new experiment results
+        try:
+            list_view = self.query_one(ResultsListView)
+            list_view._load_experiment_results_from_state()
+        except Exception:
+            pass
+    
     def compose_main(self):
         """Compose the results screen content."""
         with Horizontal(classes="main-content"):
@@ -479,7 +488,10 @@ class ResultsListView(ListView):
 
     def on_mount(self) -> None:
         """Populate the results list."""
-        # Try to load real results
+        # First, load experiment results from state (from AI Assistant)
+        self._load_experiment_results_from_state()
+        
+        # Then try to load real results from disk
         if RESULTS_AVAILABLE:
             try:
                 storage_dir = Path.home() / ".proxima" / "results"
@@ -488,17 +500,70 @@ class ResultsListView(ListView):
             except Exception:
                 pass
         
-        # Fallback to sample data
-        results = [
-            "result_001.json",
-            "result_002.json",
-            "comparison_001.json",
-            "bell_state_run.json",
-            "ghz_4qubit.json",
-        ]
+        # Fallback to sample data if nothing else loaded
+        if len(self.children) == 0:
+            results = [
+                "result_001.json",
+                "result_002.json",
+                "comparison_001.json",
+                "bell_state_run.json",
+                "ghz_4qubit.json",
+            ]
 
-        for result in results:
-            self.append(ListItem(Label(result)))
+            for result in results:
+                self.append(ListItem(Label(result)))
+    
+    def _load_experiment_results_from_state(self) -> None:
+        """Load experiment results from app state (populated by AI Assistant)."""
+        try:
+            # Access app state via screen's state property
+            state = None
+            if hasattr(self.app, 'state'):
+                state = self.app.state
+            elif hasattr(self.screen, 'state'):
+                state = self.screen.state
+            
+            if not state:
+                return
+            
+            experiment_results = getattr(state, 'experiment_results', [])
+            
+            # Get existing result IDs to prevent duplicates
+            existing_ids = set()
+            for item in self.query("ListItem"):
+                if hasattr(item, '_result_data') and item._result_data:
+                    existing_ids.add(item._result_data.get('id', ''))
+            
+            # Collect new items to add
+            new_items = []
+            for result_data in experiment_results:
+                # Skip if already in the list
+                result_id = result_data.get('id', '')
+                if result_id in existing_ids:
+                    continue
+                
+                # Format the display
+                name = result_data.get('name', 'Experiment')
+                status = result_data.get('status', 'Unknown')
+                
+                # Format status with icons
+                if status.lower() in ['success', 'completed']:
+                    status_icon = '✅'
+                elif status.lower() in ['failed', 'error']:
+                    status_icon = '❌'
+                else:
+                    status_icon = '❓'
+                
+                display_text = f"🔬 {name} ({status_icon} {status})"
+                item = ListItem(Label(display_text))
+                item._result_data = result_data
+                new_items.append(item)
+            
+            # Add new items (append, but they come from newest-first list)
+            for item in new_items:
+                self.append(item)
+        except Exception:
+            pass
 
     def _load_real_results(self, storage_dir: Path) -> None:
         """Load real results from storage."""

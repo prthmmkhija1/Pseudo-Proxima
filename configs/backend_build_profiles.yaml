@@ -1,0 +1,496 @@
+# Backend Build Profiles Configuration
+# Phase 4: Backend Building & Compilation System
+# 
+# This file defines build profiles for all supported quantum simulator backends.
+# Each profile specifies: build steps, dependencies, platform requirements, and GPU settings.
+
+version: "1.0"
+updated_at: "2026-02-01"
+
+# Global build settings
+global_settings:
+  default_timeout_seconds: 600
+  retry_on_failure: true
+  max_retries: 2
+  cleanup_on_failure: true
+  parallel_dependency_install: true
+  cache_dependencies: true
+  artifacts_dir: "build"
+  max_artifact_versions: 3
+
+# Backend build profiles
+backends:
+  # ============================================================================
+  # LRET Backends (Proxima Custom)
+  # ============================================================================
+  
+  lret_cirq_scalability:
+    name: "LRET Cirq Scalability"
+    description: "CPU-based Cirq backend with scaling optimizations for large circuits"
+    directory: "src/proxima/backends/lret_cirq_scalability"
+    enabled: true
+    platform: "all"  # all, windows, unix, macos
+    gpu_required: false
+    
+    dependencies:
+      python_version: ">=3.9"
+      packages:
+        - "cirq>=1.0.0"
+        - "numpy>=1.21.0"
+        - "scipy>=1.7.0"
+        - "cython>=0.29.0"
+      system_packages: []  # apt/brew packages
+    
+    build_steps:
+      - step_id: 1
+        command: "pip install -r requirements.txt"
+        description: "Install Python dependencies"
+        timeout: 120
+        retry: true
+        working_dir: "."
+        
+      - step_id: 2
+        command: "pip install -e ."
+        description: "Install package in development mode"
+        timeout: 60
+        retry: true
+        working_dir: "."
+        
+      - step_id: 3
+        command: "python setup.py build_ext --inplace"
+        description: "Compile Cython extensions"
+        timeout: 180
+        retry: false
+        working_dir: "."
+        optional: true  # Skip if no Cython files
+        
+      - step_id: 4
+        command: "python -m pytest tests/ -v --tb=short"
+        description: "Run test suite"
+        timeout: 300
+        retry: false
+        working_dir: "."
+        optional: false
+    
+    verification:
+      test_import: "from proxima.backends.lret_cirq_scalability import LRETCirqBackend"
+      test_command: "python -c \"from proxima.backends.lret_cirq_scalability import LRETCirqBackend; print('OK')\""
+      expected_files:
+        - "__init__.py"
+        - "backend.py"
+    
+    environment_variables:
+      PYTHONPATH: "${PROJECT_ROOT}/src"
+      LRET_LOG_LEVEL: "INFO"
+  
+  lret_pennylane_hybrid:
+    name: "LRET PennyLane Hybrid"
+    description: "Hybrid quantum-classical backend using PennyLane for variational algorithms"
+    directory: "src/proxima/backends/lret_pennylane_hybrid"
+    enabled: true
+    platform: "all"
+    gpu_required: false
+    
+    dependencies:
+      python_version: ">=3.9"
+      packages:
+        - "pennylane>=0.30.0"
+        - "pennylane-lightning>=0.30.0"
+        - "numpy>=1.21.0"
+        - "jax>=0.4.0"
+        - "jaxlib>=0.4.0"
+      system_packages: []
+    
+    build_steps:
+      - step_id: 1
+        command: "pip install -r requirements.txt"
+        description: "Install Python dependencies"
+        timeout: 180
+        retry: true
+        
+      - step_id: 2
+        command: "pip install -e ."
+        description: "Install package in development mode"
+        timeout: 60
+        retry: true
+        
+      - step_id: 3
+        command: "python -m pytest tests/ -v --tb=short"
+        description: "Run test suite"
+        timeout: 300
+        retry: false
+    
+    verification:
+      test_import: "from proxima.backends.lret_pennylane_hybrid import LRETPennyLaneBackend"
+      test_command: "python -c \"import pennylane as qml; print(qml.version())\""
+      expected_files:
+        - "__init__.py"
+        - "backend.py"
+    
+    environment_variables:
+      PYTHONPATH: "${PROJECT_ROOT}/src"
+      JAX_PLATFORM_NAME: "cpu"
+  
+  lret_phase_7_unified:
+    name: "LRET Phase 7 Unified"
+    description: "Unified multi-backend interface with automatic backend selection"
+    directory: "src/proxima/backends/lret_phase_7_unified"
+    enabled: true
+    platform: "all"
+    gpu_required: false
+    
+    dependencies:
+      python_version: ">=3.9"
+      packages:
+        - "cirq>=1.0.0"
+        - "qiskit>=0.45.0"
+        - "pennylane>=0.30.0"
+        - "numpy>=1.21.0"
+      system_packages: []
+    
+    build_steps:
+      - step_id: 1
+        command: "pip install -r requirements.txt"
+        description: "Install Python dependencies"
+        timeout: 300
+        retry: true
+        
+      - step_id: 2
+        command: "pip install -e ."
+        description: "Install package in development mode"
+        timeout: 60
+        retry: true
+        
+      - step_id: 3
+        command: "python scripts/build_unified.py"
+        description: "Build unified interface"
+        timeout: 120
+        retry: true
+        optional: true
+        
+      - step_id: 4
+        command: "python -m pytest tests/ -v --tb=short"
+        description: "Run test suite"
+        timeout: 300
+        retry: false
+    
+    verification:
+      test_import: "from proxima.backends.lret_phase_7_unified import UnifiedBackend"
+      expected_files:
+        - "__init__.py"
+        - "unified_backend.py"
+  
+  # ============================================================================
+  # External Framework Backends
+  # ============================================================================
+  
+  cirq:
+    name: "Google Cirq"
+    description: "Google's quantum computing framework for NISQ circuits"
+    directory: "src/proxima/backends/cirq"
+    enabled: true
+    platform: "all"
+    gpu_required: false
+    
+    dependencies:
+      python_version: ">=3.9"
+      packages:
+        - "cirq>=1.0.0"
+        - "cirq-core>=1.0.0"
+        - "numpy>=1.21.0"
+      system_packages: []
+    
+    build_steps:
+      - step_id: 1
+        command: "pip install cirq cirq-core"
+        description: "Install Cirq packages"
+        timeout: 120
+        retry: true
+        
+      - step_id: 2
+        command: "pip install -e ."
+        description: "Install backend wrapper"
+        timeout: 60
+        retry: true
+        
+      - step_id: 3
+        command: "python -c \"import cirq; print(f'Cirq version: {cirq.__version__}')\""
+        description: "Verify Cirq installation"
+        timeout: 30
+        retry: false
+    
+    verification:
+      test_import: "import cirq"
+      test_command: "python -c \"import cirq; q = cirq.LineQubit(0); print(cirq.X(q))\""
+  
+  qiskit:
+    name: "IBM Qiskit"
+    description: "IBM's open-source quantum computing SDK"
+    directory: "src/proxima/backends/qiskit"
+    enabled: true
+    platform: "all"
+    gpu_required: false
+    
+    dependencies:
+      python_version: ">=3.9"
+      packages:
+        - "qiskit>=0.45.0"
+        - "qiskit-aer>=0.13.0"
+        - "qiskit-ibm-runtime>=0.15.0"
+        - "numpy>=1.21.0"
+      system_packages: []
+    
+    build_steps:
+      - step_id: 1
+        command: "pip install qiskit qiskit-aer"
+        description: "Install Qiskit packages"
+        timeout: 180
+        retry: true
+        
+      - step_id: 2
+        command: "pip install -e ."
+        description: "Install backend wrapper"
+        timeout: 60
+        retry: true
+        
+      - step_id: 3
+        command: "python -c \"import qiskit; print(f'Qiskit version: {qiskit.__version__}')\""
+        description: "Verify Qiskit installation"
+        timeout: 30
+        retry: false
+    
+    verification:
+      test_import: "import qiskit"
+      test_command: "python -c \"from qiskit import QuantumCircuit; qc = QuantumCircuit(2); print(qc)\""
+  
+  quest:
+    name: "QuEST Simulator"
+    description: "Quantum Exact Simulation Toolkit - high-performance C simulator"
+    directory: "src/proxima/backends/quest"
+    enabled: true
+    platform: "all"
+    gpu_required: false
+    
+    dependencies:
+      python_version: ">=3.9"
+      packages:
+        - "pyquest-cffi>=3.0.0"
+        - "numpy>=1.21.0"
+      system_packages:
+        - name: "cmake"
+          apt: "cmake"
+          brew: "cmake"
+          choco: "cmake"
+        - name: "gcc"
+          apt: "gcc"
+          brew: "gcc"
+          choco: "mingw"
+    
+    build_steps:
+      - step_id: 1
+        command: "pip install pyquest-cffi"
+        description: "Install QuEST Python bindings"
+        timeout: 300
+        retry: true
+        
+      - step_id: 2
+        command: "pip install -e ."
+        description: "Install backend wrapper"
+        timeout: 60
+        retry: true
+        
+      - step_id: 3
+        command: "python -c \"from pyquest_cffi import cheat; print('QuEST OK')\""
+        description: "Verify QuEST installation"
+        timeout: 30
+        retry: false
+    
+    verification:
+      test_import: "from pyquest_cffi import cheat"
+  
+  qsim:
+    name: "Google qsim"
+    description: "Google's high-performance quantum circuit simulator"
+    directory: "src/proxima/backends/qsim"
+    enabled: true
+    platform: "all"
+    gpu_required: false
+    
+    dependencies:
+      python_version: ">=3.9"
+      packages:
+        - "qsimcirq>=0.17.0"
+        - "cirq>=1.0.0"
+        - "numpy>=1.21.0"
+      system_packages: []
+    
+    build_steps:
+      - step_id: 1
+        command: "pip install qsimcirq"
+        description: "Install qsim with Cirq integration"
+        timeout: 180
+        retry: true
+        
+      - step_id: 2
+        command: "pip install -e ."
+        description: "Install backend wrapper"
+        timeout: 60
+        retry: true
+        
+      - step_id: 3
+        command: "python -c \"import qsimcirq; print('qsim OK')\""
+        description: "Verify qsim installation"
+        timeout: 30
+        retry: false
+    
+    verification:
+      test_import: "import qsimcirq"
+  
+  # ============================================================================
+  # GPU-Accelerated Backends
+  # ============================================================================
+  
+  cuquantum:
+    name: "NVIDIA cuQuantum"
+    description: "NVIDIA's GPU-accelerated quantum simulation library"
+    directory: "src/proxima/backends/cuquantum"
+    enabled: true
+    platform: "all"
+    gpu_required: true
+    gpu_type: "nvidia"  # nvidia, amd
+    
+    dependencies:
+      python_version: ">=3.9"
+      packages:
+        - "cuquantum>=23.10.0"
+        - "cuquantum-python>=23.10.0"
+        - "custatevec>=23.10.0"
+        - "cutensornet>=23.10.0"
+        - "numpy>=1.21.0"
+      system_packages: []
+      cuda_version: ">=11.8"
+    
+    build_steps:
+      - step_id: 1
+        command: "pip install cuquantum-python"
+        description: "Install cuQuantum Python package"
+        timeout: 300
+        retry: true
+        
+      - step_id: 2
+        command: "pip install -e ."
+        description: "Install backend wrapper"
+        timeout: 60
+        retry: true
+        
+      - step_id: 3
+        command: "python -c \"import cuquantum; print(f'cuQuantum version: {cuquantum.__version__}')\""
+        description: "Verify cuQuantum installation"
+        timeout: 30
+        retry: false
+    
+    verification:
+      test_import: "import cuquantum"
+      test_command: "python -c \"from cuquantum import custatevec; print('cuStateVec OK')\""
+    
+    environment_variables:
+      CUQUANTUM_ROOT: "${CUDA_HOME}"
+      LD_LIBRARY_PATH: "${CUDA_HOME}/lib64:${LD_LIBRARY_PATH}"
+  
+  qsim_cuda:
+    name: "qsim CUDA"
+    description: "qsim with CUDA GPU acceleration"
+    directory: "src/proxima/backends/qsim_cuda"
+    enabled: true
+    platform: "all"
+    gpu_required: true
+    gpu_type: "nvidia"
+    
+    dependencies:
+      python_version: ">=3.9"
+      packages:
+        - "qsimcirq>=0.17.0"
+        - "cirq>=1.0.0"
+        - "numpy>=1.21.0"
+      system_packages: []
+      cuda_version: ">=11.0"
+    
+    build_steps:
+      - step_id: 1
+        command: "pip install qsimcirq-gpu"
+        description: "Install qsim GPU version"
+        timeout: 300
+        retry: true
+        
+      - step_id: 2
+        command: "pip install -e ."
+        description: "Install backend wrapper"
+        timeout: 60
+        retry: true
+    
+    verification:
+      test_import: "import qsimcirq"
+
+# Build profiles (predefined combinations)
+build_profiles:
+  minimal:
+    description: "Minimal installation with Cirq only"
+    backends:
+      - cirq
+  
+  standard:
+    description: "Standard installation with common backends"
+    backends:
+      - cirq
+      - qiskit
+      - lret_cirq_scalability
+  
+  full:
+    description: "Full installation with all CPU backends"
+    backends:
+      - lret_cirq_scalability
+      - lret_pennylane_hybrid
+      - lret_phase_7_unified
+      - cirq
+      - qiskit
+      - quest
+      - qsim
+  
+  gpu:
+    description: "GPU-accelerated backends (requires NVIDIA GPU)"
+    backends:
+      - cuquantum
+      - qsim_cuda
+  
+  lret_all:
+    description: "All LRET custom backends"
+    backends:
+      - lret_cirq_scalability
+      - lret_pennylane_hybrid
+      - lret_phase_7_unified
+
+# Error patterns for common build issues
+error_patterns:
+  - pattern: "ModuleNotFoundError: No module named '(.+)'"
+    message: "Missing Python package: {0}"
+    suggestion: "Try: pip install {0}"
+  
+  - pattern: "error: Microsoft Visual C\\+\\+ .+ is required"
+    message: "Visual C++ build tools required"
+    suggestion: "Install Visual Studio Build Tools from https://visualstudio.microsoft.com/visual-cpp-build-tools/"
+  
+  - pattern: "error: command 'gcc' failed"
+    message: "GCC compiler not found"
+    suggestion: "Install GCC: apt install gcc (Linux) or brew install gcc (macOS)"
+  
+  - pattern: "CUDA_HOME environment variable is not set"
+    message: "CUDA toolkit not configured"
+    suggestion: "Set CUDA_HOME to your CUDA installation path"
+  
+  - pattern: "nvcc fatal : Unsupported gpu architecture"
+    message: "GPU compute capability not supported"
+    suggestion: "Update CUDA toolkit or specify compatible compute capability"
+  
+  - pattern: "ERROR: Could not find a version that satisfies"
+    message: "Package version conflict"
+    suggestion: "Try updating pip: pip install --upgrade pip"

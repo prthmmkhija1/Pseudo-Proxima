@@ -308,6 +308,12 @@ class MultiBackendRunDialog(ModalScreen):
         color: $accent;
     }
     
+    MultiBackendRunDialog .stats-toggle-btn {
+        width: auto;
+        min-width: 4;
+        height: 3;
+    }
+    
     MultiBackendRunDialog .ai-controls-row {
         height: 3;
         layout: horizontal;
@@ -325,9 +331,13 @@ class MultiBackendRunDialog(ModalScreen):
     
     MultiBackendRunDialog .ai-chat-log {
         height: 1fr;
-        background: $surface-darken-2;
+        /* Eye-pleasing gray background instead of black */
+        background: #2d3748;
         padding: 1;
         margin-bottom: 1;
+        /* Word wrap enabled, no horizontal scroll */
+        overflow-x: hidden;
+        overflow-y: auto;
     }
     
     MultiBackendRunDialog .ai-input-row {
@@ -346,6 +356,10 @@ class MultiBackendRunDialog(ModalScreen):
         background: $surface-darken-1;
         margin-bottom: 1;
         border: solid $primary-darken-3;
+    }
+    
+    MultiBackendRunDialog .ai-stats.hidden {
+        display: none;
     }
     
     MultiBackendRunDialog .footer {
@@ -526,6 +540,7 @@ class MultiBackendRunDialog(ModalScreen):
                 with Vertical(classes="ai-panel"):
                     with Horizontal(classes="ai-header"):
                         yield Static("🤖 AI Analysis", classes="ai-title")
+                        yield Button("👁", id="btn-toggle-ai-stats", variant="default", classes="stats-toggle-btn")
                     
                     with Container(classes="ai-stats", id="ai-stats"):
                         yield Static("Model: —", id="ai-stat-model")
@@ -533,6 +548,7 @@ class MultiBackendRunDialog(ModalScreen):
                     
                     yield RichLog(
                         auto_scroll=True,
+                        wrap=True,  # Enable word wrap - no horizontal scroll needed
                         classes="ai-chat-log",
                         id="ai-chat-log",
                     )
@@ -713,6 +729,23 @@ class MultiBackendRunDialog(ModalScreen):
             self._export_chat()
         elif btn_id == "btn-import-chat":
             self._import_chat()
+        elif btn_id == "btn-toggle-ai-stats":
+            self._toggle_ai_stats()
+    
+    def _toggle_ai_stats(self) -> None:
+        """Toggle AI stats visibility (continuous show/hide, not momentary)."""
+        try:
+            stats_container = self.query_one("#ai-stats")
+            toggle_btn = self.query_one("#btn-toggle-ai-stats", Button)
+            
+            if stats_container.has_class("hidden"):
+                stats_container.remove_class("hidden")
+                toggle_btn.label = "👁"
+            else:
+                stats_container.add_class("hidden")
+                toggle_btn.label = "👁‍🗨"
+        except Exception:
+            pass
 
     def _new_chat(self) -> None:
         """Start a new chat, clearing the current conversation."""

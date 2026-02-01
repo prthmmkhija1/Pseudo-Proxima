@@ -12,6 +12,7 @@ from .settings import SettingsScreen
 from .help import HelpScreen
 from .benchmark_comparison import BenchmarkComparisonScreen
 from .ai_assistant import AIAssistantScreen
+from .agent_ai_assistant import AgentAIAssistantScreen
 
 __all__ = [
     "BaseScreen",
@@ -23,4 +24,5 @@ __all__ = [
     "HelpScreen",
     "BenchmarkComparisonScreen",
     "AIAssistantScreen",
+    "AgentAIAssistantScreen",
 ]
