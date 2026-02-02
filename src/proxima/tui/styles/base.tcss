@@ -552,3 +552,203 @@ Slider:hover > .slider--track {
 Slider:focus > .slider--track {
     background: #333333;
 }
+/* ============================================ */
+/* SCROLLBAR STYLES - TRANSPARENT UNTIL HOVER  */
+/* ============================================ */
+
+/* Vertical scrollbar styling - transparent by default */
+.vscroll {
+    scrollbar-background: transparent;
+    scrollbar-color: transparent;
+    scrollbar-color-hover: #FF00FF40;
+    scrollbar-color-active: #FF00FF;
+}
+
+/* Scrollbar auto-hide class - reserve space but keep invisible */
+.scrollbar-auto-hide {
+    scrollbar-gutter: stable;
+    scrollbar-background: transparent;
+    scrollbar-color: transparent;
+}
+
+.scrollbar-auto-hide:hover {
+    scrollbar-color: #FF00FF60;
+}
+
+/* Generic scrollable containers - transparent scrollbars */
+ScrollableContainer {
+    scrollbar-background: transparent;
+    scrollbar-color: transparent;
+}
+
+ScrollableContainer:hover {
+    scrollbar-color: $primary 40%;
+}
+
+RichLog {
+    scrollbar-background: transparent;
+    scrollbar-color: transparent;
+}
+
+RichLog:hover {
+    scrollbar-color: $primary 40%;
+}
+
+TextArea {
+    scrollbar-background: transparent;
+    scrollbar-color: transparent;
+}
+
+TextArea:hover {
+    scrollbar-color: $primary 40%;
+}
+
+ListView {
+    scrollbar-background: transparent;
+    scrollbar-color: transparent;
+}
+
+ListView:hover {
+    scrollbar-color: $primary 40%;
+}
+
+/* ============================================ */
+/* COLLAPSIBLE SIDEBAR & RESIZABLE PANELS      */
+/* ============================================ */
+
+.collapsible-sidebar {
+    width: auto;
+    min-width: 0;
+    transition: width 200ms;
+}
+
+.collapsible-sidebar.collapsed {
+    width: 0;
+    min-width: 0;
+    display: none;
+}
+
+.resizable-panel {
+    width: 100%;
+    height: 100%;
+}
+
+.resize-handle {
+    width: 4;
+    height: 100%;
+    background: transparent;
+}
+
+.resize-handle:hover {
+    background: #FF00FF40;
+}
+
+.resize-handle:focus {
+    background: #FF00FF;
+}
+
+/* Horizontal resize handle (for vertical resizing) */
+.resize-handle-h {
+    width: 100%;
+    height: 4;
+    background: transparent;
+}
+
+.resize-handle-h:hover {
+    background: #FF00FF40;
+}
+
+.resize-handle-h:focus {
+    background: #FF00FF;
+}
+
+/* Full screen mode for panels */
+.full-screen-panel {
+    width: 100%;
+    height: 100%;
+    dock: top;
+}
+
+/* Collapse/expand button */
+.collapse-btn {
+    width: 3;
+    height: 3;
+    min-width: 3;
+    background: #242424;
+    border: solid #333333;
+    padding: 0;
+    margin: 0;
+}
+
+.collapse-btn:hover {
+    background: #FF00FF40;
+    border: solid #FF00FF;
+}
+
+/* ============================================ */
+/* AI THINKING PANEL SPECIFIC STYLES           */
+/* ============================================ */
+
+.ai-thinking-fullscreen {
+    width: 100%;
+    height: 100%;
+}
+
+.ai-thinking-sidebar {
+    width: 30;
+    min-width: 30;
+    transition: width 200ms;
+}
+
+.ai-thinking-sidebar.collapsed {
+    width: 0;
+    min-width: 0;
+    overflow: hidden;
+    display: none;
+}
+
+.ai-thinking-main {
+    width: 1fr;
+    height: 100%;
+}
+
+.ai-thinking-main.expanded {
+    width: 100%;
+}
+
+/* Stats real-time indicator */
+.stat-realtime {
+    color: #00FF00;
+    text-style: bold;
+}
+
+/* ============================================ */
+/* AI ASSISTANT PANEL STYLES                   */
+/* ============================================ */
+
+.ai-assistant-container {
+    width: 100%;
+    height: 100%;
+}
+
+.ai-assistant-main {
+    width: 1fr;
+    height: 100%;
+}
+
+.ai-assistant-main.expanded {
+    width: 100%;
+}
+
+.ai-assistant-sidebar {
+    width: 28;
+    min-width: 28;
+    transition: width 200ms;
+}
+
+.ai-assistant-sidebar.collapsed {
+    width: 0;
+    min-width: 0;
+    overflow: hidden;
+    display: none;
+}

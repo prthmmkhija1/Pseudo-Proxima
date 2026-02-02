@@ -12,15 +12,21 @@ Features:
 - Model/provider info
 - Copy to clipboard
 - Export conversation
+- Fullscreen mode with collapsible sidebar
+- Dynamic resizing
+- Real-time statistics
 """
 
 from typing import Optional, List, Dict, Any
 from datetime import datetime
+import time
+import asyncio
 
 from textual.screen import ModalScreen
 from textual.containers import Vertical, Horizontal, ScrollableContainer
 from textual.widgets import Static, Button, RichLog, Input, Switch, Label
 from textual.binding import Binding
+from textual.reactive import reactive
 from textual import on
 from rich.text import Text
 from rich.panel import Panel
@@ -54,14 +60,17 @@ class AIThinkingDialog(ModalScreen):
     - Space: Pause/resume streaming
     """
     
+    # Reactive property for sidebar collapsed state
+    sidebar_collapsed = reactive(False)
+    
     DEFAULT_CSS = """
     AIThinkingDialog {
         align: center middle;
     }
     
     AIThinkingDialog > .dialog-container {
-        width: 90%;
-        height: 85%;
+        width: 100%;
+        height: 100%;
         border: thick $primary;
         background: $surface;
     }
@@ -101,13 +110,44 @@ class AIThinkingDialog(ModalScreen):
     }
     
     AIThinkingDialog .thinking-area {
-        width: 70%;
+        width: 1fr;
+        height: 100%;
         border-right: solid $primary-darken-3;
     }
     
+    AIThinkingDialog .thinking-area.expanded {
+        width: 100%;
+        border-right: none;
+    }
+    
     AIThinkingDialog .sidebar {
-        width: 30%;
+        width: 32;
+        min-width: 32;
         padding: 1;
+        transition: width 200ms;
+    }
+    
+    AIThinkingDialog .sidebar.collapsed {
+        width: 0;
+        min-width: 0;
+        padding: 0;
+        overflow: hidden;
+        display: none;
+    }
+    
+    AIThinkingDialog .collapse-toggle-btn {
+        width: 3;
+        min-width: 3;
+        height: 100%;
+        padding: 0;
+        margin: 0;
+        background: $surface-darken-1;
+        border: none;
+        border-left: solid $primary-darken-3;
+    }
+    
+    AIThinkingDialog .collapse-toggle-btn:hover {
+        background: $primary-darken-2;
     }
     
     AIThinkingDialog .section-title {
@@ -119,7 +159,7 @@ class AIThinkingDialog(ModalScreen):
     }
     
     AIThinkingDialog .current-thought {
-        height: 50%;
+        height: 60%;
         border-bottom: dashed $primary-darken-3;
     }
     
@@ -127,15 +167,27 @@ class AIThinkingDialog(ModalScreen):
         height: 1fr;
         padding: 1;
         background: $surface-darken-2;
+        scrollbar-background: transparent;
+        scrollbar-color: transparent;
+    }
+    
+    AIThinkingDialog .thought-stream:hover {
+        scrollbar-color: $primary 40%;
     }
     
     AIThinkingDialog .history-section {
-        height: 50%;
+        height: 40%;
     }
     
     AIThinkingDialog .history-log {
         height: 1fr;
         padding: 1;
+        scrollbar-background: transparent;
+        scrollbar-color: transparent;
+    }
+    
+    AIThinkingDialog .history-log:hover {
+        scrollbar-color: $primary 40%;
     }
     
     AIThinkingDialog .stats-section {
@@ -160,6 +212,15 @@ class AIThinkingDialog(ModalScreen):
         width: 50%;
         color: $accent;
         text-align: right;
+    }
+    
+    AIThinkingDialog .stat-realtime {
+        color: $success;
+    }
+    
+    AIThinkingDialog .realtime-indicator {
+        color: $success;
+        text-style: bold;
     }
     
     AIThinkingDialog .controls-section {
@@ -197,6 +258,17 @@ class AIThinkingDialog(ModalScreen):
     AIThinkingDialog .action-btn {
         margin-left: 1;
     }
+    
+    /* Resize handle between main area and sidebar */
+    AIThinkingDialog .resize-handle {
+        width: 3;
+        height: 100%;
+        background: transparent;
+    }
+    
+    AIThinkingDialog .resize-handle:hover {
+        background: $primary 30%;
+    }
     """
     
     BINDINGS = [
@@ -205,6 +277,7 @@ class AIThinkingDialog(ModalScreen):
         Binding("ctrl+l", "clear", "Clear"),
         Binding("ctrl+e", "export", "Export"),
         Binding("space", "toggle_pause", "Pause/Resume"),
+        Binding("ctrl+b", "toggle_sidebar", "Toggle Sidebar"),
     ]
     
     def __init__(self, state=None, **kwargs):
@@ -218,6 +291,8 @@ class AIThinkingDialog(ModalScreen):
         self.stats = ThinkingStats()
         self.is_paused = False
         self._thinking_entries: List[Dict[str, Any]] = []
+        self._stats_update_timer = None
+        self._last_stats_update = time.time()
         
         # Initialize stats from state if available
         if state:
@@ -228,18 +303,19 @@ class AIThinkingDialog(ModalScreen):
             self.stats.total_tokens = state.prompt_tokens + state.completion_tokens
     
     def compose(self):
-        """Compose the dialog layout."""
+        """Compose the dialog layout with fullscreen support and collapsible sidebar."""
         with Vertical(classes="dialog-container"):
             # Header
             with Horizontal(classes="dialog-header"):
                 yield Static(f"{ICON_THINKING} AI Thinking Panel", classes="dialog-title")
+                yield Static("● LIVE", classes="realtime-indicator", id="realtime-indicator")
                 yield Static(self._get_model_badge(), classes="model-badge", id="model-badge")
-                yield Button("✕ Close", variant="error", classes="close-btn", id="close-btn", tooltip="Close panel")
+                yield Button("✕", variant="error", classes="close-btn", id="close-btn", tooltip="Close panel")
             
             # Main content
             with Horizontal(classes="main-content"):
-                # Left: Thinking area
-                with Vertical(classes="thinking-area"):
+                # Left: Thinking area (expands when sidebar collapsed)
+                with Vertical(classes="thinking-area", id="thinking-area"):
                     # Current thought section
                     with Vertical(classes="current-thought"):
                         yield Static("🧠 Current Thought", classes="section-title")
@@ -258,11 +334,14 @@ class AIThinkingDialog(ModalScreen):
                             id="history-log",
                         )
                 
-                # Right: Sidebar with stats and controls
-                with Vertical(classes="sidebar"):
-                    # Stats section
+                # Collapse/Expand toggle button (always visible)
+                yield Button("◀", id="collapse-sidebar-btn", classes="collapse-toggle-btn", tooltip="Collapse/Expand sidebar (Ctrl+B)")
+                
+                # Right: Sidebar with stats and controls (collapsible)
+                with Vertical(classes="sidebar", id="sidebar"):
+                    # Stats section with real-time indicator
                     yield Static("📊 Statistics", classes="section-title")
-                    with Vertical(classes="stats-section"):
+                    with Vertical(classes="stats-section", id="stats-section"):
                         yield self._create_stat_row("Model:", self.stats.model, "stat-model")
                         yield self._create_stat_row("Provider:", self.stats.provider or "Local", "stat-provider")
                         yield self._create_stat_row("Prompt Tokens:", str(self.stats.prompt_tokens), "stat-prompt")
@@ -270,12 +349,10 @@ class AIThinkingDialog(ModalScreen):
                         yield self._create_stat_row("Total Tokens:", str(self.stats.total_tokens), "stat-total")
                         yield self._create_stat_row("Requests:", str(self.stats.requests), "stat-requests")
                         yield self._create_stat_row("Thinking Time:", f"{self.stats.thinking_time_ms:.0f}ms", "stat-time")
-                        if self.stats.estimated_cost > 0:
-                            yield self._create_stat_row("Est. Cost:", f"${self.stats.estimated_cost:.4f}", "stat-cost")
                     
                     # Controls section
                     yield Static("⚙️ Controls", classes="section-title")
-                    with Vertical(classes="controls-section"):
+                    with Vertical(classes="controls-section", id="controls-section"):
                         with Horizontal(classes="control-row"):
                             yield Label("Auto-scroll")
                             yield Switch(value=True, id="auto-scroll-switch")
@@ -293,13 +370,40 @@ class AIThinkingDialog(ModalScreen):
             # Footer
             with Horizontal(classes="dialog-footer"):
                 yield Static(
-                    "Press Esc to close │ Ctrl+C to copy │ Space to pause",
+                    "Esc close │ Ctrl+B toggle sidebar │ Space pause",
                     classes="footer-hint",
                 )
                 with Horizontal(classes="action-buttons"):
                     yield Button("📋 Copy", id="copy-btn", classes="action-btn")
                     yield Button("💾 Export", id="export-btn", classes="action-btn")
                     yield Button("Close", id="close-dialog-btn", classes="action-btn", variant="primary")
+    
+    def watch_sidebar_collapsed(self, collapsed: bool) -> None:
+        """React to sidebar collapsed state changes."""
+        try:
+            sidebar = self.query_one("#sidebar")
+            thinking_area = self.query_one("#thinking-area")
+            collapse_btn = self.query_one("#collapse-sidebar-btn", Button)
+            
+            if collapsed:
+                sidebar.add_class("collapsed")
+                thinking_area.add_class("expanded")
+                collapse_btn.label = "▶"
+            else:
+                sidebar.remove_class("collapsed")
+                thinking_area.remove_class("expanded")
+                collapse_btn.label = "◀"
+        except Exception:
+            pass
+    
+    def action_toggle_sidebar(self) -> None:
+        """Toggle sidebar visibility."""
+        self.sidebar_collapsed = not self.sidebar_collapsed
+    
+    @on(Button.Pressed, "#collapse-sidebar-btn")
+    def on_collapse_sidebar_pressed(self, event: Button.Pressed) -> None:
+        """Handle collapse sidebar button press."""
+        self.sidebar_collapsed = not self.sidebar_collapsed
     
     def _get_model_badge(self) -> str:
         """Get the model badge text."""
@@ -333,6 +437,75 @@ class AIThinkingDialog(ModalScreen):
         if self.state and hasattr(self.state, 'thinking_history'):
             for entry in self.state.thinking_history:
                 self._add_history_entry(entry)
+        
+        # Start real-time stats update timer
+        self._start_realtime_stats_update()
+    
+    def on_unmount(self):
+        """Clean up when dialog is unmounted."""
+        if self._stats_update_timer:
+            self._stats_update_timer.stop()
+            self._stats_update_timer = None
+    
+    def _start_realtime_stats_update(self):
+        """Start the real-time stats update timer."""
+        self._stats_update_timer = self.set_interval(0.5, self._update_realtime_stats)
+    
+    def _update_realtime_stats(self):
+        """Update stats from state in real-time."""
+        if not self.state:
+            return
+        
+        try:
+            # Get fresh stats from state
+            prompt_tokens = getattr(self.state, 'prompt_tokens', 0)
+            completion_tokens = getattr(self.state, 'completion_tokens', 0)
+            total_tokens = prompt_tokens + completion_tokens
+            model = getattr(self.state, 'llm_model', None) or "Not configured"
+            provider = getattr(self.state, 'llm_provider', None) or "Local"
+            
+            # Update if changed
+            if (prompt_tokens != self.stats.prompt_tokens or 
+                completion_tokens != self.stats.completion_tokens or
+                model != self.stats.model or
+                provider != self.stats.provider):
+                
+                self.stats.prompt_tokens = prompt_tokens
+                self.stats.completion_tokens = completion_tokens
+                self.stats.total_tokens = total_tokens
+                self.stats.model = model
+                self.stats.provider = provider
+                
+                # Update UI
+                self._refresh_stats_display()
+                
+                # Flash the realtime indicator
+                self._flash_realtime_indicator()
+        except Exception:
+            pass
+    
+    def _flash_realtime_indicator(self):
+        """Flash the realtime indicator to show updates."""
+        try:
+            indicator = self.query_one("#realtime-indicator", Static)
+            indicator.update("● LIVE")
+            indicator.add_class("stat-realtime")
+        except Exception:
+            pass
+    
+    def _refresh_stats_display(self):
+        """Refresh all stats in the display."""
+        try:
+            self.query_one("#stat-model", Static).update(self.stats.model)
+            self.query_one("#stat-provider", Static).update(self.stats.provider)
+            self.query_one("#stat-prompt", Static).update(str(self.stats.prompt_tokens))
+            self.query_one("#stat-completion", Static).update(str(self.stats.completion_tokens))
+            self.query_one("#stat-total", Static).update(str(self.stats.total_tokens))
+            self.query_one("#stat-requests", Static).update(str(self.stats.requests))
+            self.query_one("#stat-time", Static).update(f"{self.stats.thinking_time_ms:.0f}ms")
+            self.query_one("#model-badge", Static).update(self._get_model_badge())
+        except Exception:
+            pass
     
     def _add_history_entry(self, entry: Dict[str, Any]):
         """Add an entry to the history log."""

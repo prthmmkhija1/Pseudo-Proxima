@@ -442,13 +442,11 @@ class ResizablePanelContainer(Container):
     ResizablePanelContainer.horizontal .resize-handle {
         width: 1;
         height: 100%;
-        cursor: col-resize;
     }
     
     ResizablePanelContainer.vertical .resize-handle {
         width: 100%;
         height: 1;
-        cursor: row-resize;
     }
     
     ResizablePanelContainer .resize-handle.dragging {

@@ -9,11 +9,12 @@ Provides:
 - State persistence and recovery
 - Metrics tracking per state
 
-The state machine follows this flow:
+The state machine follows this flow::
+
     PENDING -> STARTING -> RUNNING -> COMPLETED
-                                  \-> FAILED
-                                  \-> TIMEOUT
-                                  \-> CANCELLED
+                                   |-> FAILED
+                                   |-> TIMEOUT
+                                   |-> CANCELLED
 """
 
 from __future__ import annotations

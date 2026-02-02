@@ -404,6 +404,12 @@ class AIAssistantScreen(BaseScreen):
         padding: 1;
         overflow-y: auto;
         overflow-x: hidden;
+        scrollbar-background: transparent;
+        scrollbar-color: transparent;
+    }
+    
+    AIAssistantScreen .chat-log-container:hover {
+        scrollbar-color: $primary 40%;
     }
     
     AIAssistantScreen .chat-log {
@@ -415,6 +421,41 @@ class AIAssistantScreen(BaseScreen):
         /* Word wrap enabled, no horizontal scroll */
         overflow-x: hidden;
         overflow-y: auto;
+        scrollbar-background: transparent;
+        scrollbar-color: transparent;
+    }
+    
+    AIAssistantScreen .chat-log:hover {
+        scrollbar-color: $primary 40%;
+    }
+    
+    /* Sidebar panel styles with collapse support */
+    AIAssistantScreen .sidebar-panel {
+        width: 22%;
+        height: 100%;
+        background: $surface-darken-1;
+        transition: width 200ms;
+        scrollbar-background: transparent;
+        scrollbar-color: transparent;
+    }
+    
+    AIAssistantScreen .sidebar-panel:hover {
+        scrollbar-color: $primary 40%;
+    }
+    
+    AIAssistantScreen .sidebar-panel.collapsed {
+        width: 6;
+        min-width: 6;
+        padding: 0;
+    }
+    
+    AIAssistantScreen .chat-area.expanded {
+        width: 1fr;
+        border-right: none;
+    }
+    
+    AIAssistantScreen .sidebar-panel.hidden {
+        display: none;
     }
     
     AIAssistantScreen .input-section {
@@ -1190,28 +1231,39 @@ class AIAssistantScreen(BaseScreen):
             pass
     
     def _toggle_sidebar_content(self) -> None:
-        """Toggle all sidebar content visibility with single button."""
+        """Toggle all sidebar content visibility - makes chat fullscreen when collapsed."""
         try:
-            stats_section = self.query_one("#stats-section")
-            shortcuts_section = self.query_one("#shortcuts-section")
+            sidebar = self.query_one("#sidebar-panel")
+            chat_area = self.query_one("#chat-panel")
+            resize_handle = self.query_one("#resize-handle")
             btn = self.query_one("#btn-collapse-all", Button)
             title = self.query_one("#sidebar-title", Static)
+            stats_section = self.query_one("#stats-section")
+            shortcuts_section = self.query_one("#shortcuts-section")
             
-            # Check current state
-            is_visible = stats_section.display
+            # Check current state by checking if sidebar has collapsed class
+            is_collapsed = sidebar.has_class("collapsed")
             
-            if is_visible:
-                # Hide all content
-                stats_section.display = False
-                shortcuts_section.display = False
-                btn.label = "👁‍🗨"
-                title.update("📊 [Collapsed]")
-            else:
-                # Show all content
+            if is_collapsed:
+                # Expand sidebar - show stats and shortcuts
+                sidebar.remove_class("collapsed")
+                chat_area.remove_class("expanded")
+                resize_handle.display = True
                 stats_section.display = True
                 shortcuts_section.display = True
-                btn.label = "👁"
+                btn.label = "◀"
                 title.update("📊 Stats & Shortcuts")
+            else:
+                # Collapse sidebar - make chat fullscreen
+                sidebar.add_class("collapsed")
+                chat_area.add_class("expanded")
+                resize_handle.display = False
+                stats_section.display = False
+                shortcuts_section.display = False
+                btn.label = "▶"
+                title.update("📊")
+        except Exception:
+            pass
         except Exception:
             pass
     
@@ -1347,15 +1399,24 @@ class AIAssistantScreen(BaseScreen):
             pass
     
     def _generate_response(self, message: str) -> None:
-        """Generate AI response - AGENT COMMANDS EXECUTE FIRST."""
+        """Generate AI response - Use LLM to understand intent and execute operations."""
         start_time = time.time()
         
-        # IMPORTANT: Check for agent commands FIRST and execute them
-        # This ensures actual execution instead of just providing instructions
+        # PHASE 1: Use LLM to analyze intent and extract operation parameters
+        # This allows natural language understanding for ANY sentence structure
+        operation_result = self._analyze_and_execute_with_llm(message, start_time)
+        
+        if operation_result:
+            # Operation was successfully analyzed and executed
+            return
+        
+        # PHASE 2: Fall back to keyword-based detection for simple cases
+        # This is faster for obvious commands like "git status"
         if self._is_agent_request(message):
             self._handle_agent_request(message, start_time)
-            return  # Agent handled it, don't fall through to LLM
+            return
         
+        # PHASE 3: Regular LLM response for general questions
         # Provider mapping - map TUI names to LLM router provider names
         # All major providers are now supported
         provider_map = {
@@ -1453,6 +1514,411 @@ Recent conversation context:
             # Fallback to intelligent simulation for non-agent queries
             self._simulate_response(message, start_time)
     
+    def _analyze_and_execute_with_llm(self, message: str, start_time: float) -> bool:
+        """Use the integrated LLM to analyze user intent and execute operations.
+        
+        This method sends the user's natural language request to the LLM with a special
+        system prompt that instructs it to extract structured operation data.
+        Then it executes the operation based on the LLM's analysis.
+        
+        Returns True if an operation was identified and executed, False otherwise.
+        """
+        import json
+        import re
+        
+        # Check if LLM is available
+        if not self._llm_router or not LLM_AVAILABLE:
+            return False
+        
+        # Get provider mapping
+        provider_map = {
+            'local': 'ollama', 'ollama': 'ollama',
+            'openai': 'openai', 'anthropic': 'anthropic',
+            'google': 'google', 'gemini': 'google',
+            'xai': 'xai', 'grok': 'xai',
+            'deepseek': 'deepseek', 'mistral': 'mistral',
+            'groq': 'groq', 'together': 'together',
+            'openrouter': 'openrouter', 'cohere': 'cohere',
+            'lmstudio': 'lmstudio', 'llamacpp': 'llama_cpp',
+            'perplexity': 'perplexity', 'fireworks': 'fireworks',
+            'huggingface': 'huggingface', 'replicate': 'replicate',
+            'azure_openai': 'azure_openai', 'azure': 'azure_openai',
+        }
+        
+        router_provider = provider_map.get(self._llm_provider, self._llm_provider)
+        if not router_provider or router_provider == 'none':
+            return False
+        
+        # System prompt for intent extraction
+        intent_extraction_prompt = '''You are an intent analyzer for a command execution system. Analyze the user's request and determine if they want to perform a file system, git, or terminal operation.
+
+IMPORTANT: You must respond ONLY with a JSON object, nothing else. No explanations, no markdown, just pure JSON.
+
+Supported operations:
+- FILE_CREATE: Create a file (optionally with content)
+- FILE_READ: Read/view a file
+- FILE_WRITE: Write content to existing file
+- FILE_DELETE: Delete a file
+- FILE_COPY: Copy a file
+- FILE_MOVE: Move/rename a file
+- FILE_APPEND: Append content to a file
+- DIR_CREATE: Create a directory/folder
+- DIR_DELETE: Delete a directory/folder
+- DIR_LIST: List directory contents
+- DIR_NAVIGATE: Change to a directory (cd)
+- GIT_CLONE: Clone a repository
+- GIT_STATUS: Show git status
+- GIT_PULL: Pull from remote
+- GIT_PUSH: Push to remote
+- GIT_COMMIT: Commit changes
+- GIT_ADD: Stage files
+- GIT_BRANCH: Create/switch branch
+- GIT_CHECKOUT: Checkout branch/file
+- GIT_LOG: Show git log
+- GIT_DIFF: Show git diff
+- TERMINAL_CMD: Run a terminal command
+- PWD: Show current directory
+- NONE: Not an operation request (general question/conversation)
+
+Response format (JSON only):
+{
+  "operation": "OPERATION_TYPE",
+  "params": {
+    "path": "/path/to/file/or/dir",
+    "content": "content if applicable",
+    "destination": "dest path for copy/move",
+    "command": "command for terminal",
+    "url": "url for git clone",
+    "message": "commit message for git",
+    "branch": "branch name if applicable"
+  },
+  "confidence": 0.95,
+  "explanation": "brief explanation"
+}
+
+Examples:
+User: "at C:\\Users\\test make file.txt with hello"
+{"operation": "FILE_CREATE", "params": {"path": "C:\\Users\\test\\file.txt", "content": "hello"}, "confidence": 0.95, "explanation": "Create file with content"}
+
+User: "put qwerty in new.txt at desktop"
+{"operation": "FILE_CREATE", "params": {"path": "C:\\Users\\<user>\\Desktop\\new.txt", "content": "qwerty"}, "confidence": 0.9, "explanation": "Create file with content at desktop"}
+
+User: "show me what's in the folder"
+{"operation": "DIR_LIST", "params": {"path": "."}, "confidence": 0.85, "explanation": "List current directory"}
+
+User: "what is quantum computing?"
+{"operation": "NONE", "params": {}, "confidence": 0.95, "explanation": "General knowledge question, not a file operation"}
+
+Now analyze this request:'''
+
+        try:
+            request = LLMRequest(
+                prompt=message,
+                system_prompt=intent_extraction_prompt,
+                temperature=0.1,  # Low temperature for consistent parsing
+                max_tokens=500,
+                provider=router_provider,
+                model=self._llm_model if self._llm_model else None,
+            )
+            
+            response = self._llm_router.route(request)
+            
+            if not response or not hasattr(response, 'text') or not response.text:
+                return False
+            
+            response_text = response.text.strip()
+            
+            # Extract JSON from response (handle markdown code blocks)
+            json_match = re.search(r'\{[\s\S]*\}', response_text)
+            if not json_match:
+                return False
+            
+            json_str = json_match.group(0)
+            
+            try:
+                intent_data = json.loads(json_str)
+            except json.JSONDecodeError:
+                # Try to fix common JSON issues
+                json_str = json_str.replace("'", '"')
+                try:
+                    intent_data = json.loads(json_str)
+                except:
+                    return False
+            
+            operation = intent_data.get('operation', 'NONE')
+            params = intent_data.get('params', {})
+            confidence = intent_data.get('confidence', 0)
+            explanation = intent_data.get('explanation', '')
+            
+            # Skip if not an operation or low confidence
+            if operation == 'NONE' or confidence < 0.6:
+                return False
+            
+            # Show what we're doing
+            self._show_ai_message(f"🔍 Understood: {explanation}")
+            
+            # Execute the operation based on type
+            result = self._execute_llm_operation(operation, params)
+            
+            if result:
+                self._show_ai_message(result)
+                
+                # Update stats
+                elapsed = int((time.time() - start_time) * 1000)
+                self._current_session.messages.append(
+                    ChatMessage(role='assistant', content=result, thinking_time_ms=elapsed)
+                )
+                self._update_stats_display()
+                self._save_current_session()
+                self._finish_generation()
+                return True
+            
+            return False
+            
+        except Exception as e:
+            # Don't show error, just fall through to other methods
+            return False
+    
+    def _execute_llm_operation(self, operation: str, params: dict) -> Optional[str]:
+        """Execute an operation based on LLM-extracted intent."""
+        import os
+        import shutil
+        import subprocess
+        from pathlib import Path
+        
+        try:
+            path = params.get('path', '')
+            content = params.get('content', '')
+            destination = params.get('destination', '')
+            command = params.get('command', '')
+            url = params.get('url', '')
+            message = params.get('message', '')
+            branch = params.get('branch', '')
+            
+            # Expand user paths and environment variables
+            if path:
+                path = os.path.expanduser(os.path.expandvars(path))
+            if destination:
+                destination = os.path.expanduser(os.path.expandvars(destination))
+            
+            # FILE OPERATIONS
+            if operation == 'FILE_CREATE':
+                if not path:
+                    return "❌ No file path specified"
+                
+                # Create parent directories if needed
+                parent = Path(path).parent
+                if not parent.exists():
+                    parent.mkdir(parents=True, exist_ok=True)
+                
+                with open(path, 'w', encoding='utf-8') as f:
+                    f.write(content or '')
+                
+                result = f"✅ Created file: `{path}`"
+                if content:
+                    result += f"\n📝 Content: `{content[:100]}{'...' if len(content) > 100 else ''}`"
+                return result
+            
+            elif operation == 'FILE_READ':
+                if not path:
+                    return "❌ No file path specified"
+                if not os.path.exists(path):
+                    return f"❌ File not found: `{path}`"
+                
+                with open(path, 'r', encoding='utf-8', errors='ignore') as f:
+                    file_content = f.read(5000)
+                
+                truncated = len(file_content) >= 5000
+                return f"📄 **File: {path}**\n```\n{file_content}\n```" + ("\n(truncated)" if truncated else "")
+            
+            elif operation == 'FILE_WRITE':
+                if not path:
+                    return "❌ No file path specified"
+                
+                with open(path, 'w', encoding='utf-8') as f:
+                    f.write(content or '')
+                return f"✅ Written to file: `{path}`"
+            
+            elif operation == 'FILE_DELETE':
+                if not path:
+                    return "❌ No file path specified"
+                if not os.path.exists(path):
+                    return f"❌ File not found: `{path}`"
+                
+                os.remove(path)
+                return f"✅ Deleted file: `{path}`"
+            
+            elif operation == 'FILE_COPY':
+                if not path or not destination:
+                    return "❌ Source and destination paths required"
+                if not os.path.exists(path):
+                    return f"❌ Source not found: `{path}`"
+                
+                shutil.copy2(path, destination)
+                return f"✅ Copied `{path}` to `{destination}`"
+            
+            elif operation == 'FILE_MOVE':
+                if not path or not destination:
+                    return "❌ Source and destination paths required"
+                if not os.path.exists(path):
+                    return f"❌ Source not found: `{path}`"
+                
+                shutil.move(path, destination)
+                return f"✅ Moved `{path}` to `{destination}`"
+            
+            elif operation == 'FILE_APPEND':
+                if not path:
+                    return "❌ No file path specified"
+                
+                with open(path, 'a', encoding='utf-8') as f:
+                    f.write(content or '')
+                return f"✅ Appended to file: `{path}`"
+            
+            # DIRECTORY OPERATIONS
+            elif operation == 'DIR_CREATE':
+                if not path:
+                    return "❌ No directory path specified"
+                
+                Path(path).mkdir(parents=True, exist_ok=True)
+                return f"✅ Created directory: `{path}`"
+            
+            elif operation == 'DIR_DELETE':
+                if not path:
+                    return "❌ No directory path specified"
+                if not os.path.exists(path):
+                    return f"❌ Directory not found: `{path}`"
+                
+                shutil.rmtree(path)
+                return f"✅ Deleted directory: `{path}`"
+            
+            elif operation == 'DIR_LIST':
+                list_path = path or '.'
+                if not os.path.exists(list_path):
+                    return f"❌ Directory not found: `{list_path}`"
+                
+                entries = os.listdir(list_path)
+                dirs = []
+                files = []
+                
+                for entry in entries[:50]:
+                    full_path = os.path.join(list_path, entry)
+                    if os.path.isdir(full_path):
+                        dirs.append(f"📁 {entry}/")
+                    else:
+                        files.append(f"📄 {entry}")
+                
+                result = sorted(dirs) + sorted(files)
+                output = "\n".join(result[:50])
+                if len(entries) > 50:
+                    output += f"\n... and {len(entries) - 50} more"
+                
+                return f"📂 **Contents of `{list_path}`** ({len(entries)} items):\n```\n{output}\n```"
+            
+            elif operation == 'DIR_NAVIGATE':
+                if not path:
+                    return "❌ No directory path specified"
+                if not os.path.exists(path):
+                    return f"❌ Directory not found: `{path}`"
+                if not os.path.isdir(path):
+                    return f"❌ Not a directory: `{path}`"
+                
+                os.chdir(path)
+                return f"✅ Changed directory to: `{path}`"
+            
+            elif operation == 'PWD':
+                return f"📍 Current directory: `{os.getcwd()}`"
+            
+            # GIT OPERATIONS
+            elif operation == 'GIT_CLONE':
+                if not url:
+                    return "❌ No repository URL specified"
+                
+                clone_path = path or '.'
+                result = subprocess.run(
+                    ['git', 'clone', url, clone_path] if path else ['git', 'clone', url],
+                    capture_output=True, text=True, timeout=120
+                )
+                if result.returncode == 0:
+                    return f"✅ Cloned repository: `{url}`\n```\n{result.stdout}\n```"
+                else:
+                    return f"❌ Clone failed:\n```\n{result.stderr}\n```"
+            
+            elif operation == 'GIT_STATUS':
+                result = subprocess.run(['git', 'status'], capture_output=True, text=True, timeout=30)
+                return f"📊 **Git Status:**\n```\n{result.stdout or result.stderr}\n```"
+            
+            elif operation == 'GIT_PULL':
+                result = subprocess.run(['git', 'pull'], capture_output=True, text=True, timeout=60)
+                status = "✅" if result.returncode == 0 else "❌"
+                return f"{status} **Git Pull:**\n```\n{result.stdout or result.stderr}\n```"
+            
+            elif operation == 'GIT_PUSH':
+                result = subprocess.run(['git', 'push'], capture_output=True, text=True, timeout=60)
+                status = "✅" if result.returncode == 0 else "❌"
+                return f"{status} **Git Push:**\n```\n{result.stdout or result.stderr}\n```"
+            
+            elif operation == 'GIT_COMMIT':
+                commit_msg = message or 'Update'
+                # First add all changes
+                subprocess.run(['git', 'add', '.'], capture_output=True, timeout=30)
+                result = subprocess.run(['git', 'commit', '-m', commit_msg], capture_output=True, text=True, timeout=30)
+                status = "✅" if result.returncode == 0 else "❌"
+                return f"{status} **Git Commit:**\n```\n{result.stdout or result.stderr}\n```"
+            
+            elif operation == 'GIT_ADD':
+                add_path = path or '.'
+                result = subprocess.run(['git', 'add', add_path], capture_output=True, text=True, timeout=30)
+                return f"✅ Staged: `{add_path}`"
+            
+            elif operation == 'GIT_BRANCH':
+                if branch:
+                    # Create and switch to branch
+                    result = subprocess.run(['git', 'checkout', '-b', branch], capture_output=True, text=True, timeout=30)
+                    if result.returncode != 0:
+                        result = subprocess.run(['git', 'checkout', branch], capture_output=True, text=True, timeout=30)
+                    status = "✅" if result.returncode == 0 else "❌"
+                    return f"{status} Branch `{branch}`:\n```\n{result.stdout or result.stderr}\n```"
+                else:
+                    result = subprocess.run(['git', 'branch', '-a'], capture_output=True, text=True, timeout=30)
+                    return f"📊 **Git Branches:**\n```\n{result.stdout}\n```"
+            
+            elif operation == 'GIT_CHECKOUT':
+                if not branch and not path:
+                    return "❌ No branch or file specified"
+                target = branch or path
+                result = subprocess.run(['git', 'checkout', target], capture_output=True, text=True, timeout=30)
+                status = "✅" if result.returncode == 0 else "❌"
+                return f"{status} Checkout `{target}`:\n```\n{result.stdout or result.stderr}\n```"
+            
+            elif operation == 'GIT_LOG':
+                result = subprocess.run(['git', 'log', '--oneline', '-15'], capture_output=True, text=True, timeout=30)
+                return f"📜 **Git Log:**\n```\n{result.stdout}\n```"
+            
+            elif operation == 'GIT_DIFF':
+                result = subprocess.run(['git', 'diff'], capture_output=True, text=True, timeout=30)
+                diff_output = result.stdout[:3000] if result.stdout else "No changes"
+                return f"📝 **Git Diff:**\n```diff\n{diff_output}\n```"
+            
+            # TERMINAL COMMAND
+            elif operation == 'TERMINAL_CMD':
+                if not command:
+                    return "❌ No command specified"
+                
+                result = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=120)
+                output = result.stdout or result.stderr or "Command completed"
+                status = "✅" if result.returncode == 0 else "❌"
+                return f"{status} **Executed:** `{command}`\n```\n{output[:3000]}\n```"
+            
+            else:
+                return None
+                
+        except subprocess.TimeoutExpired:
+            return "❌ Command timed out"
+        except PermissionError:
+            return f"❌ Permission denied"
+        except Exception as e:
+            return f"❌ Error: {str(e)}"
+    
     def _is_agent_request(self, message: str) -> bool:
         """Check if the message is requesting agent action."""
         msg_lower = message.lower()
@@ -1463,21 +1929,28 @@ Recent conversation context:
             'git status', 'git log', 'git diff', 'git fetch', 'git merge',
             'git stash', 'git reset', 'git rebase', 'git init', 'git add',
             'git remote', 'git tag', 'git cherry-pick',
-            # Navigation
-            'go inside', 'go to', 'navigate', 'cd ', 'change directory',
+            # Navigation - including typos and variations
+            'go inside', 'gi inside', 'go to', 'goto', 'navigate', 
+            'cd ', 'change directory', 'chdir',
             'open folder', 'enter folder', 'enter directory',
+            'go in ', 'get inside', 'get into', 'move to', 'switch to folder',
             # Build/Execute
             'build', 'compile', 'make', 'cmake',
             'run', 'execute', 'script', 'python', 'pip',
-            # File operations
-            'create file', 'write file', 'read file', 'delete file',
+            # File operations - comprehensive
+            'create file', 'create a file', 'make file', 'make a file',
+            'write file', 'write a file', 'write to', 'write into',
+            'read file', 'read a file', 'delete file', 'delete a file',
             'remove file', 'rename file', 'move file', 'copy file',
             'touch ', 'cat ', 'type ', 'view file', 'show file', 'open file',
-            'append to', 'save file', 'new file',
+            'append to', 'save file', 'new file', 'generate file',
+            'file with name', 'file named', 'file called',
+            'with content', 'containing', 'written in',
             # Directory operations
             'mkdir', 'create folder', 'create directory', 'make folder',
             'delete folder', 'remove folder', 'delete directory', 'rmdir',
             'list files', 'show files', 'ls', 'dir', 'list directory',
+            'create a folder', 'make a folder', 'create a directory',
             # Terminal/Shell
             'terminal', 'command', 'shell', 'powershell', 'bash', 'cmd',
             # Package management
@@ -1515,8 +1988,18 @@ Recent conversation context:
                 executed = True
             
             # ===== COMBINED OPERATIONS =====
+            # CD + FILE CREATE (e.g., "go inside X and create a file named Y with content Z")
+            elif any(kw in msg_lower for kw in ['go inside', 'gi inside', 'go to', 'navigate', 'cd ', 'change directory']) and \
+                 any(kw in msg_lower for kw in ['create file', 'create a file', 'make file', 'make a file', 'new file', 'write file']):
+                dir_path = self._extract_directory_path(message)
+                if dir_path:
+                    response = self._execute_cd_and_create_file(message, dir_path)
+                    executed = True
+                else:
+                    response = "Please provide a valid directory path. Example:\n`go inside C:\\path\\to\\folder and create file test.txt with hello`"
+            
             # CD + GIT OPERATION (e.g., "go inside X and then git switch branch Y")
-            elif any(kw in msg_lower for kw in ['go inside', 'go to', 'navigate', 'cd ', 'change directory']) and 'git' in msg_lower:
+            elif any(kw in msg_lower for kw in ['go inside', 'gi inside', 'go to', 'navigate', 'cd ', 'change directory']) and 'git' in msg_lower:
                 dir_path = self._extract_directory_path(message)
                 if dir_path:
                     git_cmd = self._extract_git_command(message)
@@ -1530,7 +2013,7 @@ Recent conversation context:
                     response = "Please provide a valid directory path. Example:\n`go inside C:\\path\\to\\folder and git status`"
             
             # ===== DIRECTORY NAVIGATION =====
-            elif any(kw in msg_lower for kw in ['go inside', 'go to', 'navigate to', 'cd ', 'change directory', 'open folder', 'enter folder', 'enter directory']):
+            elif any(kw in msg_lower for kw in ['go inside', 'gi inside', 'go to', 'navigate to', 'cd ', 'change directory', 'open folder', 'enter folder', 'enter directory']):
                 dir_path = self._extract_directory_path(message)
                 if dir_path:
                     response = self._execute_cd(dir_path)
@@ -2498,6 +2981,84 @@ Current working directory is now set. You can run git commands here."""
 ```"""
         except subprocess.TimeoutExpired:
             return f"❌ Command timed out: `{git_cmd}`"
+        except Exception as e:
+            return f"❌ Error: {str(e)}"
+    
+    def _execute_cd_and_create_file(self, message: str, dir_path: str) -> str:
+        """Change directory and create a file with optional content."""
+        import re
+        
+        try:
+            path = Path(dir_path)
+            
+            # Create directory if it doesn't exist
+            if not path.exists():
+                path.mkdir(parents=True, exist_ok=True)
+                dir_created = True
+            else:
+                dir_created = False
+            
+            if not path.is_dir():
+                return f"❌ Not a directory: `{dir_path}`"
+            
+            # Change to the directory
+            os.chdir(dir_path)
+            
+            # Extract file name from message
+            msg_lower = message.lower()
+            file_name = None
+            
+            # Try different patterns to extract filename
+            patterns = [
+                r'(?:file\s+)?(?:with\s+)?name[d]?\s+([^\s]+\.?\w*)',  # "with name X" or "named X"
+                r'(?:file\s+)?called\s+([^\s]+\.?\w*)',  # "called X"
+                r'create\s+(?:a\s+)?file\s+([^\s]+\.?\w*)',  # "create file X"
+                r'make\s+(?:a\s+)?file\s+([^\s]+\.?\w*)',  # "make file X"
+                r'new\s+file\s+([^\s]+\.?\w*)',  # "new file X"
+            ]
+            
+            for pattern in patterns:
+                match = re.search(pattern, message, re.IGNORECASE)
+                if match:
+                    file_name = match.group(1).strip()
+                    # Clean up - remove trailing words like "with", "containing"
+                    file_name = re.split(r'\s+(?:with|containing|written)\s*', file_name, flags=re.IGNORECASE)[0]
+                    break
+            
+            if not file_name:
+                return f"❌ Could not extract file name from message. Please specify like: `create file test.txt`"
+            
+            # Extract content if any
+            content = ""
+            content_patterns = [
+                r'(?:with|containing)\s+["\']?([^"\']+)["\']?\s+(?:written|in|inside)',  # with X written in it
+                r'(?:with|containing)\s+["\']?(.+?)["\']?\s*$',  # with X at end
+                r'written\s+(?:in\s+it\s+)?["\']?(.+?)["\']?\s*$',  # written X
+                r'content\s*[=:]\s*["\']?(.+?)["\']?\s*$',  # content = X
+            ]
+            
+            for pattern in content_patterns:
+                match = re.search(pattern, message, re.IGNORECASE)
+                if match:
+                    content = match.group(1).strip()
+                    break
+            
+            # Create the file
+            file_path = path / file_name
+            with open(file_path, 'w', encoding='utf-8') as f:
+                f.write(content)
+            
+            result_msg = f"✅ "
+            if dir_created:
+                result_msg += f"Created directory: `{dir_path}`\n"
+            result_msg += f"✅ Created file: `{file_path}`"
+            if content:
+                result_msg += f"\n📝 Content: `{content[:100]}{'...' if len(content) > 100 else ''}`"
+            
+            return result_msg
+            
+        except PermissionError:
+            return f"❌ Permission denied. Cannot write to `{dir_path}`"
         except Exception as e:
             return f"❌ Error: {str(e)}"
     

@@ -164,7 +164,7 @@ class FileContentSearch:
         ...     print(f"{result.file_path}:{result.line_number}")
         >>> 
         >>> # Search with regex
-        >>> results = search.search(r"class \w+Handler", is_regex=True)
+        >>> results = search.search(r"class \\w+Handler", is_regex=True)
     """
     
     # File types for filtering

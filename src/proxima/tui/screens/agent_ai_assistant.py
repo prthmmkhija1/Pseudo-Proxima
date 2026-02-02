@@ -1380,18 +1380,436 @@ class AgentAIAssistantScreen(BaseScreen):
             pass
     
     def _generate_response(self, message: str) -> None:
-        """Generate AI response with potential tool usage."""
+        """Generate AI response with LLM-based intent analysis and tool execution."""
         start_time = time.time()
         
-        # Check for agent-related commands
+        # PHASE 1: Use LLM to analyze intent and execute operations
+        # This allows natural language understanding for ANY sentence structure
+        if self._llm_router and LLM_AVAILABLE:
+            operation_result = self._analyze_and_execute_with_llm(message, start_time)
+            if operation_result:
+                return
+        
+        # PHASE 2: Fallback to keyword-based agent command detection
         if self._agent_enabled and self._agent:
             tool_result = self._try_execute_agent_command(message)
             if tool_result:
                 self._finish_generation()
                 return
         
-        # Fall back to LLM response
+        # PHASE 3: Fall back to LLM response for general questions
         self._generate_llm_response(message, start_time)
+    
+    def _analyze_and_execute_with_llm(self, message: str, start_time: float) -> bool:
+        """Use the integrated LLM to analyze user intent and execute operations.
+        
+        This method sends the user's natural language request to the LLM with a special
+        system prompt that instructs it to extract structured operation data.
+        Then it executes the operation based on the LLM's analysis.
+        
+        Returns True if an operation was identified and executed, False otherwise.
+        """
+        import json
+        import re
+        import os
+        import shutil
+        import subprocess
+        from pathlib import Path
+        
+        # Get provider mapping
+        provider_map = {
+            'local': 'ollama', 'ollama': 'ollama',
+            'openai': 'openai', 'anthropic': 'anthropic',
+            'google': 'google', 'gemini': 'google',
+            'xai': 'xai', 'grok': 'xai',
+            'deepseek': 'deepseek', 'mistral': 'mistral',
+            'groq': 'groq', 'together': 'together',
+            'openrouter': 'openrouter', 'cohere': 'cohere',
+            'lmstudio': 'lmstudio', 'llamacpp': 'llama_cpp',
+            'perplexity': 'perplexity', 'fireworks': 'fireworks',
+            'huggingface': 'huggingface', 'replicate': 'replicate',
+            'azure_openai': 'azure_openai', 'azure': 'azure_openai',
+        }
+        
+        router_provider = provider_map.get(self._llm_provider, self._llm_provider)
+        if not router_provider or router_provider == 'none':
+            return False
+        
+        # System prompt for intent extraction
+        intent_extraction_prompt = '''You are an intent analyzer for a command execution system. Analyze the user's request and determine if they want to perform a file system, git, or terminal operation.
+
+IMPORTANT: You must respond ONLY with a JSON object, nothing else. No explanations, no markdown, just pure JSON.
+
+Supported operations:
+- FILE_CREATE: Create a file (optionally with content)
+- FILE_READ: Read/view a file
+- FILE_WRITE: Write content to existing file
+- FILE_DELETE: Delete a file
+- FILE_COPY: Copy a file
+- FILE_MOVE: Move/rename a file
+- FILE_APPEND: Append content to a file
+- DIR_CREATE: Create a directory/folder
+- DIR_DELETE: Delete a directory/folder
+- DIR_LIST: List directory contents
+- DIR_NAVIGATE: Change to a directory (cd)
+- GIT_CLONE: Clone a repository
+- GIT_STATUS: Show git status
+- GIT_PULL: Pull from remote
+- GIT_PUSH: Push to remote
+- GIT_COMMIT: Commit changes
+- GIT_ADD: Stage files
+- GIT_BRANCH: Create/switch branch
+- GIT_CHECKOUT: Checkout branch/file
+- GIT_LOG: Show git log
+- GIT_DIFF: Show git diff
+- TERMINAL_CMD: Run a terminal command
+- PWD: Show current directory
+- NONE: Not an operation request (general question/conversation)
+
+Response format (JSON only):
+{
+  "operation": "OPERATION_TYPE",
+  "params": {
+    "path": "/path/to/file/or/dir",
+    "content": "content if applicable",
+    "destination": "dest path for copy/move",
+    "command": "command for terminal",
+    "url": "url for git clone",
+    "message": "commit message for git",
+    "branch": "branch name if applicable"
+  },
+  "confidence": 0.95,
+  "explanation": "brief explanation"
+}
+
+Examples:
+User: "at C:\\Users\\test make file.txt with hello"
+{"operation": "FILE_CREATE", "params": {"path": "C:\\Users\\test\\file.txt", "content": "hello"}, "confidence": 0.95, "explanation": "Create file with content"}
+
+User: "put qwerty in new.txt at desktop"
+{"operation": "FILE_CREATE", "params": {"path": "C:\\Users\\<user>\\Desktop\\new.txt", "content": "qwerty"}, "confidence": 0.9, "explanation": "Create file with content at desktop"}
+
+User: "show me what's in the folder"
+{"operation": "DIR_LIST", "params": {"path": "."}, "confidence": 0.85, "explanation": "List current directory"}
+
+User: "what is quantum computing?"
+{"operation": "NONE", "params": {}, "confidence": 0.95, "explanation": "General knowledge question, not a file operation"}
+
+Now analyze this request:'''
+
+        try:
+            request = LLMRequest(
+                prompt=message,
+                system_prompt=intent_extraction_prompt,
+                temperature=0.1,  # Low temperature for consistent parsing
+                max_tokens=500,
+                provider=router_provider,
+                model=self._llm_model if self._llm_model else None,
+            )
+            
+            response = self._llm_router.route(request)
+            
+            if not response or not hasattr(response, 'text') or not response.text:
+                return False
+            
+            response_text = response.text.strip()
+            
+            # Extract JSON from response (handle markdown code blocks)
+            json_match = re.search(r'\{[\s\S]*\}', response_text)
+            if not json_match:
+                return False
+            
+            json_str = json_match.group(0)
+            
+            try:
+                intent_data = json.loads(json_str)
+            except json.JSONDecodeError:
+                # Try to fix common JSON issues
+                json_str = json_str.replace("'", '"')
+                try:
+                    intent_data = json.loads(json_str)
+                except:
+                    return False
+            
+            operation = intent_data.get('operation', 'NONE')
+            params = intent_data.get('params', {})
+            confidence = intent_data.get('confidence', 0)
+            explanation = intent_data.get('explanation', '')
+            
+            # Skip if not an operation or low confidence
+            if operation == 'NONE' or confidence < 0.6:
+                return False
+            
+            # Show what we're doing
+            self._show_ai_message(f"🔍 Understood: {explanation}")
+            
+            # Execute the operation
+            result = self._execute_llm_analyzed_operation(operation, params)
+            
+            if result:
+                self._show_ai_message(result)
+                
+                # Update stats
+                elapsed = int((time.time() - start_time) * 1000)
+                self._current_session.messages.append(
+                    ChatMessage(role='assistant', content=result, thinking_time_ms=elapsed)
+                )
+                self._agent_stats.commands_run += 1
+                self._update_stats_panel()
+                self._save_current_session()
+                self._finish_generation()
+                return True
+            
+            return False
+            
+        except Exception as e:
+            # Don't show error, just fall through to other methods
+            return False
+    
+    def _execute_llm_analyzed_operation(self, operation: str, params: dict) -> Optional[str]:
+        """Execute an operation based on LLM-extracted intent."""
+        import os
+        import shutil
+        import subprocess
+        from pathlib import Path
+        
+        try:
+            path = params.get('path', '')
+            content = params.get('content', '')
+            destination = params.get('destination', '')
+            command = params.get('command', '')
+            url = params.get('url', '')
+            git_message = params.get('message', '')
+            branch = params.get('branch', '')
+            
+            # Expand user paths and environment variables
+            if path:
+                path = os.path.expanduser(os.path.expandvars(path))
+            if destination:
+                destination = os.path.expanduser(os.path.expandvars(destination))
+            
+            # FILE OPERATIONS
+            if operation == 'FILE_CREATE':
+                if not path:
+                    return "❌ No file path specified"
+                
+                # Create parent directories if needed
+                parent = Path(path).parent
+                if not parent.exists():
+                    parent.mkdir(parents=True, exist_ok=True)
+                
+                with open(path, 'w', encoding='utf-8') as f:
+                    f.write(content or '')
+                
+                result = f"✅ Created file: `{path}`"
+                if content:
+                    result += f"\n📝 Content: `{content[:100]}{'...' if len(content) > 100 else ''}`"
+                return result
+            
+            elif operation == 'FILE_READ':
+                if not path:
+                    return "❌ No file path specified"
+                if not os.path.exists(path):
+                    return f"❌ File not found: `{path}`"
+                
+                with open(path, 'r', encoding='utf-8', errors='ignore') as f:
+                    file_content = f.read(5000)
+                
+                truncated = len(file_content) >= 5000
+                return f"📄 **File: {path}**\n```\n{file_content}\n```" + ("\n(truncated)" if truncated else "")
+            
+            elif operation == 'FILE_WRITE':
+                if not path:
+                    return "❌ No file path specified"
+                
+                # Create parent directories if needed
+                parent = Path(path).parent
+                if not parent.exists():
+                    parent.mkdir(parents=True, exist_ok=True)
+                
+                with open(path, 'w', encoding='utf-8') as f:
+                    f.write(content or '')
+                return f"✅ Written to file: `{path}`"
+            
+            elif operation == 'FILE_DELETE':
+                if not path:
+                    return "❌ No file path specified"
+                if not os.path.exists(path):
+                    return f"❌ File not found: `{path}`"
+                
+                os.remove(path)
+                return f"✅ Deleted file: `{path}`"
+            
+            elif operation == 'FILE_COPY':
+                if not path or not destination:
+                    return "❌ Source and destination paths required"
+                if not os.path.exists(path):
+                    return f"❌ Source not found: `{path}`"
+                
+                shutil.copy2(path, destination)
+                return f"✅ Copied `{path}` to `{destination}`"
+            
+            elif operation == 'FILE_MOVE':
+                if not path or not destination:
+                    return "❌ Source and destination paths required"
+                if not os.path.exists(path):
+                    return f"❌ Source not found: `{path}`"
+                
+                shutil.move(path, destination)
+                return f"✅ Moved `{path}` to `{destination}`"
+            
+            elif operation == 'FILE_APPEND':
+                if not path:
+                    return "❌ No file path specified"
+                
+                with open(path, 'a', encoding='utf-8') as f:
+                    f.write(content or '')
+                return f"✅ Appended to file: `{path}`"
+            
+            # DIRECTORY OPERATIONS
+            elif operation == 'DIR_CREATE':
+                if not path:
+                    return "❌ No directory path specified"
+                
+                Path(path).mkdir(parents=True, exist_ok=True)
+                return f"✅ Created directory: `{path}`"
+            
+            elif operation == 'DIR_DELETE':
+                if not path:
+                    return "❌ No directory path specified"
+                if not os.path.exists(path):
+                    return f"❌ Directory not found: `{path}`"
+                
+                shutil.rmtree(path)
+                return f"✅ Deleted directory: `{path}`"
+            
+            elif operation == 'DIR_LIST':
+                list_path = path or '.'
+                if not os.path.exists(list_path):
+                    return f"❌ Directory not found: `{list_path}`"
+                
+                entries = os.listdir(list_path)
+                dirs = []
+                files = []
+                
+                for entry in entries[:50]:
+                    full_path = os.path.join(list_path, entry)
+                    if os.path.isdir(full_path):
+                        dirs.append(f"📁 {entry}/")
+                    else:
+                        files.append(f"📄 {entry}")
+                
+                result_list = sorted(dirs) + sorted(files)
+                output = "\n".join(result_list[:50])
+                if len(entries) > 50:
+                    output += f"\n... and {len(entries) - 50} more"
+                
+                return f"📂 **Contents of `{list_path}`** ({len(entries)} items):\n```\n{output}\n```"
+            
+            elif operation == 'DIR_NAVIGATE':
+                if not path:
+                    return "❌ No directory path specified"
+                if not os.path.exists(path):
+                    return f"❌ Directory not found: `{path}`"
+                if not os.path.isdir(path):
+                    return f"❌ Not a directory: `{path}`"
+                
+                os.chdir(path)
+                return f"✅ Changed directory to: `{path}`"
+            
+            elif operation == 'PWD':
+                return f"📍 Current directory: `{os.getcwd()}`"
+            
+            # GIT OPERATIONS
+            elif operation == 'GIT_CLONE':
+                if not url:
+                    return "❌ No repository URL specified"
+                
+                clone_path = path or '.'
+                result = subprocess.run(
+                    ['git', 'clone', url, clone_path] if path else ['git', 'clone', url],
+                    capture_output=True, text=True, timeout=120
+                )
+                if result.returncode == 0:
+                    return f"✅ Cloned repository: `{url}`\n```\n{result.stdout}\n```"
+                else:
+                    return f"❌ Clone failed:\n```\n{result.stderr}\n```"
+            
+            elif operation == 'GIT_STATUS':
+                result = subprocess.run(['git', 'status'], capture_output=True, text=True, timeout=30)
+                return f"📊 **Git Status:**\n```\n{result.stdout or result.stderr}\n```"
+            
+            elif operation == 'GIT_PULL':
+                result = subprocess.run(['git', 'pull'], capture_output=True, text=True, timeout=60)
+                status = "✅" if result.returncode == 0 else "❌"
+                return f"{status} **Git Pull:**\n```\n{result.stdout or result.stderr}\n```"
+            
+            elif operation == 'GIT_PUSH':
+                result = subprocess.run(['git', 'push'], capture_output=True, text=True, timeout=60)
+                status = "✅" if result.returncode == 0 else "❌"
+                return f"{status} **Git Push:**\n```\n{result.stdout or result.stderr}\n```"
+            
+            elif operation == 'GIT_COMMIT':
+                commit_msg = git_message or 'Update'
+                # First add all changes
+                subprocess.run(['git', 'add', '.'], capture_output=True, timeout=30)
+                result = subprocess.run(['git', 'commit', '-m', commit_msg], capture_output=True, text=True, timeout=30)
+                status = "✅" if result.returncode == 0 else "❌"
+                return f"{status} **Git Commit:**\n```\n{result.stdout or result.stderr}\n```"
+            
+            elif operation == 'GIT_ADD':
+                add_path = path or '.'
+                result = subprocess.run(['git', 'add', add_path], capture_output=True, text=True, timeout=30)
+                return f"✅ Staged: `{add_path}`"
+            
+            elif operation == 'GIT_BRANCH':
+                if branch:
+                    # Create and switch to branch
+                    result = subprocess.run(['git', 'checkout', '-b', branch], capture_output=True, text=True, timeout=30)
+                    if result.returncode != 0:
+                        result = subprocess.run(['git', 'checkout', branch], capture_output=True, text=True, timeout=30)
+                    status = "✅" if result.returncode == 0 else "❌"
+                    return f"{status} Branch `{branch}`:\n```\n{result.stdout or result.stderr}\n```"
+                else:
+                    result = subprocess.run(['git', 'branch', '-a'], capture_output=True, text=True, timeout=30)
+                    return f"📊 **Git Branches:**\n```\n{result.stdout}\n```"
+            
+            elif operation == 'GIT_CHECKOUT':
+                if not branch and not path:
+                    return "❌ No branch or file specified"
+                target = branch or path
+                result = subprocess.run(['git', 'checkout', target], capture_output=True, text=True, timeout=30)
+                status = "✅" if result.returncode == 0 else "❌"
+                return f"{status} Checkout `{target}`:\n```\n{result.stdout or result.stderr}\n```"
+            
+            elif operation == 'GIT_LOG':
+                result = subprocess.run(['git', 'log', '--oneline', '-15'], capture_output=True, text=True, timeout=30)
+                return f"📜 **Git Log:**\n```\n{result.stdout}\n```"
+            
+            elif operation == 'GIT_DIFF':
+                result = subprocess.run(['git', 'diff'], capture_output=True, text=True, timeout=30)
+                diff_output = result.stdout[:3000] if result.stdout else "No changes"
+                return f"📝 **Git Diff:**\n```diff\n{diff_output}\n```"
+            
+            # TERMINAL COMMAND
+            elif operation == 'TERMINAL_CMD':
+                if not command:
+                    return "❌ No command specified"
+                
+                result = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=120)
+                output = result.stdout or result.stderr or "Command completed"
+                status = "✅" if result.returncode == 0 else "❌"
+                return f"{status} **Executed:** `{command}`\n```\n{output[:3000]}\n```"
+            
+            else:
+                return None
+                
+        except subprocess.TimeoutExpired:
+            return "❌ Command timed out"
+        except PermissionError:
+            return f"❌ Permission denied"
+        except Exception as e:
+            return f"❌ Error: {str(e)}"
     
     def _try_execute_agent_command(self, message: str) -> bool:
         """Try to execute message as an agent command.
