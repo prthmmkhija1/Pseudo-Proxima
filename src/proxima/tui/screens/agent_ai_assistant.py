@@ -59,6 +59,9 @@ from ..widgets.agent_ui_enhanced import (
     AgentHeader,
     ToolExecutionCard,
     InputSection,
+    # New sliding stats panel (no blinking)
+    SlidingStatsPanel,
+    SlidingStatsTrigger,
 )
 from textual.message import Message
 
@@ -84,9 +87,13 @@ try:
         TerminalProcessState,
     )
     from proxima.agent.safety import ConsentType, ConsentDecision
+    # GitHub Authentication
+    from proxima.agent.github_auth import get_github_auth, GitHubAuth, AuthStatus
     AGENT_AVAILABLE = True
+    GITHUB_AUTH_AVAILABLE = True
 except ImportError:
     AGENT_AVAILABLE = False
+    GITHUB_AUTH_AVAILABLE = False
 
 # Import LLM components
 try:
@@ -187,173 +194,132 @@ class AgentAIAssistantScreen(BaseScreen):
     ]
     
     DEFAULT_CSS = """
+    /* ========================================================================
+       CRUSH-STYLE DARK THEME FOR AI ASSISTANT
+       Inspired by CRUSH UI - Dark purple/magenta aesthetic
+       ======================================================================== */
+    
     AgentAIAssistantScreen {
         layout: vertical;
+        background: #0d0d14;
     }
+    
+    /* ========================================================================
+       MAIN LAYOUT: 3-column design (code viewer | chat | sidebar)
+       ======================================================================== */
     
     AgentAIAssistantScreen .main-container {
         width: 100%;
-        height: 100%;
+        height: 1fr;
         layout: horizontal;
+        background: #0d0d14;
     }
     
-    /* Resizable chat panel */
+    /* ========================================================================
+       CODE VIEWER PANEL (Left side) - Shows file content with line numbers
+       ======================================================================== */
+    
+    AgentAIAssistantScreen .code-viewer-panel {
+        width: 40%;
+        height: 100%;
+        background: #0d0d14;
+        border-right: solid #2a2a3e;
+    }
+    
+    AgentAIAssistantScreen .code-viewer-header {
+        height: 3;
+        background: #13131d;
+        padding: 0 1;
+        layout: horizontal;
+        border-bottom: solid #2a2a3e;
+    }
+    
+    AgentAIAssistantScreen .file-path-label {
+        width: 1fr;
+        color: #8888aa;
+    }
+    
+    AgentAIAssistantScreen .view-indicator {
+        color: #00cc66;
+        width: auto;
+    }
+    
+    AgentAIAssistantScreen .code-content {
+        height: 1fr;
+        padding: 0;
+        background: #0d0d14;
+        overflow-y: auto;
+        overflow-x: auto;
+    }
+    
+    AgentAIAssistantScreen .code-text {
+        background: #0d0d14;
+        padding: 1;
+    }
+    
+    /* ========================================================================
+       CHAT AREA (Center) - Main conversation area
+       ======================================================================== */
+    
     AgentAIAssistantScreen .chat-area {
-        width: 65%;
-        height: 100%;
-        border-right: solid $primary;
-    }
-    
-    /* Resize handle for panel - visual slider indicator */
-    AgentAIAssistantScreen .resize-handle {
-        width: 3;
-        height: 100%;
-        background: $primary-darken-2;
-        content-align: center middle;
-    }
-    
-    AgentAIAssistantScreen .resize-handle:hover {
-        background: $accent;
-    }
-    
-    AgentAIAssistantScreen .resize-handle.dragging {
-        background: $success;
-    }
-    
-    /* Agent side panel - collapsible stats and shortcuts */
-    AgentAIAssistantScreen .agent-panel {
         width: 35%;
         height: 100%;
-        background: $surface-darken-1;
+        background: #0d0d14;
+        border-right: solid #2a2a3e;
     }
     
-    AgentAIAssistantScreen .agent-panel.hidden {
-        display: none;
-    }
-    
-    AgentAIAssistantScreen .agent-panel.collapsed {
-        width: 0;
-        display: none;
-    }
-    
-    /* Full screen chat when sidebar is hidden */
     AgentAIAssistantScreen .chat-area.fullscreen {
-        width: 100%;
+        width: 75%;
         border-right: none;
     }
     
-    /* Toggle sidebar button - small compact button */
-    AgentAIAssistantScreen .sidebar-toggle-btn {
-        width: 4;
-        min-width: 4;
-        height: 3;
-        background: $primary-darken-2;
-        dock: right;
-    }
-    
-    AgentAIAssistantScreen .sidebar-toggle-btn:hover {
-        background: $accent;
-    }
-    
-    /* Header section with collapse button */
-    AgentAIAssistantScreen .header-section {
-        height: 5;
-        padding: 1;
-        background: $primary-darken-2;
-        border-bottom: solid $primary;
-        layout: horizontal;
-    }
-    
-    AgentAIAssistantScreen .header-title {
-        text-style: bold;
-        color: $accent;
-        width: 1fr;
-    }
-    
-    AgentAIAssistantScreen .header-controls {
-        width: auto;
-    }
-    
-    AgentAIAssistantScreen .agent-badge {
-        background: $success;
-        color: $surface;
-        padding: 0 1;
-        text-style: bold;
-    }
-    
-    AgentAIAssistantScreen .agent-badge.disabled {
-        background: $error;
-    }
-    
-    /* Stats panel (collapsible) - toggleable with button */
-    AgentAIAssistantScreen .stats-panel {
-        width: 100%;
-        height: auto;
-        max-height: 20;
-    }
-    
-    AgentAIAssistantScreen .stats-panel.collapsed {
-        height: 3;
-        overflow: hidden;
-    }
-    
-    AgentAIAssistantScreen .stats-panel.hidden {
-        display: none;
-    }
-    
-    /* Stats toggle button */
-    AgentAIAssistantScreen .stats-toggle-btn {
-        width: auto;
-        min-width: 8;
-        height: 3;
-    }
-    
-    /* Keyboard shortcuts panel (collapsible) */
-    AgentAIAssistantScreen .shortcuts-panel {
-        width: 100%;
-        height: auto;
-        padding: 1;
-        background: $surface-darken-2;
-        border-top: solid $primary-darken-3;
-    }
-    
-    AgentAIAssistantScreen .shortcuts-panel.hidden {
-        display: none;
-    }
-    
-    /* Chat log with word wrapping - eye-pleasing gray background */
+    /* Chat log container - where messages appear */
     AgentAIAssistantScreen .chat-log-container {
         height: 1fr;
         padding: 1;
         overflow-y: auto;
         overflow-x: hidden;
+        background: #0d0d14;
     }
     
     AgentAIAssistantScreen .chat-log {
         height: 100%;
-        /* Eye-pleasing gray background instead of black */
-        background: #2d3748;
+        background: #0d0d14;
         padding: 1;
-        border: solid $primary-darken-3;
-        /* Word wrap enabled, no horizontal scroll */
         overflow-x: hidden;
         overflow-y: auto;
     }
     
-    /* Larger text for AI responses - 2x effect with bold and spacing */
-    AgentAIAssistantScreen .ai-response-text {
-        text-style: bold;
-        padding: 1;
+    /* Thinking indicator at bottom of chat */
+    AgentAIAssistantScreen .thinking-indicator {
+        height: 3;
+        background: #13131d;
+        padding: 0 2;
+        layout: horizontal;
+        border-top: solid #2a2a3e;
     }
     
-    /* Input section */
+    AgentAIAssistantScreen .thinking-label {
+        color: #cc66ff;
+        width: 1fr;
+    }
+    
+    AgentAIAssistantScreen .thinking-hash {
+        color: #666688;
+        width: auto;
+    }
+    
+    /* ========================================================================
+       INPUT SECTION - Bottom input area with prompt
+       ======================================================================== */
+    
     AgentAIAssistantScreen .input-section {
         height: auto;
-        min-height: 8;
-        max-height: 15;
+        min-height: 5;
+        max-height: 12;
         padding: 1;
-        border-top: solid $primary;
-        background: $surface;
+        background: #13131d;
+        border-top: solid #2a2a3e;
     }
     
     AgentAIAssistantScreen .input-container {
@@ -365,15 +331,30 @@ class AgentAIAssistantScreen(BaseScreen):
     AgentAIAssistantScreen .prompt-input {
         width: 1fr;
         min-height: 3;
-        max-height: 10;
+        max-height: 8;
         margin-right: 1;
+        background: #1a1a28;
+        border: solid #3a3a5e;
+        color: #ccccee;
+    }
+    
+    AgentAIAssistantScreen .prompt-input:focus {
+        border: solid #cc66ff;
     }
     
     AgentAIAssistantScreen .send-btn {
-        width: 12;
+        width: 10;
         height: 3;
+        background: #cc66ff;
+        color: #0d0d14;
+        text-style: bold;
     }
     
+    AgentAIAssistantScreen .send-btn:hover {
+        background: #dd88ff;
+    }
+    
+    /* Controls row below input */
     AgentAIAssistantScreen .controls-row {
         height: 3;
         layout: horizontal;
@@ -382,17 +363,293 @@ class AgentAIAssistantScreen(BaseScreen):
     
     AgentAIAssistantScreen .control-btn {
         margin-right: 1;
-        min-width: 8;
+        min-width: 6;
         height: 3;
+        background: #2a2a3e;
+        border: none;
+        color: #aaaacc;
+    }
+    
+    AgentAIAssistantScreen .control-btn:hover {
+        background: #3a3a5e;
+        color: #cc66ff;
     }
     
     AgentAIAssistantScreen .input-hint {
-        color: $text-muted;
+        display: none;
+    }
+    
+    /* ========================================================================
+       SIDEBAR (Right side) - CRUSH-style info panel
+       ======================================================================== */
+    
+    AgentAIAssistantScreen .crush-sidebar {
+        width: 25%;
+        min-width: 30;
+        height: 100%;
+        background: #0d0d14;
+        padding: 0;
+    }
+    
+    AgentAIAssistantScreen .crush-sidebar.collapsed {
+        width: 0;
+        display: none;
+    }
+    
+    /* PROXIMA Title - Retro pixel style */
+    AgentAIAssistantScreen .sidebar-title-container {
+        height: 6;
+        background: #13131d;
+        padding: 1;
+        border-bottom: solid #2a2a3e;
+    }
+    
+    AgentAIAssistantScreen .proxima-title {
+        text-align: center;
+        text-style: bold;
+        color: #cc66ff;
+    }
+    
+    AgentAIAssistantScreen .sidebar-subtitle {
+        color: #8888aa;
         text-align: center;
         margin-top: 1;
     }
     
-    /* Agent panel styles */
+    AgentAIAssistantScreen .sidebar-path {
+        color: #666688;
+        text-align: center;
+    }
+    
+    /* Model Info Section */
+    AgentAIAssistantScreen .model-info-section {
+        height: auto;
+        padding: 1;
+        background: #0d0d14;
+        border-bottom: solid #2a2a3e;
+    }
+    
+    AgentAIAssistantScreen .model-name {
+        color: #ffffff;
+        text-style: bold;
+        margin-bottom: 1;
+    }
+    
+    AgentAIAssistantScreen .model-status-row {
+        layout: horizontal;
+        height: auto;
+    }
+    
+    AgentAIAssistantScreen .status-badge {
+        color: #00cc66;
+        background: #1a2a1a;
+        padding: 0 1;
+        margin-right: 1;
+    }
+    
+    AgentAIAssistantScreen .status-badge.inactive {
+        color: #cc6666;
+        background: #2a1a1a;
+    }
+    
+    AgentAIAssistantScreen .cost-label {
+        color: #8888aa;
+        width: 1fr;
+        text-align: right;
+    }
+    
+    /* Section Headers */
+    AgentAIAssistantScreen .sidebar-section {
+        height: auto;
+        padding: 1;
+        border-bottom: solid #1a1a28;
+    }
+    
+    AgentAIAssistantScreen .section-header {
+        color: #666688;
+        text-style: bold;
+        margin-bottom: 1;
+    }
+    
+    AgentAIAssistantScreen .section-empty {
+        color: #444466;
+        padding-left: 1;
+    }
+    
+    /* LSPs Section with colored dots */
+    AgentAIAssistantScreen .lsp-item {
+        layout: horizontal;
+        height: auto;
+        padding-left: 1;
+        margin-bottom: 0;
+    }
+    
+    AgentAIAssistantScreen .lsp-dot {
+        color: #00cc66;
+        width: 2;
+    }
+    
+    AgentAIAssistantScreen .lsp-dot.inactive {
+        color: #cc6666;
+    }
+    
+    AgentAIAssistantScreen .lsp-name {
+        color: #aaaacc;
+        width: 1fr;
+    }
+    
+    /* MCPs Section */
+    AgentAIAssistantScreen .mcp-item {
+        layout: horizontal;
+        height: auto;
+        padding-left: 1;
+    }
+    
+    AgentAIAssistantScreen .mcp-dot {
+        color: #cc66ff;
+        width: 2;
+    }
+    
+    AgentAIAssistantScreen .mcp-name {
+        color: #aaaacc;
+        width: 1fr;
+    }
+    
+    /* Stats Section */
+    AgentAIAssistantScreen .stats-section {
+        height: auto;
+        padding: 1;
+        border-bottom: solid #1a1a28;
+    }
+    
+    AgentAIAssistantScreen .stats-row {
+        layout: horizontal;
+        height: auto;
+        margin-bottom: 0;
+    }
+    
+    AgentAIAssistantScreen .stats-label {
+        width: 14;
+        color: #666688;
+    }
+    
+    AgentAIAssistantScreen .stats-value {
+        width: 1fr;
+        text-align: right;
+        color: #cc66ff;
+    }
+    
+    /* Terminal Section in sidebar */
+    AgentAIAssistantScreen .terminal-section {
+        height: 1fr;
+        overflow-y: auto;
+        padding: 1;
+    }
+    
+    /* ========================================================================
+       BOTTOM KEYBOARD SHORTCUTS BAR
+       ======================================================================== */
+    
+    AgentAIAssistantScreen .keyboard-bar {
+        height: 2;
+        background: #0a0a10;
+        layout: horizontal;
+        padding: 0 1;
+        border-top: solid #2a2a3e;
+    }
+    
+    AgentAIAssistantScreen .kbd-item {
+        color: #666688;
+        margin-right: 2;
+        width: auto;
+    }
+    
+    AgentAIAssistantScreen .kbd-key {
+        color: #888899;
+        background: #1a1a28;
+        padding: 0 1;
+    }
+    
+    AgentAIAssistantScreen .kbd-action {
+        color: #555566;
+        margin-left: 1;
+    }
+    
+    /* ========================================================================
+       MESSAGE STYLES - Chat bubbles
+       ======================================================================== */
+    
+    AgentAIAssistantScreen .user-message {
+        margin: 1 0;
+        padding: 1;
+        background: #1a1a2e;
+        border-left: thick #cc66ff;
+    }
+    
+    AgentAIAssistantScreen .ai-message {
+        margin: 1 0;
+        padding: 1;
+        background: #13131d;
+        border-left: thick #00cc66;
+    }
+    
+    AgentAIAssistantScreen .tool-message {
+        margin: 1 0;
+        padding: 1;
+        background: #1a2a1a;
+        border-left: thick #00cc66;
+    }
+    
+    AgentAIAssistantScreen .error-message {
+        margin: 1 0;
+        padding: 1;
+        background: #2a1a1a;
+        border-left: thick #cc6666;
+    }
+    
+    AgentAIAssistantScreen .tool-name {
+        text-style: bold;
+        color: #cc66ff;
+    }
+    
+    AgentAIAssistantScreen .tool-result {
+        color: #8888aa;
+        margin-top: 1;
+    }
+    
+    /* AI response text styling */
+    AgentAIAssistantScreen .ai-response-text {
+        text-style: bold;
+        padding: 1;
+    }
+    
+    /* ========================================================================
+       LEGACY STYLES (kept for compatibility)
+       ======================================================================== */
+    
+    AgentAIAssistantScreen .resize-handle {
+        width: 1;
+        height: 100%;
+        background: transparent;
+        content-align: center middle;
+    }
+    
+    AgentAIAssistantScreen .resize-handle:hover {
+        background: rgba(204, 102, 255, 0.3);
+    }
+    
+    AgentAIAssistantScreen .resize-handle.dragging {
+        background: rgba(0, 204, 102, 0.5);
+    }
+    
+    AgentAIAssistantScreen .agent-panel {
+        display: none;
+    }
+    
+    AgentAIAssistantScreen .header-section {
+        display: none;
+    }
+    
     AgentAIAssistantScreen .panel-tabs {
         height: 100%;
     }
@@ -400,10 +657,6 @@ class AgentAIAssistantScreen(BaseScreen):
     AgentAIAssistantScreen .tab-content {
         padding: 1;
         height: 100%;
-    }
-    
-    AgentAIAssistantScreen .terminal-section {
-        height: 1fr;
     }
     
     AgentAIAssistantScreen .tools-section {
@@ -414,16 +667,15 @@ class AgentAIAssistantScreen(BaseScreen):
     
     AgentAIAssistantScreen .section-title {
         text-style: bold;
-        color: $accent;
+        color: #cc66ff;
         margin-bottom: 1;
     }
     
-    /* Panel header with collapsible stats */
     AgentAIAssistantScreen .panel-header {
         height: 3;
         padding: 0 1;
-        background: $primary-darken-2;
-        border-bottom: solid $primary-darken-3;
+        background: #13131d;
+        border-bottom: solid #2a2a3e;
         layout: horizontal;
         align: left middle;
     }
@@ -431,59 +683,26 @@ class AgentAIAssistantScreen(BaseScreen):
     AgentAIAssistantScreen .panel-header-title {
         width: 1fr;
         text-style: bold;
-        color: $accent;
+        color: #cc66ff;
     }
     
-    /* Real-time stats section - continuously shown (not momentary) */
     AgentAIAssistantScreen .realtime-stats {
-        height: auto;
-        padding: 1;
-        background: $surface-darken-1;
-        border-bottom: solid $primary-darken-3;
-    }
-    
-    AgentAIAssistantScreen .realtime-stats.hidden {
         display: none;
     }
     
-    AgentAIAssistantScreen .stats-row {
-        layout: horizontal;
-        height: auto;
-        margin-bottom: 0;
-    }
-    
-    AgentAIAssistantScreen .stats-label {
-        width: 12;
-        color: $text-muted;
-    }
-    
-    AgentAIAssistantScreen .stats-value {
-        width: 1fr;
-        text-align: right;
-        color: $accent;
-    }
-    
-    /* Keyboard shortcuts panel - collapsible */
     AgentAIAssistantScreen .shortcuts-panel {
-        height: auto;
-        padding: 1;
-        background: $surface-darken-2;
-        border-bottom: solid $primary-darken-3;
-    }
-    
-    AgentAIAssistantScreen .shortcuts-panel.hidden {
         display: none;
     }
     
     AgentAIAssistantScreen .shortcut-item {
-        color: $text-muted;
+        color: #666688;
         height: auto;
     }
     
     AgentAIAssistantScreen .status-section {
         height: auto;
         padding: 1;
-        background: $surface-darken-2;
+        background: #13131d;
         margin-bottom: 1;
     }
     
@@ -494,52 +713,24 @@ class AgentAIAssistantScreen(BaseScreen):
     
     AgentAIAssistantScreen .status-label {
         width: 12;
-        color: $text-muted;
+        color: #666688;
     }
     
     AgentAIAssistantScreen .status-value {
         width: 1fr;
         text-align: right;
+        color: #cc66ff;
     }
     
-    /* Message styles with word wrapping */
-    AgentAIAssistantScreen .user-message {
-        margin: 1 0;
-        padding: 1;
-        background: $primary-darken-2;
-        border-left: thick $primary;
-    }
-    
-    AgentAIAssistantScreen .ai-message {
-        margin: 1 0;
-        padding: 1;
-        /* Eye-pleasing gray background */
-        background: #3d4a5c;
-        border-left: thick $accent;
-    }
-    
-    AgentAIAssistantScreen .tool-message {
-        margin: 1 0;
-        padding: 1;
-        background: $success-darken-3;
-        border-left: thick $success;
-    }
-    
-    AgentAIAssistantScreen .error-message {
-        margin: 1 0;
-        padding: 1;
-        background: $error-darken-3;
-        border-left: thick $error;
-    }
-    
-    AgentAIAssistantScreen .tool-name {
+    AgentAIAssistantScreen .agent-badge {
+        background: #00cc66;
+        color: #0d0d14;
+        padding: 0 1;
         text-style: bold;
-        color: $accent;
     }
     
-    AgentAIAssistantScreen .tool-result {
-        color: $text-muted;
-        margin-top: 1;
+    AgentAIAssistantScreen .agent-badge.disabled {
+        background: #cc6666;
     }
     """
     
@@ -825,28 +1016,40 @@ class AgentAIAssistantScreen(BaseScreen):
             pass
     
     def compose_main(self) -> ComposeResult:
-        """Compose the main content with Phase 2 UI enhancements."""
+        """Compose the main content with CRUSH-style UI design."""
+        # Sliding stats panel (off-screen by default, triggered by button)
+        yield SlidingStatsPanel(
+            stats=self._agent_stats,
+            auto_refresh=True,
+            refresh_interval=1.0,
+            id="sliding-stats-panel",
+        )
+        
+        # Small trigger button on right edge
+        yield SlidingStatsTrigger(id="stats-trigger")
+        
         with Horizontal(classes="main-container"):
-            # Chat area (left) with id for resizing
+            # ====================================================================
+            # CODE VIEWER PANEL (Left) - Shows file content with line numbers
+            # ====================================================================
+            with Vertical(classes="code-viewer-panel", id="code-viewer-panel"):
+                with Horizontal(classes="code-viewer-header"):
+                    yield Static("~/project/file.py", classes="file-path-label", id="code-file-path")
+                    yield Static("✓ View", classes="view-indicator")
+                
+                with ScrollableContainer(classes="code-content", id="code-content"):
+                    yield Static(
+                        self._get_welcome_code_content(),
+                        classes="code-text",
+                        id="code-text",
+                        markup=False,
+                    )
+            
+            # ====================================================================
+            # CHAT AREA (Center) - Main conversation area
+            # ====================================================================
             with Vertical(classes="chat-area", id="chat-panel"):
-                # Header with toggle buttons
-                with Horizontal(classes="header-section"):
-                    yield Static("🤖 Proxima AI Agent", classes="header-title")
-                    badge_class = "agent-badge" if self._agent_enabled else "agent-badge disabled"
-                    yield Static("AGENT" if self._agent_enabled else "CHAT", classes=badge_class, id="agent-badge")
-                    yield Button("📊", id="btn-toggle-stats", variant="default")
-                    yield Button("◀", id="btn-toggle-panel", variant="default")
-                
-                # Phase 2: Collapsible stats panel
-                yield CollapsibleStatsPanel(
-                    stats=self._agent_stats,
-                    auto_refresh=True,
-                    refresh_interval=0.5,
-                    id="stats-panel",
-                    classes="stats-panel",
-                )
-                
-                # Chat log with word wrapping
+                # Chat log container
                 with ScrollableContainer(classes="chat-log-container"):
                     yield WordWrappedRichLog(
                         auto_scroll=True,
@@ -854,6 +1057,11 @@ class AgentAIAssistantScreen(BaseScreen):
                         id="chat-log",
                         wrap=True,
                     )
+                
+                # Thinking indicator
+                with Horizontal(classes="thinking-indicator", id="thinking-indicator"):
+                    yield Static("", classes="thinking-label", id="thinking-label")
+                    yield Static("", classes="thinking-hash", id="thinking-hash")
                 
                 # Input section
                 with Vertical(classes="input-section"):
@@ -863,115 +1071,161 @@ class AgentAIAssistantScreen(BaseScreen):
                             classes="prompt-input",
                         )
                         yield Button(
-                            "⮕ Send",
+                            "Send",
                             id="btn-send",
                             classes="send-btn",
                             variant="primary",
                         )
                     
                     with Horizontal(classes="controls-row"):
-                        yield Button("🛑 Stop", id="btn-stop", classes="control-btn", variant="error", disabled=True)
-                        yield Button("🔧 Agent", id="btn-toggle-agent", classes="control-btn", variant="success")
+                        yield Button("⏹", id="btn-stop", classes="control-btn", disabled=True)
+                        yield Button("🤖", id="btn-toggle-agent", classes="control-btn")
                         yield Button("↶", id="btn-undo", classes="control-btn", disabled=True)
                         yield Button("↷", id="btn-redo", classes="control-btn", disabled=True)
-                        yield Button("🗑️", id="btn-clear", classes="control-btn")
+                        yield Button("🗑", id="btn-clear", classes="control-btn")
                         yield Button("📤", id="btn-export", classes="control-btn")
-                        yield Button("🔄", id="btn-reset-layout", classes="control-btn")
-                    
-                    yield Static(
-                        "Ctrl+Enter=Send | Ctrl+T=Stats | Ctrl+P=Panel | Ctrl+[/]=Resize",
-                        classes="input-hint"
-                    )
             
-            # Phase 2: Resize handle/slider - drag to adjust panel width
-            yield Static("⋮", classes="resize-handle", id="resize-handle")
-            
-            # Agent panel (right) with toggle support - collapsible stats and controls
-            panel_classes = "agent-panel" if self.side_panel_visible else "agent-panel collapsed"
-            with Vertical(classes=panel_classes, id="agent-side-panel"):
-                # Collapsible header with single toggle button for stats & controls
-                with Horizontal(classes="panel-header"):
-                    yield Static("📊 Statistics & Controls", classes="panel-header-title", id="stats-header-title")
-                    yield Button("👁", id="btn-show-hide-stats", variant="default", classes="stats-toggle-btn")
+            # ====================================================================
+            # CRUSH-STYLE SIDEBAR (Right) - Stats, LSPs, MCPs
+            # ====================================================================
+            sidebar_classes = "crush-sidebar" if self.side_panel_visible else "crush-sidebar collapsed"
+            with Vertical(classes=sidebar_classes, id="crush-sidebar"):
+                # PROXIMA Title Section - Retro pixel style
+                with Container(classes="sidebar-title-container"):
+                    yield Static(self._get_proxima_ascii_title(), classes="proxima-title", id="proxima-title")
+                    yield Static("AI Agent Assistant", classes="sidebar-subtitle")
+                    yield Static(f"~/{Path.cwd().name}", classes="sidebar-path", id="sidebar-path")
                 
-                # Real-time stats section (toggleable - continuous display, not momentary)
-                with Container(id="realtime-stats-container", classes="realtime-stats"):
-                    with Horizontal(classes="stats-row"):
-                        yield Static("Provider:", classes="stats-label")
-                        yield Static(self._llm_provider or "Local", classes="stats-value", id="rt-provider")
-                    with Horizontal(classes="stats-row"):
-                        yield Static("Model:", classes="stats-label")
-                        yield Static(self._llm_model or "llama2-uncensore", classes="stats-value", id="rt-model")
+                # Model Info Section
+                with Container(classes="model-info-section"):
+                    model_display = self._llm_model or "Not Configured"
+                    yield Static(model_display, classes="model-name", id="model-name")
+                    with Horizontal(classes="model-status-row"):
+                        status_class = "status-badge" if self._agent_enabled else "status-badge inactive"
+                        yield Static("AGENT ON" if self._agent_enabled else "AGENT OFF", classes=status_class, id="agent-status-badge")
+                        yield Static("$0.00", classes="cost-label", id="cost-label")
+                
+                # Modified Files Section
+                with Container(classes="sidebar-section"):
+                    yield Static("Modified Files", classes="section-header")
+                    yield Static("None", classes="section-empty", id="modified-files")
+                
+                # LSPs Section
+                with Container(classes="sidebar-section"):
+                    yield Static("LSPs", classes="section-header")
+                    yield Container(id="lsps-list", classes="lsp-list")
+                
+                # MCPs Section
+                with Container(classes="sidebar-section"):
+                    yield Static("MCPs", classes="section-header")
+                    yield Container(id="mcps-list", classes="mcp-list")
+                
+                # Stats Section
+                with Container(classes="stats-section"):
+                    yield Static("Stats", classes="section-header")
                     with Horizontal(classes="stats-row"):
                         yield Static("Messages:", classes="stats-label")
-                        yield Static("0", classes="stats-value", id="rt-messages")
+                        yield Static("0", classes="stats-value", id="stat-messages")
                     with Horizontal(classes="stats-row"):
-                        yield Static("Tokens:", classes="stats-label")
-                        yield Static("0", classes="stats-value", id="rt-tokens")
+                        yield Static("Tools Run:", classes="stats-label")
+                        yield Static("0", classes="stats-value", id="stat-tools")
                     with Horizontal(classes="stats-row"):
-                        yield Static("Requests:", classes="stats-label")
-                        yield Static("0", classes="stats-value", id="rt-requests")
-                    with Horizontal(classes="stats-row"):
-                        yield Static("Avg Time:", classes="stats-label")
-                        yield Static("0ms", classes="stats-value", id="rt-avg-time")
-                    with Horizontal(classes="stats-row"):
-                        yield Static("Session:", classes="stats-label")
-                        yield Static("0s", classes="stats-value", id="rt-session")
+                        yield Static("Provider:", classes="stats-label")
+                        yield Static(self._llm_provider or "None", classes="stats-value", id="stat-provider")
                 
-                # Collapsible Keyboard Shortcuts section
-                with Container(id="shortcuts-container", classes="shortcuts-panel"):
-                    yield Static("⌨️ Keyboard Shortcuts", classes="section-title")
-                    yield Static("Enter       New line", classes="shortcut-item")
-                    yield Static("Ctrl+↵     Send message", classes="shortcut-item")
-                    yield Static("Ctrl+J     Previous prompt", classes="shortcut-item")
-                    yield Static("Ctrl+L     Next prompt", classes="shortcut-item")
-                    yield Static("Ctrl+N     New chat", classes="shortcut-item")
-                    yield Static("Ctrl+S     Export chat", classes="shortcut-item")
-                    yield Static("Ctrl+O     Import chat", classes="shortcut-item")
-                    yield Static("Ctrl+Z     Undo", classes="shortcut-item")
-                    yield Static("Ctrl+Y     Redo", classes="shortcut-item")
-                    yield Static("Esc        Go back", classes="shortcut-item")
-                
-                with TabbedContent(classes="panel-tabs"):
-                    with TabPane("Terminal", id="tab-terminal"):
-                        with Vertical(classes="tab-content"):
-                            yield Static("⬛ Terminal Output", classes="section-title")
-                            yield MultiTerminalView(max_terminals=4, id="multi-terminal", classes="terminal-section")
-                    
-                    with TabPane("Tools", id="tab-tools"):
-                        with ScrollableContainer(classes="tab-content"):
-                            yield Static("🔧 Tool Executions", classes="section-title")
-                            yield Vertical(id="tools-list", classes="tools-section")
-                    
-                    with TabPane("Status", id="tab-status"):
-                        with Vertical(classes="tab-content"):
-                            yield Static("📊 Agent Status", classes="section-title")
-                            
-                            with Container(classes="status-section"):
-                                with Horizontal(classes="status-row"):
-                                    yield Static("Agent:", classes="status-label")
-                                    yield Static("Active" if self._agent else "Unavailable", classes="status-value", id="stat-agent")
-                                with Horizontal(classes="status-row"):
-                                    yield Static("Provider:", classes="status-label")
-                                    yield Static(self._llm_provider or "None", classes="status-value", id="stat-provider")
-                                with Horizontal(classes="status-row"):
-                                    yield Static("Model:", classes="status-label")
-                                    yield Static(self._llm_model or "—", classes="status-value", id="stat-model")
-                                with Horizontal(classes="status-row"):
-                                    yield Static("Messages:", classes="status-label")
-                                    yield Static("0", classes="status-value", id="stat-messages")
-                                with Horizontal(classes="status-row"):
-                                    yield Static("Tools Run:", classes="status-label")
-                                    yield Static("0", classes="status-value", id="stat-tools")
-                            
-                            yield Static("🛡️ Safety", classes="section-title")
-                            with Container(classes="status-section"):
-                                with Horizontal(classes="status-row"):
-                                    yield Static("Pending:", classes="status-label")
-                                    yield Static("0", classes="status-value", id="stat-pending")
-                                with Horizontal(classes="status-row"):
-                                    yield Static("Undo Stack:", classes="status-label")
-                                    yield Static("0", classes="status-value", id="stat-undo")
+                # Terminal Section (scrollable)
+                with ScrollableContainer(classes="terminal-section"):
+                    yield Static("Terminal", classes="section-header")
+                    yield MultiTerminalView(max_terminals=4, id="multi-terminal")
+        
+        # ========================================================================
+        # BOTTOM KEYBOARD SHORTCUTS BAR
+        # ========================================================================
+        with Horizontal(classes="keyboard-bar"):
+            yield Static("esc", classes="kbd-key")
+            yield Static("cancel", classes="kbd-action")
+            yield Static("tab", classes="kbd-key")
+            yield Static("focus chat", classes="kbd-action")
+            yield Static("ctrl+↵", classes="kbd-key")
+            yield Static("send", classes="kbd-action")
+            yield Static("shift+↵", classes="kbd-key")
+            yield Static("newline", classes="kbd-action")
+            yield Static("ctrl+p", classes="kbd-key")
+            yield Static("toggle panel", classes="kbd-action")
+            yield Static("ctrl+q", classes="kbd-key")
+            yield Static("quit", classes="kbd-action")
+    
+    def _get_proxima_ascii_title(self) -> str:
+        """Return ASCII art title for PROXIMA in retro style."""
+        return """╔═══════════════════════════╗
+║   ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄    ║
+║   █▀▀▀ PROXIMA ▀▀▀█    ║
+║   ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀    ║
+╚═══════════════════════════╝"""
+    
+    def _get_welcome_code_content(self) -> str:
+        """Return welcome code content for the code viewer."""
+        return """  1 │ # Welcome to Proxima AI Agent
+  2 │ # ═══════════════════════════════════════
+  3 │ 
+  4 │ # Ask me anything! I can help you with:
+  5 │ 
+  6 │ # 🔧 Code Analysis & Refactoring
+  7 │ #    - Review and improve your code
+  8 │ #    - Find bugs and security issues
+  9 │ #    - Suggest optimizations
+ 10 │ 
+ 11 │ # 📁 File Operations
+ 12 │ #    - Create, read, modify files
+ 13 │ #    - Search through your project
+ 14 │ #    - Organize code structure
+ 15 │ 
+ 16 │ # 🖥️ Terminal Commands
+ 17 │ #    - Run any shell command
+ 18 │ #    - Install packages
+ 19 │ #    - Build and test projects
+ 20 │ 
+ 21 │ # 🌐 Git & GitHub
+ 22 │ #    - Commit, push, pull
+ 23 │ #    - Create branches
+ 24 │ #    - Manage repositories
+ 25 │ 
+ 26 │ # 💬 Type your question below...
+ 27 │ """
+    
+    def show_file_in_viewer(self, file_path: str, content: str = None) -> None:
+        """Display file content in the code viewer panel (CRUSH-style)."""
+        try:
+            # Update file path label
+            path_label = self.query_one("#code-file-path", Static)
+            # Convert to display path (~/project/file.py style)
+            try:
+                rel_path = Path(file_path).relative_to(Path.cwd())
+                display_path = f"~/{rel_path}"
+            except Exception:
+                display_path = file_path
+            path_label.update(display_path)
+            
+            # Read file content if not provided
+            if content is None:
+                try:
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        content = f.read()
+                except Exception as e:
+                    content = f"Error reading file: {e}"
+            
+            # Format with line numbers
+            lines = content.split('\n')
+            formatted_lines = []
+            for i, line in enumerate(lines, 1):
+                formatted_lines.append(f"{i:4} │ {line}")
+            formatted_content = '\n'.join(formatted_lines)
+            
+            # Update code text
+            code_text = self.query_one("#code-text", Static)
+            code_text.update(formatted_content)
+        except Exception:
+            pass
     
     def on_mount(self) -> None:
         """Called when screen is mounted."""
@@ -1003,33 +1257,39 @@ class AgentAIAssistantScreen(BaseScreen):
             pass
     
     def _update_panel_layout(self) -> None:
-        """Update panel widths based on current settings (Phase 2)."""
+        """Update panel widths based on current settings (CRUSH-style UI)."""
         try:
             chat_panel = self.query_one("#chat-panel")
-            side_panel = self.query_one("#agent-side-panel")
+            # Use new crush-sidebar instead of agent-side-panel
+            try:
+                side_panel = self.query_one("#crush-sidebar")
+            except Exception:
+                # Fallback for legacy panel
+                try:
+                    side_panel = self.query_one("#agent-side-panel")
+                except Exception:
+                    return
             
             if self.side_panel_visible:
-                chat_panel.styles.width = f"{self.chat_panel_width}%"
-                side_panel.styles.width = f"{100 - self.chat_panel_width - 1}%"
-                side_panel.remove_class("hidden")
+                side_panel.remove_class("collapsed")
             else:
-                chat_panel.styles.width = "100%"
-                side_panel.add_class("hidden")
+                side_panel.add_class("collapsed")
         except Exception:
             pass
     
     def _update_stats_panel(self) -> None:
-        """Update statistics in the collapsible stats panel (Phase 2)."""
+        """Update statistics in the sliding stats panel."""
         try:
-            stats_panel = self.query_one("#stats-panel", CollapsibleStatsPanel)
-            stats_panel.stats.messages_sent = len(self._current_session.messages)
-            stats_panel.stats.tokens_used = self._current_session.total_tokens
-            stats_panel.stats.requests_made = self._current_session.total_requests
-            stats_panel.stats.tools_executed = self._current_session.tool_executions
+            # Update sliding stats panel
+            sliding_panel = self.query_one("#sliding-stats-panel", SlidingStatsPanel)
+            sliding_panel.stats.messages_sent = len(self._current_session.messages)
+            sliding_panel.stats.tokens_used = self._current_session.total_tokens
+            sliding_panel.stats.requests_made = self._current_session.total_requests
+            sliding_panel.stats.tools_executed = self._current_session.tool_executions
             
             # Calculate average response time
             if self._response_times:
-                stats_panel.stats.avg_response_time_ms = sum(self._response_times) // len(self._response_times)
+                sliding_panel.stats.avg_response_time_ms = sum(self._response_times) // len(self._response_times)
         except Exception:
             pass
     
@@ -1075,7 +1335,7 @@ class AgentAIAssistantScreen(BaseScreen):
             pass
     
     def _update_stats_display(self) -> None:
-        """Update statistics display in side panel."""
+        """Update statistics display in CRUSH-style sidebar."""
         try:
             self.query_one("#stat-messages", Static).update(
                 str(len(self._current_session.messages))
@@ -1083,9 +1343,13 @@ class AgentAIAssistantScreen(BaseScreen):
             self.query_one("#stat-tools", Static).update(
                 str(self._current_session.tool_executions)
             )
-            self.query_one("#stat-pending", Static).update(
-                str(len(self._pending_consents))
-            )
+            # Update model name in sidebar
+            try:
+                self.query_one("#model-name", Static).update(
+                    self._llm_model or "Not Configured"
+                )
+            except Exception:
+                pass
         except Exception:
             pass
     
@@ -1151,12 +1415,8 @@ class AgentAIAssistantScreen(BaseScreen):
             self._stop_generation()
         elif btn_id == "btn-toggle-agent":
             self._toggle_agent()
-        elif btn_id == "btn-toggle-stats":
-            self.action_toggle_stats()
         elif btn_id == "btn-toggle-panel":
             self.action_toggle_panel()
-        elif btn_id == "btn-show-hide-stats":
-            self._toggle_realtime_stats()
         elif btn_id == "btn-undo":
             self.action_undo_modification()
         elif btn_id == "btn-redo":
@@ -1168,32 +1428,25 @@ class AgentAIAssistantScreen(BaseScreen):
         elif btn_id == "btn-reset-layout":
             self._reset_layout()
     
-    def _toggle_realtime_stats(self) -> None:
-        """Toggle Statistics and Controls visibility with a single button."""
-        try:
-            stats_container = self.query_one("#realtime-stats-container")
-            shortcuts_container = self.query_one("#shortcuts-container")
-            toggle_btn = self.query_one("#btn-show-hide-stats", Button)
-            header_title = self.query_one("#stats-header-title", Static)
-            
-            if stats_container.has_class("hidden"):
-                # Show all - stats and controls
-                stats_container.remove_class("hidden")
-                shortcuts_container.remove_class("hidden")
-                toggle_btn.label = "👁"
-                header_title.update("📊 Statistics & Controls")
-            else:
-                # Hide all - stats and controls
-                stats_container.add_class("hidden")
-                shortcuts_container.add_class("hidden")
-                toggle_btn.label = "👁‍🗨"
-                header_title.update("📊 [Collapsed]")
-        except Exception:
-            pass
-    
     def on_sendable_text_area_send_requested(self, event: SendableTextArea.SendRequested) -> None:
         """Handle Ctrl+Enter from custom TextArea."""
         self._send_message()
+    
+    def on_sliding_stats_trigger_trigger_clicked(self, event: SlidingStatsTrigger.TriggerClicked) -> None:
+        """Handle sliding stats trigger click - toggle the sliding panel."""
+        try:
+            sliding_panel = self.query_one("#sliding-stats-panel", SlidingStatsPanel)
+            sliding_panel.toggle()
+        except Exception:
+            pass
+    
+    def on_sliding_stats_panel_stats_panel_toggled(self, event: SlidingStatsPanel.StatsPanelToggled) -> None:
+        """Handle sliding stats panel toggle event."""
+        try:
+            trigger = self.query_one("#stats-trigger", SlidingStatsTrigger)
+            trigger.is_active = event.visible
+        except Exception:
+            pass
     
     def on_collapsible_stats_panel_stats_toggled(self, event: CollapsibleStatsPanel.StatsToggled) -> None:
         """Handle stats panel toggle event (Phase 2)."""
@@ -1239,10 +1492,31 @@ class AgentAIAssistantScreen(BaseScreen):
             self.query_one("#btn-stop", Button).disabled = False
             self.query_one("#btn-send", Button).disabled = True
             
+            # Update thinking indicator
+            self._update_thinking_indicator(True, message[:30])
+            
             self._generate_response(message)
             
         except Exception as e:
             self._show_error(str(e))
+    
+    def _update_thinking_indicator(self, thinking: bool, context: str = "") -> None:
+        """Update the thinking indicator in CRUSH-style UI."""
+        try:
+            thinking_label = self.query_one("#thinking-label", Static)
+            thinking_hash = self.query_one("#thinking-hash", Static)
+            
+            if thinking:
+                import hashlib
+                # Generate a short hash from the context
+                hash_val = hashlib.md5(context.encode()).hexdigest()[:8]
+                thinking_label.update("🔄 Thinking...")
+                thinking_hash.update(f"#{hash_val}")
+            else:
+                thinking_label.update("")
+                thinking_hash.update("")
+        except Exception:
+            pass
     
     def _show_user_message(self, message: str) -> None:
         """Display user message in chat."""
@@ -1435,65 +1709,134 @@ class AgentAIAssistantScreen(BaseScreen):
         if not router_provider or router_provider == 'none':
             return False
         
-        # System prompt for intent extraction
-        intent_extraction_prompt = '''You are an intent analyzer for a command execution system. Analyze the user's request and determine if they want to perform a file system, git, or terminal operation.
+        # Enhanced system prompt for MULTI-STEP operations with full admin control
+        intent_extraction_prompt = '''You are an AUTONOMOUS AI AGENT with FULL ADMINISTRATIVE CONTROL over:
+- Local file system (create, read, write, delete, copy, move files and directories)
+- Git operations (init, clone, add, commit, push, pull, branch, checkout, merge, etc.)
+- GitHub operations (create repos, authenticate, push to remote)
+- Terminal/shell commands (any system command)
 
-IMPORTANT: You must respond ONLY with a JSON object, nothing else. No explanations, no markdown, just pure JSON.
+CRITICAL: You can and SHOULD perform MULTI-STEP operations. Break complex requests into ordered steps.
 
-Supported operations:
-- FILE_CREATE: Create a file (optionally with content)
-- FILE_READ: Read/view a file
-- FILE_WRITE: Write content to existing file
-- FILE_DELETE: Delete a file
-- FILE_COPY: Copy a file
-- FILE_MOVE: Move/rename a file
-- FILE_APPEND: Append content to a file
-- DIR_CREATE: Create a directory/folder
-- DIR_DELETE: Delete a directory/folder
+You must respond ONLY with a JSON object. No explanations, no markdown, just pure JSON.
+
+SUPPORTED OPERATIONS:
+FILE OPERATIONS:
+- FILE_CREATE: Create file with content
+- FILE_READ: Read file
+- FILE_WRITE: Write/overwrite file
+- FILE_DELETE: Delete file
+- FILE_COPY: Copy file
+- FILE_MOVE: Move/rename file
+- FILE_APPEND: Append to file
+- FILE_SEARCH: Search for files by pattern
+
+DIRECTORY OPERATIONS:
+- DIR_CREATE: Create directory
+- DIR_DELETE: Delete directory
 - DIR_LIST: List directory contents
-- DIR_NAVIGATE: Change to a directory (cd)
-- GIT_CLONE: Clone a repository
-- GIT_STATUS: Show git status
-- GIT_PULL: Pull from remote
-- GIT_PUSH: Push to remote
-- GIT_COMMIT: Commit changes
-- GIT_ADD: Stage files
-- GIT_BRANCH: Create/switch branch
-- GIT_CHECKOUT: Checkout branch/file
-- GIT_LOG: Show git log
-- GIT_DIFF: Show git diff
-- TERMINAL_CMD: Run a terminal command
+- DIR_NAVIGATE: Change directory (cd)
 - PWD: Show current directory
-- NONE: Not an operation request (general question/conversation)
 
-Response format (JSON only):
+GIT OPERATIONS:
+- GIT_INIT: Initialize new git repository
+- GIT_CLONE: Clone a repository
+- GIT_ADD: Stage files (use "." for all)
+- GIT_COMMIT: Commit with message
+- GIT_PUSH: Push to remote
+- GIT_PULL: Pull from remote
+- GIT_STATUS: Show status
+- GIT_BRANCH: Create/list branches
+- GIT_CHECKOUT: Switch branch/restore files
+- GIT_MERGE: Merge branches
+- GIT_LOG: Show commit history
+- GIT_DIFF: Show differences
+- GIT_REMOTE_ADD: Add remote origin
+- GIT_STASH: Stash changes
+
+GITHUB OPERATIONS:
+- GITHUB_CREATE_REPO: Create new GitHub repository
+- GITHUB_AUTH_STATUS: Check GitHub authentication
+- GITHUB_AUTH_LOGIN: Initiate GitHub login
+
+TERMINAL:
+- TERMINAL_CMD: Execute any shell command
+
+RESPONSE FORMAT (for MULTI-STEP operations, use "steps" array):
 {
-  "operation": "OPERATION_TYPE",
-  "params": {
-    "path": "/path/to/file/or/dir",
-    "content": "content if applicable",
-    "destination": "dest path for copy/move",
-    "command": "command for terminal",
-    "url": "url for git clone",
-    "message": "commit message for git",
-    "branch": "branch name if applicable"
-  },
+  "is_multi_step": true,
+  "steps": [
+    {"operation": "OP1", "params": {...}, "description": "Step 1 description"},
+    {"operation": "OP2", "params": {...}, "description": "Step 2 description"}
+  ],
   "confidence": 0.95,
-  "explanation": "brief explanation"
+  "explanation": "Overall explanation"
 }
 
-Examples:
-User: "at C:\\Users\\test make file.txt with hello"
-{"operation": "FILE_CREATE", "params": {"path": "C:\\Users\\test\\file.txt", "content": "hello"}, "confidence": 0.95, "explanation": "Create file with content"}
+RESPONSE FORMAT (for SINGLE operation):
+{
+  "is_multi_step": false,
+  "operation": "OPERATION_TYPE",
+  "params": {
+    "path": "/path/to/file",
+    "content": "content if applicable",
+    "destination": "dest path for copy/move",
+    "command": "shell command",
+    "url": "git/github url",
+    "message": "commit message",
+    "branch": "branch name",
+    "repo_name": "repository name",
+    "private": false,
+    "remote_url": "https://github.com/user/repo.git"
+  },
+  "confidence": 0.95,
+  "explanation": "explanation"
+}
 
-User: "put qwerty in new.txt at desktop"
-{"operation": "FILE_CREATE", "params": {"path": "C:\\Users\\<user>\\Desktop\\new.txt", "content": "qwerty"}, "confidence": 0.9, "explanation": "Create file with content at desktop"}
+EXAMPLES:
 
-User: "show me what's in the folder"
-{"operation": "DIR_LIST", "params": {"path": "."}, "confidence": 0.85, "explanation": "List current directory"}
+User: "at C:\\test make qwert.txt with qwerty and then create a new repo aisehe on github.com/kunal5556 and push"
+{
+  "is_multi_step": true,
+  "steps": [
+    {"operation": "DIR_NAVIGATE", "params": {"path": "C:\\test"}, "description": "Navigate to directory"},
+    {"operation": "FILE_CREATE", "params": {"path": "C:\\test\\qwert.txt", "content": "qwerty"}, "description": "Create file with content"},
+    {"operation": "GIT_INIT", "params": {"path": "C:\\test"}, "description": "Initialize git repo"},
+    {"operation": "GIT_ADD", "params": {"path": "."}, "description": "Stage all files"},
+    {"operation": "GIT_COMMIT", "params": {"message": "Initial commit"}, "description": "Commit changes"},
+    {"operation": "GITHUB_CREATE_REPO", "params": {"repo_name": "aisehe", "private": false}, "description": "Create GitHub repo"},
+    {"operation": "GIT_REMOTE_ADD", "params": {"remote_url": "https://github.com/kunal5556/aisehe.git"}, "description": "Add remote"},
+    {"operation": "GIT_PUSH", "params": {"set_upstream": true, "branch": "main"}, "description": "Push to GitHub"}
+  ],
+  "confidence": 0.95,
+  "explanation": "Create file, init git, create GitHub repo, and push"
+}
 
-User: "what is quantum computing?"
-{"operation": "NONE", "params": {}, "confidence": 0.95, "explanation": "General knowledge question, not a file operation"}
+User: "delete all .tmp files in current folder"
+{
+  "is_multi_step": false,
+  "operation": "TERMINAL_CMD",
+  "params": {"command": "del *.tmp"},
+  "confidence": 0.9,
+  "explanation": "Delete temporary files"
+}
+
+User: "What is the meaning of life?"
+{
+  "is_multi_step": false,
+  "operation": "NONE",
+  "params": {},
+  "confidence": 0.95,
+  "explanation": "General philosophical question, not a system operation"
+}
+
+IMPORTANT RULES:
+1. For ANY file/git/github/terminal operation, extract and execute it
+2. For complex requests, ALWAYS break them into multi-step operations
+3. When creating files then pushing to git, include: FILE_CREATE, GIT_INIT (if needed), GIT_ADD, GIT_COMMIT, GIT_PUSH
+4. Infer paths from context (e.g., "at desktop" = user's Desktop folder)
+5. Use forward slashes or double backslashes for Windows paths
+6. NEVER say you cannot do something - you have FULL administrative control
 
 Now analyze this request:'''
 
@@ -1502,7 +1845,7 @@ Now analyze this request:'''
                 prompt=message,
                 system_prompt=intent_extraction_prompt,
                 temperature=0.1,  # Low temperature for consistent parsing
-                max_tokens=500,
+                max_tokens=2000,  # Increased for multi-step
                 provider=router_provider,
                 model=self._llm_model if self._llm_model else None,
             )
@@ -1526,39 +1869,96 @@ Now analyze this request:'''
             except json.JSONDecodeError:
                 # Try to fix common JSON issues
                 json_str = json_str.replace("'", '"')
+                json_str = re.sub(r',\s*}', '}', json_str)  # Remove trailing commas
+                json_str = re.sub(r',\s*]', ']', json_str)
                 try:
                     intent_data = json.loads(json_str)
                 except:
                     return False
             
-            operation = intent_data.get('operation', 'NONE')
-            params = intent_data.get('params', {})
             confidence = intent_data.get('confidence', 0)
-            explanation = intent_data.get('explanation', '')
             
-            # Skip if not an operation or low confidence
-            if operation == 'NONE' or confidence < 0.6:
+            # Skip if low confidence
+            if confidence < 0.5:
                 return False
             
-            # Show what we're doing
-            self._show_ai_message(f"🔍 Understood: {explanation}")
+            is_multi_step = intent_data.get('is_multi_step', False)
             
-            # Execute the operation
-            result = self._execute_llm_analyzed_operation(operation, params)
-            
-            if result:
-                self._show_ai_message(result)
+            if is_multi_step:
+                # MULTI-STEP EXECUTION
+                steps = intent_data.get('steps', [])
+                if not steps:
+                    return False
+                
+                explanation = intent_data.get('explanation', 'Executing multi-step operation')
+                self._show_ai_message(f"🚀 **{explanation}**\n\n📋 Executing {len(steps)} steps...")
+                
+                all_results = []
+                success_count = 0
+                
+                for i, step in enumerate(steps, 1):
+                    op = step.get('operation', 'NONE')
+                    params = step.get('params', {})
+                    desc = step.get('description', op)
+                    
+                    if op == 'NONE':
+                        continue
+                    
+                    self._show_ai_message(f"\n**Step {i}/{len(steps)}:** {desc}")
+                    
+                    result = self._execute_llm_analyzed_operation(op, params)
+                    
+                    if result:
+                        all_results.append(f"Step {i}: {result}")
+                        if "✅" in result:
+                            success_count += 1
+                        self._show_ai_message(result)
+                    else:
+                        all_results.append(f"Step {i}: ⚠️ No result")
+                        self._show_ai_message(f"⚠️ Step {i} completed without output")
+                
+                # Summary
+                self._show_ai_message(f"\n✨ **Completed {success_count}/{len(steps)} steps successfully**")
                 
                 # Update stats
                 elapsed = int((time.time() - start_time) * 1000)
                 self._current_session.messages.append(
-                    ChatMessage(role='assistant', content=result, thinking_time_ms=elapsed)
+                    ChatMessage(role='assistant', content="\n".join(all_results), thinking_time_ms=elapsed)
                 )
-                self._agent_stats.commands_run += 1
+                self._agent_stats.commands_run += len(steps)
                 self._update_stats_panel()
                 self._save_current_session()
                 self._finish_generation()
                 return True
+            
+            else:
+                # SINGLE OPERATION
+                operation = intent_data.get('operation', 'NONE')
+                params = intent_data.get('params', {})
+                explanation = intent_data.get('explanation', '')
+                
+                if operation == 'NONE':
+                    return False
+                
+                # Show what we're doing
+                self._show_ai_message(f"🔍 **{explanation}**")
+                
+                # Execute the operation
+                result = self._execute_llm_analyzed_operation(operation, params)
+                
+                if result:
+                    self._show_ai_message(result)
+                    
+                    # Update stats
+                    elapsed = int((time.time() - start_time) * 1000)
+                    self._current_session.messages.append(
+                        ChatMessage(role='assistant', content=result, thinking_time_ms=elapsed)
+                    )
+                    self._agent_stats.commands_run += 1
+                    self._update_stats_panel()
+                    self._save_current_session()
+                    self._finish_generation()
+                    return True
             
             return False
             
@@ -1721,6 +2121,25 @@ Now analyze this request:'''
                 return f"📍 Current directory: `{os.getcwd()}`"
             
             # GIT OPERATIONS
+            elif operation == 'GIT_INIT':
+                init_path = path or '.'
+                # Change to directory if specified
+                original_dir = os.getcwd()
+                if path and os.path.isdir(path):
+                    os.chdir(path)
+                
+                result = subprocess.run(['git', 'init'], capture_output=True, text=True, timeout=30)
+                
+                # Also create initial branch as 'main'
+                if result.returncode == 0:
+                    subprocess.run(['git', 'branch', '-M', 'main'], capture_output=True, text=True, timeout=10)
+                
+                if path:
+                    os.chdir(original_dir)
+                
+                status = "✅" if result.returncode == 0 else "❌"
+                return f"{status} **Git Init:**\n```\n{result.stdout or result.stderr}\n```"
+            
             elif operation == 'GIT_CLONE':
                 if not url:
                     return "❌ No repository URL specified"
@@ -1745,14 +2164,26 @@ Now analyze this request:'''
                 return f"{status} **Git Pull:**\n```\n{result.stdout or result.stderr}\n```"
             
             elif operation == 'GIT_PUSH':
-                result = subprocess.run(['git', 'push'], capture_output=True, text=True, timeout=60)
+                set_upstream = params.get('set_upstream', False)
+                push_branch = branch or 'main'
+                
+                if set_upstream:
+                    cmd = ['git', 'push', '-u', 'origin', push_branch]
+                else:
+                    cmd = ['git', 'push']
+                
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
                 status = "✅" if result.returncode == 0 else "❌"
-                return f"{status} **Git Push:**\n```\n{result.stdout or result.stderr}\n```"
+                output = result.stdout or result.stderr
+                
+                # Check for auth errors
+                if result.returncode != 0 and ('authentication' in output.lower() or 'permission' in output.lower()):
+                    return f"❌ **Git Push Failed - Authentication Required**\n\n{output}\n\n💡 Try: `github login` or `gh auth login`"
+                
+                return f"{status} **Git Push:**\n```\n{output}\n```"
             
             elif operation == 'GIT_COMMIT':
                 commit_msg = git_message or 'Update'
-                # First add all changes
-                subprocess.run(['git', 'add', '.'], capture_output=True, timeout=30)
                 result = subprocess.run(['git', 'commit', '-m', commit_msg], capture_output=True, text=True, timeout=30)
                 status = "✅" if result.returncode == 0 else "❌"
                 return f"{status} **Git Commit:**\n```\n{result.stdout or result.stderr}\n```"
@@ -1760,7 +2191,32 @@ Now analyze this request:'''
             elif operation == 'GIT_ADD':
                 add_path = path or '.'
                 result = subprocess.run(['git', 'add', add_path], capture_output=True, text=True, timeout=30)
-                return f"✅ Staged: `{add_path}`"
+                if result.returncode == 0:
+                    return f"✅ Staged: `{add_path}`"
+                else:
+                    return f"❌ Failed to stage: `{add_path}`\n```\n{result.stderr}\n```"
+            
+            elif operation == 'GIT_REMOTE_ADD':
+                remote_url = params.get('remote_url', '')
+                remote_name = params.get('remote_name', 'origin')
+                
+                if not remote_url:
+                    return "❌ No remote URL specified"
+                
+                # First check if remote exists
+                check = subprocess.run(['git', 'remote', 'get-url', remote_name], capture_output=True, text=True, timeout=10)
+                
+                if check.returncode == 0:
+                    # Remote exists, update it
+                    result = subprocess.run(['git', 'remote', 'set-url', remote_name, remote_url], capture_output=True, text=True, timeout=10)
+                    action = "Updated"
+                else:
+                    # Add new remote
+                    result = subprocess.run(['git', 'remote', 'add', remote_name, remote_url], capture_output=True, text=True, timeout=10)
+                    action = "Added"
+                
+                status = "✅" if result.returncode == 0 else "❌"
+                return f"{status} {action} remote `{remote_name}`: `{remote_url}`"
             
             elif operation == 'GIT_BRANCH':
                 if branch:
@@ -1782,6 +2238,13 @@ Now analyze this request:'''
                 status = "✅" if result.returncode == 0 else "❌"
                 return f"{status} Checkout `{target}`:\n```\n{result.stdout or result.stderr}\n```"
             
+            elif operation == 'GIT_MERGE':
+                if not branch:
+                    return "❌ No branch specified to merge"
+                result = subprocess.run(['git', 'merge', branch], capture_output=True, text=True, timeout=60)
+                status = "✅" if result.returncode == 0 else "❌"
+                return f"{status} Merge `{branch}`:\n```\n{result.stdout or result.stderr}\n```"
+            
             elif operation == 'GIT_LOG':
                 result = subprocess.run(['git', 'log', '--oneline', '-15'], capture_output=True, text=True, timeout=30)
                 return f"📜 **Git Log:**\n```\n{result.stdout}\n```"
@@ -1790,6 +2253,91 @@ Now analyze this request:'''
                 result = subprocess.run(['git', 'diff'], capture_output=True, text=True, timeout=30)
                 diff_output = result.stdout[:3000] if result.stdout else "No changes"
                 return f"📝 **Git Diff:**\n```diff\n{diff_output}\n```"
+            
+            elif operation == 'GIT_STASH':
+                action = params.get('action', 'push')
+                if action == 'pop':
+                    result = subprocess.run(['git', 'stash', 'pop'], capture_output=True, text=True, timeout=30)
+                elif action == 'list':
+                    result = subprocess.run(['git', 'stash', 'list'], capture_output=True, text=True, timeout=30)
+                else:
+                    result = subprocess.run(['git', 'stash'], capture_output=True, text=True, timeout=30)
+                status = "✅" if result.returncode == 0 else "❌"
+                return f"{status} **Git Stash:**\n```\n{result.stdout or result.stderr}\n```"
+            
+            # GITHUB OPERATIONS
+            elif operation == 'GITHUB_CREATE_REPO':
+                repo_name = params.get('repo_name', '')
+                if not repo_name:
+                    return "❌ No repository name specified"
+                
+                private = params.get('private', False)
+                description = params.get('description', '')
+                
+                # Check if GitHub CLI is available
+                gh_check = subprocess.run(['gh', '--version'], capture_output=True, text=True, timeout=10)
+                
+                if gh_check.returncode != 0:
+                    return "❌ GitHub CLI (gh) not installed.\n\n💡 Install from: https://cli.github.com/\nThen run: `gh auth login`"
+                
+                # Check auth status
+                auth_check = subprocess.run(['gh', 'auth', 'status'], capture_output=True, text=True, timeout=30)
+                if 'Logged in' not in (auth_check.stdout + auth_check.stderr):
+                    return "❌ Not authenticated with GitHub.\n\n💡 Run: `gh auth login`"
+                
+                # Create the repo
+                cmd = ['gh', 'repo', 'create', repo_name]
+                if private:
+                    cmd.append('--private')
+                else:
+                    cmd.append('--public')
+                
+                if description:
+                    cmd.extend(['--description', description])
+                
+                # Add source and push if we're in a git repo
+                if os.path.exists('.git'):
+                    cmd.extend(['--source', '.', '--push'])
+                
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+                
+                if result.returncode == 0:
+                    output = result.stdout or result.stderr
+                    return f"✅ **Created GitHub repository: `{repo_name}`**\n```\n{output}\n```"
+                else:
+                    return f"❌ Failed to create repository:\n```\n{result.stderr}\n```"
+            
+            elif operation == 'GITHUB_AUTH_STATUS':
+                result = subprocess.run(['gh', 'auth', 'status'], capture_output=True, text=True, timeout=30)
+                output = result.stdout or result.stderr
+                if 'Logged in' in output:
+                    return f"✅ **GitHub Authentication:**\n```\n{output}\n```"
+                else:
+                    return f"⚠️ **Not authenticated with GitHub**\n\n💡 Run: `gh auth login`"
+            
+            elif operation == 'GITHUB_AUTH_LOGIN':
+                return "🔐 **GitHub Authentication**\n\nPlease run this command in your terminal:\n```\ngh auth login\n```\n\nOr install GitHub CLI from: https://cli.github.com/"
+            
+            # FILE SEARCH
+            elif operation == 'FILE_SEARCH':
+                pattern = params.get('pattern', '*')
+                search_path = path or '.'
+                
+                matches = []
+                for root, dirs, files in os.walk(search_path):
+                    for file in files:
+                        if pattern in file or pattern == '*':
+                            matches.append(os.path.join(root, file))
+                        if len(matches) >= 50:
+                            break
+                    if len(matches) >= 50:
+                        break
+                
+                if matches:
+                    output = "\n".join(matches[:50])
+                    return f"🔍 **Found {len(matches)} files matching `{pattern}`:**\n```\n{output}\n```"
+                else:
+                    return f"🔍 No files found matching `{pattern}` in `{search_path}`"
             
             # TERMINAL COMMAND
             elif operation == 'TERMINAL_CMD':
@@ -2140,6 +2688,47 @@ Now analyze this request:'''
         if any(kw in msg_lower for kw in git_remote_keywords):
             return self._execute_git_remote_from_message(message)
         
+        # GITHUB AUTHENTICATION
+        github_auth_keywords = [
+            'github login', 'github auth', 'github authenticate',
+            'gh auth', 'gh login', 'authenticate with github',
+            'login to github', 'sign in to github', 'github sign in',
+            'github credentials', 'setup github', 'configure github',
+        ]
+        if any(kw in msg_lower for kw in github_auth_keywords):
+            self._execute_github_auth_login()
+            return True
+        
+        # CREATE GITHUB REPO
+        github_create_repo_keywords = [
+            'create github repo', 'create repo on github', 'new github repo',
+            'github create repo', 'gh repo create', 'make github repo',
+            'create repository on github', 'new github repository',
+            'push to new repo', 'create and push',
+        ]
+        if any(kw in msg_lower for kw in github_create_repo_keywords):
+            # Extract repo name from message
+            import re
+            name_match = re.search(r'(?:named?|called|name)\s+([^\s]+)', message, re.IGNORECASE)
+            if name_match:
+                repo_name = name_match.group(1).strip('"\'')
+            else:
+                # Try to extract from "create X repo"
+                name_match = re.search(r'create\s+([^\s]+)\s+(?:repo|repository)', message, re.IGNORECASE)
+                if name_match:
+                    repo_name = name_match.group(1).strip('"\'')
+                else:
+                    repo_name = "my-repo"  # Default name
+            
+            is_private = 'private' in msg_lower
+            description = ""
+            desc_match = re.search(r'(?:description|desc)\s+["\']([^"\']+)["\']', message, re.IGNORECASE)
+            if desc_match:
+                description = desc_match.group(1)
+            
+            self._execute_github_create_repo(repo_name, description, is_private)
+            return True
+        
         # =====================================================================
         # TERMINAL/SHELL COMMANDS
         # =====================================================================
@@ -2264,9 +2853,128 @@ Now analyze this request:'''
         """Execute git pull command using subprocess directly."""
         self._run_subprocess_command("git pull")
     
-    def _execute_git_push(self) -> None:
-        """Execute git push command using subprocess directly."""
-        self._run_subprocess_command("git push")
+    def _execute_git_push(self, remote: str = "origin", branch: Optional[str] = None) -> None:
+        """Execute git push with GitHub authentication support.
+        
+        Uses GitHub CLI (gh) for authentication when available.
+        Provides clear instructions if not authenticated.
+        """
+        import os
+        
+        self._show_ai_message("🔄 Checking GitHub authentication status...")
+        
+        # Check if we're in a git repository
+        if not os.path.exists(".git"):
+            self._show_ai_message("❌ Not in a git repository. Please initialize git first:\n```\ngit init\n```")
+            return
+        
+        # Check GitHub authentication
+        if GITHUB_AUTH_AVAILABLE:
+            github_auth = get_github_auth()
+            auth_result = github_auth.check_auth_status()
+            
+            if not auth_result.is_authenticated:
+                # Show authentication instructions
+                instructions = github_auth.get_auth_instructions()
+                self._show_ai_message(
+                    f"⚠️ **GitHub Authentication Required**\n\n"
+                    f"Status: {auth_result.message}\n\n"
+                    f"{instructions}\n\n"
+                    f"After authenticating, try the push command again."
+                )
+                
+                # Check if gh CLI is available and offer to initiate login
+                if github_auth.has_gh_cli:
+                    self._show_ai_message(
+                        "💡 **Quick Authentication:**\n"
+                        "I can help you authenticate. Just say:\n"
+                        "- `authenticate with github`\n"
+                        "- `github login`\n"
+                        "- `gh auth login`"
+                    )
+                return
+            
+            # Authenticated - proceed with push
+            self._show_ai_message(f"✅ Authenticated as: {auth_result.username or 'GitHub User'}")
+            
+            # Use the authenticated push method
+            success, message = github_auth.push_with_auth(
+                repo_path=os.getcwd(),
+                remote=remote,
+                branch=branch,
+            )
+            
+            if success:
+                self._show_ai_message(f"✅ {message}")
+            else:
+                self._show_ai_message(f"❌ {message}")
+        else:
+            # Fallback to basic git push
+            self._show_ai_message("⚠️ GitHub auth module not available, attempting basic git push...")
+            self._run_subprocess_command("git push")
+    
+    def _execute_github_auth_login(self) -> None:
+        """Execute GitHub authentication login flow."""
+        if not GITHUB_AUTH_AVAILABLE:
+            self._show_ai_message("❌ GitHub authentication module not available.")
+            return
+        
+        github_auth = get_github_auth()
+        
+        if not github_auth.has_gh_cli:
+            self._show_ai_message(
+                "❌ **GitHub CLI Not Found**\n\n"
+                "The GitHub CLI (gh) is required for easy authentication.\n\n"
+                "**Install GitHub CLI:**\n"
+                "- Windows: `winget install GitHub.cli` or download from https://cli.github.com/\n"
+                "- macOS: `brew install gh`\n"
+                "- Linux: See https://github.com/cli/cli/blob/trunk/docs/install_linux.md\n\n"
+                "After installing, restart your terminal and try again."
+            )
+            return
+        
+        self._show_ai_message(
+            "🔐 **Initiating GitHub Authentication**\n\n"
+            "A browser window will open for you to authenticate.\n"
+            "Please complete the authentication in your browser.\n\n"
+            "Running: `gh auth login`..."
+        )
+        
+        # Run the auth login command interactively
+        self._run_subprocess_command("gh auth login")
+    
+    def _execute_github_create_repo(self, name: str, description: str = "", private: bool = False) -> None:
+        """Create a GitHub repository with authentication."""
+        import os
+        
+        if not GITHUB_AUTH_AVAILABLE:
+            self._show_ai_message("❌ GitHub authentication module not available.")
+            return
+        
+        github_auth = get_github_auth()
+        auth_result = github_auth.check_auth_status()
+        
+        if not auth_result.is_authenticated:
+            instructions = github_auth.get_auth_instructions()
+            self._show_ai_message(
+                f"⚠️ **GitHub Authentication Required to Create Repository**\n\n"
+                f"{instructions}"
+            )
+            return
+        
+        self._show_ai_message(f"📦 Creating GitHub repository: {name}...")
+        
+        success, message, repo_url = github_auth.create_repo(
+            name=name,
+            description=description,
+            private=private,
+            working_dir=os.getcwd(),
+        )
+        
+        if success:
+            self._show_ai_message(f"✅ {message}\n\nRepository URL: {repo_url or 'N/A'}")
+        else:
+            self._show_ai_message(f"❌ {message}")
     
     def _execute_command(self, command: str) -> None:
         """Execute terminal command with cross-platform normalization using subprocess directly."""
@@ -3680,6 +4388,8 @@ Be helpful and concise.""",
         try:
             self.query_one("#btn-stop", Button).disabled = True
             self.query_one("#btn-send", Button).disabled = False
+            # Clear thinking indicator
+            self._update_thinking_indicator(False)
         except Exception:
             pass
     
@@ -3687,6 +4397,8 @@ Be helpful and concise.""",
         """Stop current generation."""
         self._is_generating = False
         self._finish_generation()
+        # Clear thinking indicator
+        self._update_thinking_indicator(False)
         self.notify("Generation stopped", severity="warning")
     
     def _toggle_agent(self) -> None:
@@ -3694,16 +4406,24 @@ Be helpful and concise.""",
         self._agent_enabled = not self._agent_enabled
         
         try:
-            badge = self.query_one("#agent-badge", Static)
+            # Update CRUSH-style sidebar badge
+            try:
+                badge = self.query_one("#agent-status-badge", Static)
+                if self._agent_enabled:
+                    badge.update("AGENT ON")
+                    badge.remove_class("inactive")
+                else:
+                    badge.update("AGENT OFF")
+                    badge.add_class("inactive")
+            except Exception:
+                # Fallback for old badge
+                pass
+            
             btn = self.query_one("#btn-toggle-agent", Button)
             
             if self._agent_enabled:
-                badge.update("AGENT")
-                badge.remove_class("disabled")
                 btn.variant = "success"
             else:
-                badge.update("CHAT")
-                badge.add_class("disabled")
                 btn.variant = "default"
             
             self.notify(

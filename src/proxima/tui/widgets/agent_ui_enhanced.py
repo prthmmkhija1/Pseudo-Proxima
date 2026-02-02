@@ -669,29 +669,37 @@ class ResizablePanelContainer(Container):
 
 
 class ResizeHandle(Static):
-    """Resize handle widget for drag interaction."""
+    """Resize handle widget for drag interaction.
+    
+    TRANSPARENT by default - only visible on hover to prevent
+    obscuring text behind it.
+    """
     
     DEFAULT_CSS = """
     ResizeHandle {
-        background: $primary-darken-2;
+        /* Transparent by default - does not obscure text */
+        background: transparent;
     }
     
     ResizeHandle:hover {
-        background: $accent;
+        /* Visible on hover with subtle highlight */
+        background: rgba(100, 100, 255, 0.3);
     }
     
     ResizeHandle.horizontal {
         width: 1;
         height: 100%;
+        padding: 0 1;
     }
     
     ResizeHandle.vertical {
         width: 100%;
         height: 1;
+        padding: 1 0;
     }
     
     ResizeHandle.dragging {
-        background: $success;
+        background: rgba(100, 255, 100, 0.5);
     }
     """
     
@@ -1043,6 +1051,335 @@ class CollapsibleStatsPanel(Container):
                 setattr(self.stats, key, value)
         
         self._refresh_display()
+
+
+# =============================================================================
+# Step 2.4b: Sliding Stats Panel (No Blinking)
+# =============================================================================
+
+class SlidingStatsPanel(Container):
+    """Sliding stats panel that appears from the right edge when button is clicked.
+    
+    This panel stays off-screen to the right and slides in when toggled.
+    It does NOT blink or flicker on hover - completely stable display.
+    
+    Features:
+    - Off-screen by default, slides in smoothly
+    - Small toggle button always visible on right edge
+    - Auto-updates stats every second
+    - No hover effects that cause blinking
+    - Clean, stable visual design
+    """
+    
+    DEFAULT_CSS = """
+    SlidingStatsPanel {
+        /* Fixed width panel that docks to the right */
+        width: 35;
+        height: 100%;
+        /* Start off-screen (hidden) */
+        dock: right;
+        layer: overlay;
+        background: $surface;
+        border-left: solid $primary;
+        /* Hidden by default */
+        display: none;
+    }
+    
+    SlidingStatsPanel.visible {
+        display: block;
+    }
+    
+    SlidingStatsPanel .sliding-stats-header {
+        height: 3;
+        padding: 0 1;
+        background: $primary-darken-2;
+        border-bottom: solid $primary-darken-3;
+    }
+    
+    SlidingStatsPanel .sliding-stats-title {
+        width: 1fr;
+        text-style: bold;
+        color: $accent;
+    }
+    
+    SlidingStatsPanel .sliding-stats-close {
+        width: 3;
+        min-width: 3;
+        height: 1;
+        border: none;
+        background: transparent;
+    }
+    
+    SlidingStatsPanel .sliding-stats-body {
+        padding: 1;
+        height: 1fr;
+        overflow-y: auto;
+    }
+    
+    SlidingStatsPanel .stat-section {
+        margin-bottom: 1;
+    }
+    
+    SlidingStatsPanel .stat-section-title {
+        color: $accent;
+        text-style: bold;
+        margin-bottom: 0;
+    }
+    
+    SlidingStatsPanel .stat-row {
+        height: auto;
+        padding: 0;
+    }
+    
+    SlidingStatsPanel .stat-label {
+        width: 12;
+        color: $text-muted;
+    }
+    
+    SlidingStatsPanel .stat-value {
+        width: 1fr;
+        text-align: right;
+        text-style: bold;
+    }
+    """
+    
+    class StatsPanelToggled(Message):
+        """Emitted when sliding panel is toggled."""
+        def __init__(self, visible: bool) -> None:
+            self.visible = visible
+            super().__init__()
+    
+    is_visible: reactive[bool] = reactive(False)
+    
+    def __init__(
+        self,
+        stats: Optional[AgentStats] = None,
+        auto_refresh: bool = True,
+        refresh_interval: float = 1.0,
+        **kwargs,
+    ):
+        """Initialize the sliding stats panel.
+        
+        Args:
+            stats: Initial stats object
+            auto_refresh: Whether to auto-refresh stats
+            refresh_interval: Refresh interval in seconds (slower to prevent blinking)
+        """
+        super().__init__(**kwargs)
+        self.stats = stats or AgentStats()
+        self.auto_refresh = auto_refresh
+        self.refresh_interval = refresh_interval
+        self._refresh_timer: Optional[Timer] = None
+    
+    def compose(self) -> ComposeResult:
+        """Compose the sliding panel."""
+        with Horizontal(classes="sliding-stats-header"):
+            yield Static("📊 Statistics", classes="sliding-stats-title")
+            yield Button("✕", id="btn-close-sliding-stats", classes="sliding-stats-close")
+        
+        with ScrollableContainer(classes="sliding-stats-body"):
+            # LLM Section
+            with Container(classes="stat-section"):
+                yield Static("🧠 LLM", classes="stat-section-title")
+                with Horizontal(classes="stat-row"):
+                    yield Static("Provider:", classes="stat-label")
+                    yield Static(self.stats.provider, classes="stat-value", id="slide-provider")
+                with Horizontal(classes="stat-row"):
+                    yield Static("Model:", classes="stat-label")
+                    yield Static(self.stats.model, classes="stat-value", id="slide-model")
+                with Horizontal(classes="stat-row"):
+                    yield Static("Temperature:", classes="stat-label")
+                    yield Static(f"{self.stats.temperature}", classes="stat-value", id="slide-temp")
+            
+            # Session Section
+            with Container(classes="stat-section"):
+                yield Static("💬 Session", classes="stat-section-title")
+                with Horizontal(classes="stat-row"):
+                    yield Static("Messages:", classes="stat-label")
+                    yield Static(str(self.stats.messages_sent), classes="stat-value", id="slide-messages")
+                with Horizontal(classes="stat-row"):
+                    yield Static("Tokens:", classes="stat-label")
+                    yield Static(f"{self.stats.tokens_used:,}", classes="stat-value", id="slide-tokens")
+                with Horizontal(classes="stat-row"):
+                    yield Static("Requests:", classes="stat-label")
+                    yield Static(str(self.stats.requests_made), classes="stat-value", id="slide-requests")
+            
+            # Performance Section
+            with Container(classes="stat-section"):
+                yield Static("⚡ Performance", classes="stat-section-title")
+                with Horizontal(classes="stat-row"):
+                    yield Static("Avg Time:", classes="stat-label")
+                    yield Static(f"{self.stats.avg_response_time_ms}ms", classes="stat-value", id="slide-avg-time")
+                with Horizontal(classes="stat-row"):
+                    yield Static("Uptime:", classes="stat-label")
+                    yield Static(self.stats.uptime_str, classes="stat-value", id="slide-uptime")
+                with Horizontal(classes="stat-row"):
+                    yield Static("Errors:", classes="stat-label")
+                    yield Static(str(self.stats.errors), classes="stat-value", id="slide-errors")
+            
+            # Agent Section
+            with Container(classes="stat-section"):
+                yield Static("🔧 Agent", classes="stat-section-title")
+                with Horizontal(classes="stat-row"):
+                    yield Static("Tools:", classes="stat-label")
+                    yield Static(str(self.stats.tools_executed), classes="stat-value", id="slide-tools")
+                with Horizontal(classes="stat-row"):
+                    yield Static("Files:", classes="stat-label")
+                    yield Static(str(self.stats.files_modified), classes="stat-value", id="slide-files")
+                with Horizontal(classes="stat-row"):
+                    yield Static("Commands:", classes="stat-label")
+                    yield Static(str(self.stats.commands_run), classes="stat-value", id="slide-commands")
+            
+            # Terminal Section
+            with Container(classes="stat-section"):
+                yield Static("⬛ Terminals", classes="stat-section-title")
+                with Horizontal(classes="stat-row"):
+                    yield Static("Active:", classes="stat-label")
+                    yield Static(str(self.stats.active_terminals), classes="stat-value", id="slide-active")
+                with Horizontal(classes="stat-row"):
+                    yield Static("Completed:", classes="stat-label")
+                    yield Static(str(self.stats.completed_processes), classes="stat-value", id="slide-completed")
+    
+    def on_mount(self) -> None:
+        """Start auto-refresh timer on mount."""
+        if self.auto_refresh:
+            self._refresh_timer = self.set_interval(
+                self.refresh_interval,
+                self._refresh_display,
+            )
+    
+    def on_unmount(self) -> None:
+        """Stop refresh timer on unmount."""
+        if self._refresh_timer:
+            self._refresh_timer.stop()
+    
+    def _refresh_display(self) -> None:
+        """Refresh all stat displays - only when visible."""
+        if not self.is_visible:
+            return
+        
+        self._update_stat("slide-provider", self.stats.provider)
+        self._update_stat("slide-model", self.stats.model)
+        self._update_stat("slide-temp", f"{self.stats.temperature}")
+        self._update_stat("slide-messages", str(self.stats.messages_sent))
+        self._update_stat("slide-tokens", f"{self.stats.tokens_used:,}")
+        self._update_stat("slide-requests", str(self.stats.requests_made))
+        self._update_stat("slide-avg-time", f"{self.stats.avg_response_time_ms}ms")
+        self._update_stat("slide-uptime", self.stats.uptime_str)
+        self._update_stat("slide-errors", str(self.stats.errors))
+        self._update_stat("slide-tools", str(self.stats.tools_executed))
+        self._update_stat("slide-files", str(self.stats.files_modified))
+        self._update_stat("slide-commands", str(self.stats.commands_run))
+        self._update_stat("slide-active", str(self.stats.active_terminals))
+        self._update_stat("slide-completed", str(self.stats.completed_processes))
+    
+    def _update_stat(self, stat_id: str, value: str) -> None:
+        """Update a single stat display without causing flicker."""
+        try:
+            widget = self.query_one(f"#{stat_id}", Static)
+            # Only update if value changed (prevents unnecessary redraws)
+            current = str(widget.renderable)
+            if current != value:
+                widget.update(value)
+        except NoMatches:
+            pass
+    
+    def watch_is_visible(self, visible: bool) -> None:
+        """Update display when visibility changes."""
+        if visible:
+            self.add_class("visible")
+            self._refresh_display()  # Refresh immediately when shown
+        else:
+            self.remove_class("visible")
+        
+        self.post_message(self.StatsPanelToggled(visible))
+    
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Handle close button press."""
+        if event.button.id == "btn-close-sliding-stats":
+            self.hide()
+            event.stop()
+    
+    def show(self) -> None:
+        """Show the sliding panel."""
+        self.is_visible = True
+    
+    def hide(self) -> None:
+        """Hide the sliding panel."""
+        self.is_visible = False
+    
+    def toggle(self) -> None:
+        """Toggle panel visibility."""
+        self.is_visible = not self.is_visible
+    
+    def update_stats(self, **kwargs) -> None:
+        """Update stats with new values.
+        
+        Args:
+            **kwargs: Stat names and values to update
+        """
+        for key, value in kwargs.items():
+            if hasattr(self.stats, key):
+                setattr(self.stats, key, value)
+        
+        if self.is_visible:
+            self._refresh_display()
+
+
+class SlidingStatsTrigger(Static):
+    """Small button that stays visible on screen edge to toggle stats panel.
+    
+    This is a small vertical button on the right edge that users click
+    to show/hide the sliding stats panel.
+    """
+    
+    DEFAULT_CSS = """
+    SlidingStatsTrigger {
+        dock: right;
+        width: 3;
+        height: 7;
+        background: $primary-darken-2;
+        color: $text;
+        content-align: center middle;
+        text-style: bold;
+        border-left: solid $primary;
+        /* Position at vertical center */
+        margin-top: 10;
+    }
+    
+    SlidingStatsTrigger:hover {
+        background: $accent;
+        color: $surface;
+    }
+    
+    SlidingStatsTrigger.active {
+        background: $success;
+    }
+    """
+    
+    class TriggerClicked(Message):
+        """Emitted when trigger is clicked."""
+        pass
+    
+    is_active: reactive[bool] = reactive(False)
+    
+    def __init__(self, **kwargs):
+        super().__init__("📊\n─\n─\n─\n◀", **kwargs)
+    
+    def on_click(self, event: events.Click) -> None:
+        """Handle click to toggle stats."""
+        self.is_active = not self.is_active
+        self.post_message(self.TriggerClicked())
+        event.stop()
+    
+    def watch_is_active(self, active: bool) -> None:
+        """Update appearance when active state changes."""
+        if active:
+            self.add_class("active")
+            self.update("📊\n─\n─\n─\n▶")
+        else:
+            self.remove_class("active")
+            self.update("📊\n─\n─\n─\n◀")
 
 
 # =============================================================================
