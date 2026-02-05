@@ -95,6 +95,19 @@ except ImportError:
     AGENT_AVAILABLE = False
     GITHUB_AUTH_AVAILABLE = False
 
+# Import Robust NL Processor for dynamic intent recognition
+try:
+    from proxima.agent.dynamic_tools.robust_nl_processor import (
+        get_robust_nl_processor,
+        RobustNLProcessor,
+        IntentType,
+        Intent,
+        SessionContext,
+    )
+    ROBUST_NL_AVAILABLE = True
+except ImportError:
+    ROBUST_NL_AVAILABLE = False
+
 # Import LLM components
 try:
     from proxima.intelligence.llm_router import LLMRouter, LLMRequest
@@ -857,6 +870,14 @@ class AgentAIAssistantScreen(BaseScreen):
                 def auto_consent(prompt: str) -> bool:
                     return True
                 self._llm_router = LLMRouter(consent_prompt=auto_consent)
+            except Exception:
+                pass
+        
+        # Initialize Robust NL Processor for dynamic intent recognition
+        self._robust_nl_processor: Optional[RobustNLProcessor] = None
+        if ROBUST_NL_AVAILABLE:
+            try:
+                self._robust_nl_processor = get_robust_nl_processor(self._llm_router)
             except Exception:
                 pass
         
@@ -1902,7 +1923,15 @@ class AgentAIAssistantScreen(BaseScreen):
             pass
     
     def _generate_response(self, message: str) -> None:
-        """Generate AI response with LLM-based intent analysis and tool execution."""
+        """Generate AI response with robust intent analysis and tool execution.
+        
+        Uses a multi-phase approach for reliable natural language understanding:
+        1. Direct pattern matching for complex multi-step backend operations
+        2. Robust NL processor (hybrid rule-based + context-aware) - MOST RELIABLE
+        3. LLM-based intent extraction with JSON parsing
+        4. Keyword-based agent command detection
+        5. General LLM response for questions
+        """
         start_time = time.time()
         
         # PHASE 0: Direct pattern matching for backend/clone/build requests
@@ -1912,21 +1941,28 @@ class AgentAIAssistantScreen(BaseScreen):
         if direct_result:
             return
         
-        # PHASE 1: Use LLM to analyze intent and execute operations
+        # PHASE 1: Use Robust NL Processor (MOST RELIABLE for simpler models)
+        # This works with ANY LLM model including smaller ones like llama2-uncensored
+        if ROBUST_NL_AVAILABLE and self._robust_nl_processor:
+            robust_result = self._try_robust_nl_execution(message, start_time)
+            if robust_result:
+                return
+        
+        # PHASE 2: Use LLM to analyze intent and execute operations
         # This allows natural language understanding for ANY sentence structure
         if self._llm_router and LLM_AVAILABLE:
             operation_result = self._analyze_and_execute_with_llm(message, start_time)
             if operation_result:
                 return
         
-        # PHASE 2: Fallback to keyword-based agent command detection
+        # PHASE 3: Fallback to keyword-based agent command detection
         if self._agent_enabled and self._agent:
             tool_result = self._try_execute_agent_command(message)
             if tool_result:
                 self._finish_generation()
                 return
         
-        # PHASE 3: Fall back to LLM response for general questions
+        # PHASE 4: Fall back to LLM response for general questions
         self._generate_llm_response(message, start_time)
     
     def _try_direct_backend_operation(self, message: str, start_time: float) -> bool:
@@ -2061,6 +2097,61 @@ class AgentAIAssistantScreen(BaseScreen):
         self._finish_generation()
         
         return True
+    
+    def _try_robust_nl_execution(self, message: str, start_time: float) -> bool:
+        """Use the robust NL processor for reliable intent recognition and execution.
+        
+        This method uses a hybrid rule-based + context-aware approach that works
+        reliably with ANY LLM model, including smaller models like llama2-uncensored.
+        
+        Key features:
+        - Pattern-based entity extraction (paths, branches, scripts, commands)
+        - Context tracking across multiple messages  
+        - Fallback-safe execution
+        
+        Returns True if an operation was identified and executed, False otherwise.
+        """
+        if not self._robust_nl_processor:
+            return False
+        
+        try:
+            # Recognize the user's intent
+            intent = self._robust_nl_processor.recognize_intent(message)
+            
+            # Skip if unknown intent or low confidence
+            if intent.intent_type == IntentType.UNKNOWN or intent.confidence < 0.4:
+                return False
+            
+            # Show what we understood
+            self._show_ai_message(f"🔍 **Understood:** {intent.explanation}")
+            
+            # Execute the intent
+            success, result = self._robust_nl_processor.execute_intent(intent)
+            
+            if result:
+                self._show_ai_message(result)
+                
+                # Update stats
+                elapsed = int((time.time() - start_time) * 1000)
+                self._current_session.messages.append(
+                    ChatMessage(role='assistant', content=result, thinking_time_ms=elapsed)
+                )
+                
+                if success:
+                    self._agent_stats.commands_run += 1
+                else:
+                    self._agent_stats.errors += 1
+                
+                self._update_stats_panel()
+                self._save_current_session()
+                self._finish_generation()
+                return True
+            
+            return False
+            
+        except Exception as e:
+            # Log error but don't show to user, fall through to other methods
+            return False
     
     def _analyze_and_execute_with_llm(self, message: str, start_time: float) -> bool:
         """Use the integrated LLM to analyze user intent and execute operations.

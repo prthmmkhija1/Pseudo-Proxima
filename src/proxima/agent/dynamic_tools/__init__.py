@@ -485,6 +485,163 @@ from .error_prevention import (
     get_proactive_issue_prevention,
 )
 
+# Phase 9: Testing and Validation Framework
+from .testing_framework import (
+    ComprehensiveTestingFramework,
+    TestRunner,
+    TestGenerator,
+    IntegrationTestRunner,
+    LLMResponseTester,
+    PerformanceTester,
+    CoverageTracker,
+    MockObject,
+    TestCase,
+    TestSuite,
+    TestFixture,
+    MockCall,
+    CoverageReport,
+    PerformanceMetrics,
+    LLMTestResult,
+    TestStatus,
+    TestPriority,
+    TestCategory,
+    MockBehavior,
+    get_comprehensive_testing_framework,
+    test_case,
+    fixture,
+)
+
+from .quality_assurance import (
+    QualityAssuranceAutomation,
+    StaticAnalyzer,
+    SecurityScanner,
+    TypeChecker,
+    CIPipelineRunner,
+    ValidationSuiteRunner,
+    AnalysisIssue,
+    AnalysisReport,
+    CIJob,
+    CIPipeline,
+    ValidationScenario,
+    AnalysisSeverity,
+    AnalysisCategory,
+    ValidationStatus,
+    PlatformType,
+    get_quality_assurance_automation,
+)
+
+# Phase 10: Deployment and Monitoring
+from .deployment_monitoring import (
+    DeploymentAndMonitoring,
+    DeploymentPipeline,
+    ConfigurationManager as DeploymentConfigManager,
+    DependencyManager,
+    StructuredLogger,
+    MetricsCollector,
+    DistributedTracer,
+    HealthChecker,
+    AlertManager,
+    UsageAnalytics,
+    FeedbackManager,
+    ModelPerformanceMonitor,
+    ExperimentFramework,
+    DeploymentConfig,
+    DeploymentResult,
+    EnvironmentConfig,
+    DependencyInfo,
+    LogEntry,
+    Metric,
+    TraceSpan,
+    HealthCheckResult,
+    Alert,
+    UsageEvent,
+    UserFeedback,
+    ModelPerformanceMetric,
+    DeploymentStrategy,
+    DeploymentStatus,
+    HealthStatus as DeploymentHealthStatus,
+    AlertSeverity,
+    MetricType,
+    LogLevel,
+    FeedbackType,
+    get_deployment_and_monitoring,
+)
+
+# Phase 11: Security and Compliance
+from .security_compliance import (
+    SecurityAndCompliance,
+    AuthenticationManager,
+    AuthorizationManager,
+    DataProtectionManager,
+    InputValidator,
+    SecurityScanner as ComplianceSecurityScanner,
+    AuditLogger,
+    PrivacyManager,
+    ComplianceManager,
+    User,
+    Session,
+    RoleDefinition,
+    EncryptedData,
+    ThreatDetection,
+    Vulnerability,
+    AuditEvent,
+    Consent,
+    DataSubjectRequest,
+    ComplianceCheck,
+    AuthenticationMethod,
+    AuthenticationStatus,
+    Role,
+    Permission,
+    EncryptionAlgorithm,
+    ThreatType,
+    VulnerabilitySeverity,
+    ComplianceStandard,
+    AuditEventType,
+    ConsentType,
+    DataSubjectRequestType,
+    get_security_and_compliance,
+)
+
+# Phase 12: Documentation and Knowledge Management
+from .documentation_knowledge import (
+    DocumentationAndKnowledge,
+    UserDocumentationManager,
+    DeveloperDocumentationManager,
+    SystemDocumentationManager,
+    DocumentationIndexer,
+    ContextualHelpSystem,
+    KnowledgeBaseManager,
+    DocumentationEntry,
+    Tutorial,
+    FAQEntry,
+    TroubleshootingGuide,
+    APIDocumentation,
+    KnowledgeArticle,
+    SearchResult as DocSearchResult,
+    ContextualHelp,
+    HelpHistoryEntry,
+    Bookmark,
+    DocumentationMetrics,
+    DocumentationType,
+    DocumentationFormat,
+    HelpLevel,
+    SearchRelevance,
+    DocumentationStatus,
+    KnowledgeCategory,
+    TutorialDifficulty,
+    get_documentation_and_knowledge,
+)
+
+# Robust NL Processor for dynamic intent recognition
+from .robust_nl_processor import (
+    RobustNLProcessor,
+    IntentType,
+    Intent,
+    ExtractedEntity,
+    SessionContext,
+    get_robust_nl_processor,
+)
+
 # Import tools to trigger auto-registration
 from . import tools
 
@@ -881,6 +1038,152 @@ __all__ = [
     "HealthStatus",
     "PreventionResourceType",
     "get_proactive_issue_prevention",
+    
+    # Phase 9: Testing Framework (testing_framework.py)
+    "ComprehensiveTestingFramework",
+    "TestRunner",
+    "TestGenerator",
+    "IntegrationTestRunner",
+    "LLMResponseTester",
+    "PerformanceTester",
+    "CoverageTracker",
+    "MockObject",
+    "TestCase",
+    "TestSuite",
+    "TestFixture",
+    "MockCall",
+    "CoverageReport",
+    "PerformanceMetrics",
+    "LLMTestResult",
+    "TestStatus",
+    "TestPriority",
+    "TestCategory",
+    "MockBehavior",
+    "get_comprehensive_testing_framework",
+    "test_case",
+    "fixture",
+    
+    # Phase 9: Quality Assurance (quality_assurance.py)
+    "QualityAssuranceAutomation",
+    "StaticAnalyzer",
+    "SecurityScanner",
+    "TypeChecker",
+    "CIPipelineRunner",
+    "ValidationSuiteRunner",
+    "AnalysisIssue",
+    "AnalysisReport",
+    "CIJob",
+    "CIPipeline",
+    "ValidationScenario",
+    "AnalysisSeverity",
+    "AnalysisCategory",
+    "ValidationStatus",
+    "PlatformType",
+    "get_quality_assurance_automation",
+    
+    # Phase 10: Deployment and Monitoring (deployment_monitoring.py)
+    "DeploymentAndMonitoring",
+    "DeploymentPipeline",
+    "DeploymentConfigManager",
+    "DependencyManager",
+    "StructuredLogger",
+    "MetricsCollector",
+    "DistributedTracer",
+    "HealthChecker",
+    "AlertManager",
+    "UsageAnalytics",
+    "FeedbackManager",
+    "ModelPerformanceMonitor",
+    "ExperimentFramework",
+    "DeploymentConfig",
+    "DeploymentResult",
+    "EnvironmentConfig",
+    "DependencyInfo",
+    "LogEntry",
+    "Metric",
+    "TraceSpan",
+    "HealthCheckResult",
+    "Alert",
+    "UsageEvent",
+    "UserFeedback",
+    "ModelPerformanceMetric",
+    "DeploymentStrategy",
+    "DeploymentStatus",
+    "DeploymentHealthStatus",
+    "AlertSeverity",
+    "MetricType",
+    "LogLevel",
+    "FeedbackType",
+    "get_deployment_and_monitoring",
+    
+    # Phase 11: Security and Compliance (security_compliance.py)
+    "SecurityAndCompliance",
+    "AuthenticationManager",
+    "AuthorizationManager",
+    "DataProtectionManager",
+    "InputValidator",
+    "ComplianceSecurityScanner",
+    "AuditLogger",
+    "PrivacyManager",
+    "ComplianceManager",
+    "User",
+    "Session",
+    "RoleDefinition",
+    "EncryptedData",
+    "ThreatDetection",
+    "Vulnerability",
+    "AuditEvent",
+    "Consent",
+    "DataSubjectRequest",
+    "ComplianceCheck",
+    "AuthenticationMethod",
+    "AuthenticationStatus",
+    "Role",
+    "Permission",
+    "EncryptionAlgorithm",
+    "ThreatType",
+    "VulnerabilitySeverity",
+    "ComplianceStandard",
+    "AuditEventType",
+    "ConsentType",
+    "DataSubjectRequestType",
+    "get_security_and_compliance",
+    
+    # Phase 12: Documentation and Knowledge Management (documentation_knowledge.py)
+    "DocumentationAndKnowledge",
+    "UserDocumentationManager",
+    "DeveloperDocumentationManager",
+    "SystemDocumentationManager",
+    "DocumentationIndexer",
+    "ContextualHelpSystem",
+    "KnowledgeBaseManager",
+    "DocumentationEntry",
+    "Tutorial",
+    "FAQEntry",
+    "TroubleshootingGuide",
+    "APIDocumentation",
+    "KnowledgeArticle",
+    "DocSearchResult",
+    "ContextualHelp",
+    "HelpHistoryEntry",
+    "Bookmark",
+    "DocumentationMetrics",
+    "DocumentationType",
+    "DocumentationFormat",
+    "HelpLevel",
+    "SearchRelevance",
+    "DocumentationStatus",
+    "KnowledgeCategory",
+    "TutorialDifficulty",
+    "get_documentation_and_knowledge",
+    
+    # Robust NL Processor
+    "RobustNLProcessor",
+    "IntentType",
+    "Intent",
+    "ExtractedEntity",
+    "SessionContext",
+    "get_robust_nl_processor",
 ]
 
 
@@ -915,6 +1218,11 @@ def initialize_dynamic_tools():
             - error_detector: Intelligent error detector (Phase 8)
             - recovery_system: Automated recovery system (Phase 8)
             - issue_prevention: Proactive issue prevention (Phase 8)
+            - testing_framework: Comprehensive testing framework (Phase 9)
+            - qa_automation: Quality assurance automation (Phase 9)
+            - deployment_monitoring: Deployment and monitoring system (Phase 10)
+            - security_compliance: Security and compliance system (Phase 11)
+            - documentation_knowledge: Documentation and knowledge management (Phase 12)
     """
     registry = get_tool_registry()
     context_manager = get_context_manager()
@@ -954,6 +1262,19 @@ def initialize_dynamic_tools():
     recovery_system = get_automated_recovery_system()
     issue_prevention = get_proactive_issue_prevention()
     
+    # Phase 9: Initialize testing and quality assurance components
+    testing_framework = get_comprehensive_testing_framework()
+    qa_automation = get_quality_assurance_automation()
+    
+    # Phase 10: Initialize deployment and monitoring components
+    deployment_monitoring = get_deployment_and_monitoring()
+    
+    # Phase 11: Initialize security and compliance components
+    security_compliance = get_security_and_compliance()
+    
+    # Phase 12: Initialize documentation and knowledge management components
+    documentation_knowledge = get_documentation_and_knowledge()
+    
     # Tools are auto-registered via @register_tool decorator
     # when the tools module is imported above
     
@@ -987,6 +1308,15 @@ def initialize_dynamic_tools():
         "error_detector": error_detector,
         "recovery_system": recovery_system,
         "issue_prevention": issue_prevention,
+        # Phase 9 components
+        "testing_framework": testing_framework,
+        "qa_automation": qa_automation,
+        # Phase 10 components
+        "deployment_monitoring": deployment_monitoring,
+        # Phase 11 components
+        "security_compliance": security_compliance,
+        # Phase 12 components
+        "documentation_knowledge": documentation_knowledge,
     }
 
 
