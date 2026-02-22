@@ -22,20 +22,40 @@ import json
 import subprocess
 from pathlib import Path
 from dataclasses import dataclass, field
-from typing import List, Dict, Any, Optional, Tuple
+from typing import ClassVar, List, Dict, Any, Optional, Tuple
 from datetime import datetime
 from enum import Enum, auto
 import threading
 
 
 class IntentType(Enum):
-    """Types of user intents."""
-    # Navigation
+    """Canonical intent taxonomy for all agent capabilities.
+
+    This is the single source of truth for all intent types across the system.
+    Every capability the agent supports maps to one or more intents defined here.
+
+    Grouped by domain:
+    - Navigation & Directory
+    - Git operations (basic + extended)
+    - File operations
+    - Directory operations
+    - Terminal & Script execution
+    - Query operations
+    - Dependency management
+    - Backend build & modification
+    - Search & Analysis
+    - Plan & Execution control
+    - System & Admin
+    - Web & Research
+    - Complex / Meta
+    """
+
+    # ── Navigation ────────────────────────────────────────────────────
     NAVIGATE_DIRECTORY = auto()
     LIST_DIRECTORY = auto()
     SHOW_CURRENT_DIR = auto()
-    
-    # Git operations
+
+    # ── Git operations (basic) ────────────────────────────────────────
     GIT_CHECKOUT = auto()
     GIT_CLONE = auto()
     GIT_PULL = auto()
@@ -45,29 +65,70 @@ class IntentType(Enum):
     GIT_ADD = auto()
     GIT_BRANCH = auto()
     GIT_FETCH = auto()
-    
-    # File operations
+
+    # ── Git operations (extended — Phase 1 additions) ─────────────────
+    GIT_MERGE = auto()
+    GIT_REBASE = auto()
+    GIT_STASH = auto()
+    GIT_LOG = auto()
+    GIT_DIFF = auto()
+    GIT_CONFLICT_RESOLVE = auto()
+
+    # ── File operations ───────────────────────────────────────────────
     CREATE_FILE = auto()
     READ_FILE = auto()
     WRITE_FILE = auto()
     DELETE_FILE = auto()
     COPY_FILE = auto()
     MOVE_FILE = auto()
-    
-    # Directory operations
+
+    # ── Directory operations ──────────────────────────────────────────
     CREATE_DIRECTORY = auto()
     DELETE_DIRECTORY = auto()
     COPY_DIRECTORY = auto()
-    
-    # Terminal operations
+
+    # ── Terminal & Script execution ───────────────────────────────────
     RUN_COMMAND = auto()
     RUN_SCRIPT = auto()
-    
-    # Query operations
-    QUERY_LOCATION = auto()  # "where is X", "where did you clone"
-    QUERY_STATUS = auto()    # "what happened", "did it work"
-    
-    # Complex operations
+    TERMINAL_MONITOR = auto()
+    TERMINAL_KILL = auto()
+    TERMINAL_OUTPUT = auto()
+    TERMINAL_LIST = auto()
+
+    # ── Query operations ──────────────────────────────────────────────
+    QUERY_LOCATION = auto()   # "where is X", "where did you clone"
+    QUERY_STATUS = auto()     # "what happened", "did it work"
+
+    # ── Dependency management ─────────────────────────────────────────
+    INSTALL_DEPENDENCY = auto()
+    CONFIGURE_ENVIRONMENT = auto()
+    CHECK_DEPENDENCY = auto()
+
+    # ── Search & Analysis ─────────────────────────────────────────────
+    SEARCH_FILE = auto()
+    ANALYZE_RESULTS = auto()
+    EXPORT_RESULTS = auto()
+
+    # ── Plan & Execution control ──────────────────────────────────────
+    PLAN_EXECUTION = auto()
+    UNDO_OPERATION = auto()
+    REDO_OPERATION = auto()
+
+    # ── Backend build & modification ──────────────────────────────────
+    BACKEND_BUILD = auto()
+    BACKEND_CONFIGURE = auto()
+    BACKEND_TEST = auto()
+    BACKEND_MODIFY = auto()
+    BACKEND_LIST = auto()
+
+    # ── System & Admin ────────────────────────────────────────────────
+    SYSTEM_INFO = auto()
+    ADMIN_ELEVATE = auto()
+
+    # ── Web & Research ────────────────────────────────────────────────
+    WEB_SEARCH = auto()
+
+    # ── Complex / Meta ────────────────────────────────────────────────
     MULTI_STEP = auto()
     UNKNOWN = auto()
 
@@ -88,6 +149,7 @@ class Intent:
     confidence: float = 0.0
     raw_message: str = ""
     explanation: str = ""
+    sub_intents: List['Intent'] = field(default_factory=list)
     
     def get_entity(self, entity_type: str) -> Optional[str]:
         """Get the first entity of a given type."""
@@ -103,7 +165,14 @@ class Intent:
 
 @dataclass
 class SessionContext:
-    """Tracks context across multiple messages in a session."""
+    """Tracks context across multiple messages in a session.
+
+    Maintains stateful information that persists across conversation turns,
+    enabling pronoun resolution ("it", "that", "the repo"), directory
+    stack navigation ("go back"), and contextual intent inference.
+    """
+
+    # ── Core state ────────────────────────────────────────────────────
     current_directory: str = field(default_factory=os.getcwd)
     last_mentioned_paths: List[str] = field(default_factory=list)
     last_mentioned_branches: List[str] = field(default_factory=list)
@@ -111,33 +180,69 @@ class SessionContext:
     last_operation: Optional[Intent] = None
     operation_history: List[Intent] = field(default_factory=list)
     variables: Dict[str, Any] = field(default_factory=dict)
-    
-    # Track cloned repositories: {url: cloned_path}
+
+    # ── Clone tracking ────────────────────────────────────────────────
     cloned_repos: Dict[str, str] = field(default_factory=dict)
-    last_cloned_repo: Optional[str] = None  # Path to last cloned repo
-    last_cloned_url: Optional[str] = None   # URL of last cloned repo
-    
+    last_cloned_repo: Optional[str] = None
+    last_cloned_url: Optional[str] = None
+
+    # ── Phase 2 additions ─────────────────────────────────────────────
+    # Terminal tracking: terminal_id → {command, state, last_output, pid}
+    active_terminals: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    # Packages installed during this session
+    installed_packages: List[str] = field(default_factory=list)
+    # Active virtual environments: name → path
+    active_environments: Dict[str, str] = field(default_factory=dict)
+    # Text result of the last executed operation (for "it" / "that" resolution)
+    last_operation_result: Optional[str] = None
+    # Path of the last script that was run
+    last_script_executed: Optional[str] = None
+    # Recently referenced package names (max 10)
+    last_mentioned_packages: List[str] = field(default_factory=list)
+    # Last 20 (user_message, intent_type_name) pairs for context inference
+    conversation_history: List[Tuple[str, str]] = field(default_factory=list)
+    # Directory stack for pushd / popd semantics
+    working_directory_stack: List[str] = field(default_factory=list)
+    # Name or path of the last backend that was built
+    last_built_backend: Optional[str] = None
+    # Backend name → most recent checkpoint ID
+    backend_checkpoints: Dict[str, str] = field(default_factory=dict)
+    # Files modified in the last backend code-modification operation
+    last_modified_files: List[str] = field(default_factory=list)
+
+    # ── Helper constants (ClassVar — excluded from __init__/__repr__) ──
+    _ACTION_VERBS: ClassVar[Tuple[str, ...]] = (
+        'run', 'execute', 'build', 'test', 'compile', 'start', 'launch',
+        'install', 'deploy', 'use',
+    )
+    _QUERY_VERBS: ClassVar[Tuple[str, ...]] = (
+        'show', 'what', 'print', 'display', 'view', 'see', 'read', 'get',
+        'tell', 'describe',
+    )
+
+    # ── Existing helpers ──────────────────────────────────────────────
+
     def add_path(self, path: str):
         """Add a path to context."""
         if path and path not in self.last_mentioned_paths:
             self.last_mentioned_paths.insert(0, path)
             if len(self.last_mentioned_paths) > 10:
                 self.last_mentioned_paths.pop()
-    
+
     def add_branch(self, branch: str):
         """Add a branch to context."""
         if branch and branch not in self.last_mentioned_branches:
             self.last_mentioned_branches.insert(0, branch)
             if len(self.last_mentioned_branches) > 10:
                 self.last_mentioned_branches.pop()
-    
+
     def add_url(self, url: str):
         """Add a URL to context."""
         if url and url not in self.last_mentioned_urls:
             self.last_mentioned_urls.insert(0, url)
             if len(self.last_mentioned_urls) > 10:
                 self.last_mentioned_urls.pop()
-    
+
     def record_clone(self, url: str, cloned_path: str):
         """Record a cloned repository."""
         self.cloned_repos[url] = cloned_path
@@ -145,13 +250,12 @@ class SessionContext:
         self.last_cloned_url = url
         self.add_url(url)
         self.add_path(cloned_path)
-    
+
     def update_from_intent(self, intent: Intent):
         """Update context from a processed intent."""
         self.last_operation = intent
         self.operation_history.append(intent)
-        
-        # Extract paths, branches, urls
+
         for entity in intent.entities:
             if entity.entity_type == 'path':
                 self.add_path(entity.value)
@@ -159,6 +263,174 @@ class SessionContext:
                 self.add_branch(entity.value)
             elif entity.entity_type == 'url':
                 self.add_url(entity.value)
+            elif entity.entity_type == 'package':
+                self.add_package(entity.value)
+            elif entity.entity_type in ('script_path', 'script'):
+                self.last_script_executed = entity.value
+
+    # ── Phase 2 helpers ───────────────────────────────────────────────
+
+    def add_package(self, package: str):
+        """Record a recently-mentioned package name (max 10)."""
+        if package and package not in self.last_mentioned_packages:
+            self.last_mentioned_packages.insert(0, package)
+            if len(self.last_mentioned_packages) > 10:
+                self.last_mentioned_packages.pop()
+
+    def add_conversation_entry(self, message: str, intent_type: str):
+        """Append a (user_message, intent_type_name) pair and trim to 20."""
+        self.conversation_history.append((message, intent_type))
+        if len(self.conversation_history) > 20:
+            self.conversation_history = self.conversation_history[-20:]
+
+    def push_directory(self, path: str):
+        """Push the current directory onto the stack and update cwd."""
+        self.working_directory_stack.append(self.current_directory)
+        self.current_directory = path
+        self.add_path(path)
+
+    def pop_directory(self) -> Optional[str]:
+        """Pop the previous directory from the stack, update cwd, return it."""
+        if self.working_directory_stack:
+            prev = self.working_directory_stack.pop()
+            self.current_directory = prev
+            return prev
+        return None
+
+    # ── Pronoun / reference resolution (Phase 2, Step 2.3) ───────────
+
+    def resolve_reference(
+        self,
+        text: str,
+        verb_context: Optional[str] = None,
+    ) -> Optional[str]:
+        """Resolve a contextual pronoun or reference to a concrete value.
+
+        Resolution rules are applied in order; the first match wins.
+
+        Args:
+            text: The pronoun or reference phrase (e.g. "it", "the repo").
+            verb_context: Optional surrounding verb for disambiguation.
+
+        Returns:
+            The resolved concrete value, or ``None`` if unresolvable.
+        """
+        t = text.strip().lower()
+
+        # ── Rule 1: "it" / "that" — disambiguate via verb context ────
+        if t in ('it', 'that'):
+            if verb_context:
+                vc = verb_context.strip().lower()
+                # Action-oriented verb → return an actionable entity
+                if any(vc.startswith(v) for v in self._ACTION_VERBS):
+                    return (
+                        self.last_script_executed
+                        or self.last_cloned_repo
+                        or self.last_operation_result
+                    )
+                # Query-oriented verb → return the last result
+                if any(vc.startswith(v) for v in self._QUERY_VERBS):
+                    return self.last_operation_result
+            # Fallback when no verb context is available
+            return self.last_operation_result
+
+        # ── Rule 2: "the result" / "the output" ──────────────────────
+        if t in ('the result', 'the output', 'result', 'output'):
+            return self.last_operation_result
+
+        # ── Rule 3: "the repo" / "the repository" / "that repo" ──────
+        if t in ('the repo', 'the repository', 'that repo', 'repo'):
+            return self.last_cloned_repo or self.last_cloned_url
+
+        # ── Rule 4: "there" / "that directory" / "that folder" ────────
+        if t in ('there', 'that directory', 'that folder', 'the directory', 'the folder'):
+            return self.last_mentioned_paths[0] if self.last_mentioned_paths else None
+
+        # ── Rule 5: "that branch" / "the branch" ─────────────────────
+        if t in ('that branch', 'the branch'):
+            return self.last_mentioned_branches[0] if self.last_mentioned_branches else None
+
+        # ── Rule 6: "the script" / "that script" ─────────────────────
+        if t in ('the script', 'that script'):
+            return self.last_script_executed
+
+        # ── Rule 7: "that backend" / "the backend" ───────────────────
+        if t in ('that backend', 'the backend'):
+            return self.last_built_backend
+
+        # ── Rule 8: "back" / "previous directory" ─────────────────────
+        if t in ('back', 'previous directory', 'previous folder'):
+            return self.pop_directory()
+
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Set of intent types added in Phase 1 that are **recognised** by the
+# processor's keyword engine but whose *execution* is deferred to the
+# upper orchestration layer (IntentToolBridge / agent_ai_assistant).
+# ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Intent types whose execution is deferred to the upper orchestration layer
+# (IntentToolBridge / agent_ai_assistant).  This includes Phase-1 additions
+# as well as original intents that never had a direct execute branch.
+# ---------------------------------------------------------------------------
+_DEFERRED_INTENTS: frozenset = frozenset({
+    # Git basic (no direct execute branch)
+    IntentType.GIT_PUSH,
+    IntentType.GIT_COMMIT,
+    IntentType.GIT_ADD,
+    IntentType.GIT_BRANCH,
+    IntentType.GIT_FETCH,
+    # Git extended (Phase 1)
+    IntentType.GIT_MERGE,
+    IntentType.GIT_REBASE,
+    IntentType.GIT_STASH,
+    IntentType.GIT_LOG,
+    IntentType.GIT_DIFF,
+    IntentType.GIT_CONFLICT_RESOLVE,
+    # Terminal monitoring (Phase 1)
+    IntentType.TERMINAL_MONITOR,
+    IntentType.TERMINAL_KILL,
+    IntentType.TERMINAL_OUTPUT,
+    IntentType.TERMINAL_LIST,
+    # Dependency management (Phase 1)
+    IntentType.INSTALL_DEPENDENCY,
+    IntentType.CONFIGURE_ENVIRONMENT,
+    IntentType.CHECK_DEPENDENCY,
+    # Search & Analysis (Phase 1)
+    IntentType.SEARCH_FILE,
+    IntentType.ANALYZE_RESULTS,
+    IntentType.EXPORT_RESULTS,
+    # Plan & Execution control (Phase 1)
+    IntentType.PLAN_EXECUTION,
+    IntentType.UNDO_OPERATION,
+    IntentType.REDO_OPERATION,
+    # Backend (Phase 1)
+    IntentType.BACKEND_BUILD,
+    IntentType.BACKEND_CONFIGURE,
+    IntentType.BACKEND_TEST,
+    IntentType.BACKEND_MODIFY,
+    IntentType.BACKEND_LIST,
+    # System & Admin (Phase 1)
+    IntentType.SYSTEM_INFO,
+    IntentType.ADMIN_ELEVATE,
+    # Web (Phase 1)
+    IntentType.WEB_SEARCH,
+    # File ops (no direct execute branch)
+    IntentType.CREATE_FILE,
+    IntentType.READ_FILE,
+    IntentType.WRITE_FILE,
+    IntentType.DELETE_FILE,
+    IntentType.COPY_FILE,
+    IntentType.MOVE_FILE,
+    # Directory ops (no direct execute branch)
+    IntentType.CREATE_DIRECTORY,
+    IntentType.DELETE_DIRECTORY,
+    IntentType.COPY_DIRECTORY,
+    # Query (no direct execute branch)
+    IntentType.QUERY_STATUS,
+})
 
 
 class RobustNLProcessor:
@@ -170,6 +442,34 @@ class RobustNLProcessor:
     3. Falls back gracefully when LLM doesn't return expected format
     4. Maintains context across multiple messages
     """
+
+    # Stopwords used during branch-name validation (avoid per-call list alloc)
+    _BRANCH_STOPWORDS = frozenset({
+        'the', 'and', 'for', 'with', 'this', 'that',
+        'from', 'clone', 'build', 'run', 'to', 'a', 'an',
+        'of', 'it', 'in', 'on', 'at', 'be', 'is', 'are',
+        'repo', 'repository', 'directory', 'folder', 'file',
+        'branch', 'all', 'please', 'want', 'use', 'updated',
+    })
+
+    # Stopwords used during dirname validation
+    _DIRNAME_STOPWORDS = frozenset({
+        'the', 'a', 'an', 'this', 'that', 'and', 'or',
+        'directory', 'folder', 'file', 'repo', 'branch',
+    })
+
+    # Pre-compiled query-detection patterns (avoid per-call re.compile)
+    _QUERY_PATTERNS = [
+        re.compile(r'where\s+is\s+'),
+        re.compile(r'where\s+did\s+'),
+        re.compile(r'where\s+was\s+'),
+        re.compile(r'where\s+is\s+that'),
+        re.compile(r'where\s+is\s+the'),
+        re.compile(r'location\s+of'),
+        re.compile(r'find\s+the\s+.*(?:repo|clone|path)'),
+        re.compile(r'what\s+path'),
+        re.compile(r'where.*(?:repo|clone|put|save)'),
+    ]
     
     def __init__(self, llm_router=None):
         """Initialize the processor.
@@ -230,6 +530,15 @@ class RobustNLProcessor:
                 re.compile(r'(http://github\.com/[^\s\'"<>]+)', re.IGNORECASE),
                 # URL without protocol (github.com/...)
                 re.compile(r'(?<![:/])(github\.com/[^\s\'"<>]+)', re.IGNORECASE),
+                # SSH URL   git@github.com:user/repo.git
+                re.compile(r'(git@github\.com:[\w\-\.]+/[\w\-\.]+(?:\.git)?)', re.IGNORECASE),
+                # Short-form owner/repo after clone-related context words
+                # e.g. "clone kunal5556/LRET" or "pull from user/repo"
+                re.compile(
+                    r'(?:clone|pull|fork|fetch)\s+'
+                    r'([\w\-\.]+/[\w\-\.]+)',
+                    re.IGNORECASE,
+                ),
             ],
             'git_url': [
                 re.compile(r'(https?://[^\s\'"<>]+\.git)', re.IGNORECASE),
@@ -254,12 +563,146 @@ class RobustNLProcessor:
                 re.compile(r'["\']([^"\']+)["\']', re.IGNORECASE),
                 re.compile(r'`([^`]+)`', re.IGNORECASE),
             ],
+
+            # ── Phase 2 additions ─────────────────────────────────────
+
+            # Package names — after dependency-related keywords
+            'package': [
+                # "pip install numpy>=1.21.0 pandas torch"
+                re.compile(
+                    r'(?:pip|pip3)\s+install\s+(?:-[^\s]+\s+)*'        # pip install [-r|-e|...]
+                    r'([a-zA-Z0-9_][a-zA-Z0-9_\-]*'                   # first pkg
+                    r'(?:[><=!~]+[^\s,]+)?'                            # optional version spec
+                    r'(?:\s+[a-zA-Z0-9_][a-zA-Z0-9_\-]*(?:[><=!~]+[^\s,]+)?)*)',  # extra pkgs
+                    re.IGNORECASE,
+                ),
+                # "install <pkg>" / "add package <pkg>"
+                re.compile(
+                    r'(?:install|add\s+package)\s+'
+                    r'([a-zA-Z0-9_][a-zA-Z0-9_\-]*(?:[><=!~]+[^\s,]+)?)',
+                    re.IGNORECASE,
+                ),
+                # "conda install pkg1 pkg2"
+                re.compile(
+                    r'conda\s+install\s+(?:-[^\s]+\s+)*'
+                    r'([a-zA-Z0-9_][a-zA-Z0-9_\-]*'
+                    r'(?:\s+[a-zA-Z0-9_][a-zA-Z0-9_\-]*)*)',
+                    re.IGNORECASE,
+                ),
+                # "npm install pkg"
+                re.compile(
+                    r'npm\s+install\s+(?:-[^\s]+\s+)*'
+                    r'([a-zA-Z0-9@_][a-zA-Z0-9@_/\-]*)',
+                    re.IGNORECASE,
+                ),
+            ],
+
+            # Script file paths (more specific than generic 'path')
+            'script_path': [
+                # Quoted or unquoted paths ending in common script extensions
+                re.compile(
+                    r'(?:run|execute|start|launch)?\s*'
+                    r'(?:the\s+)?(?:script\s+)?'
+                    r'["\']?([^\s"\']+\.(?:py|sh|ps1|bat|js|lua))["\']?',
+                    re.IGNORECASE,
+                ),
+                # Standalone script filename
+                re.compile(
+                    r'([a-zA-Z_][a-zA-Z0-9_/\\:\-\.]*\.(?:py|sh|ps1|bat|js|lua))',
+                    re.IGNORECASE,
+                ),
+            ],
+
+            # Environment names (venv, .venv, etc.)
+            'environment': [
+                re.compile(
+                    r'(?:activate|create(?:\s+venv)?(?:\s+named)?|'
+                    r'use\s+(?:virtual\s+)?env(?:ironment)?)\s+'
+                    r'([a-zA-Z_][a-zA-Z0-9_\-\.]*)',
+                    re.IGNORECASE,
+                ),
+                # Bare venv-like names preceded by "environment" / "venv"
+                re.compile(
+                    r'\b(\.?venv|env|myenv|\.env)\b',
+                    re.IGNORECASE,
+                ),
+            ],
+
+            # Line ranges ("lines 10-50", "line 23", "from line 10 to 20")
+            'line_range': [
+                re.compile(r'lines?\s+(\d+)\s*[-–]\s*(\d+)', re.IGNORECASE),
+                re.compile(r'from\s+line\s+(\d+)\s+to\s+(?:line\s+)?(\d+)', re.IGNORECASE),
+                re.compile(r'line\s+(\d+)', re.IGNORECASE),
+            ],
+
+            # Process / terminal identifiers
+            'process_id': [
+                re.compile(r'(?:terminal|process|session)\s+#?(\d+)', re.IGNORECASE),
+                re.compile(r'PID\s+(\d+)', re.IGNORECASE),
+                re.compile(
+                    r'(?:the\s+)?(?:build|first|second|third|last|main)\s+'
+                    r'(?:terminal|process)',
+                    re.IGNORECASE,
+                ),
+            ],
+
+            # Context-aware quoted content (classified by preceding preposition)
+            'quoted_context': [
+                # After spatial / directional prepositions → path
+                re.compile(
+                    r'(?:in|to|at|from|into|under)\s+["\']([^"\']+)["\']',
+                    re.IGNORECASE,
+                ),
+                # After naming prepositions → name
+                re.compile(
+                    r'(?:named|called|with\s+name)\s+["\']([^"\']+)["\']',
+                    re.IGNORECASE,
+                ),
+                # After execution verbs → command
+                re.compile(
+                    r'(?:run|execute|with\s+command)\s+["\']([^"\']+)["\']',
+                    re.IGNORECASE,
+                ),
+                # After install verbs → package
+                re.compile(
+                    r'(?:install|add)\s+["\']([^"\']+)["\']',
+                    re.IGNORECASE,
+                ),
+            ],
+
+            # Directory names from navigation context (pre-compiled)
+            'dirname': [
+                re.compile(
+                    r'(?:go\s+)?(?:to|into|inside)\s+(?:the\s+)?'
+                    r'([A-Za-z][A-Za-z0-9_\-\.]*)\s+(?:directory|folder|dir)',
+                    re.IGNORECASE,
+                ),
+                re.compile(
+                    r'(?:go\s+)?(?:to|into|inside)\s+([A-Za-z][A-Za-z0-9_\-\.]*)',
+                    re.IGNORECASE,
+                ),
+                re.compile(
+                    r'inside\s+([A-Za-z][A-Za-z0-9_\-\.\/]*)',
+                    re.IGNORECASE,
+                ),
+            ],
         }
     
     def _build_intent_keywords(self) -> Dict[IntentType, List[str]]:
-        """Build keyword mappings for intent recognition."""
+        """Build keyword mappings for intent recognition.
+
+        Each ``IntentType`` maps to a list of trigger phrases.  During
+        recognition the message is scanned for these phrases and the
+        intent with the highest cumulative keyword-length score wins.
+
+        **Collision-prone keywords** (e.g. *build*, *search*, *log*,
+        *test*, *install*, *export*, *configure*) are intentionally kept
+        under the most common intent they indicate; the scoring algorithm
+        in ``recognize_intent()`` naturally favours longer / more-specific
+        matches (e.g. "build backend" beats standalone "build").
+        """
         return {
-            # Navigation
+            # ── Navigation ────────────────────────────────────────────
             IntentType.NAVIGATE_DIRECTORY: [
                 'go to', 'go into', 'go inside', 'cd ', 'navigate to',
                 'change directory', 'change to', 'enter', 'open folder',
@@ -274,8 +717,8 @@ class RobustNLProcessor:
                 'pwd', 'where am i', 'current directory', 'current folder',
                 'which directory', 'what directory', 'cwd'
             ],
-            
-            # Git
+
+            # ── Git (basic) ───────────────────────────────────────────
             IntentType.GIT_CHECKOUT: [
                 'checkout', 'switch to branch', 'switch branch', 'git checkout',
                 'git switch', 'change branch', 'use branch'
@@ -290,7 +733,7 @@ class RobustNLProcessor:
                 'git push', 'push', 'upload changes', 'push changes'
             ],
             IntentType.GIT_STATUS: [
-                'git status', 'status', 'repo status', 'what changed'
+                'git status', 'status', 'repo status'
             ],
             IntentType.GIT_COMMIT: [
                 'git commit', 'commit', 'save changes', 'commit changes'
@@ -305,8 +748,34 @@ class RobustNLProcessor:
             IntentType.GIT_FETCH: [
                 'git fetch', 'fetch', 'fetch remote'
             ],
-            
-            # Terminal
+
+            # ── Git (extended) ────────────────────────────────────────
+            IntentType.GIT_MERGE: [
+                'merge', 'git merge', 'merge branch', 'merge into', 'merge from'
+            ],
+            IntentType.GIT_REBASE: [
+                'rebase', 'git rebase', 'rebase on', 'rebase onto', 'rebase from'
+            ],
+            IntentType.GIT_STASH: [
+                'stash', 'git stash', 'stash changes', 'pop stash',
+                'stash pop', 'stash list', 'stash drop'
+            ],
+            IntentType.GIT_LOG: [
+                'git log', 'show commits', 'commit history',
+                'log', 'show log', 'recent commits', 'last commits',
+                'show history'
+            ],
+            IntentType.GIT_DIFF: [
+                'git diff', 'show diff', 'what changed', 'show changes',
+                'diff with', 'compare', 'see changes', 'see diff'
+            ],
+            IntentType.GIT_CONFLICT_RESOLVE: [
+                'resolve conflict', 'fix conflict', 'merge conflict',
+                'conflict resolution', 'resolve merge', 'accept theirs',
+                'accept ours', 'abort merge', 'resolve git conflict'
+            ],
+
+            # ── Terminal & Script execution ───────────────────────────
             IntentType.RUN_COMMAND: [
                 'run', 'execute', 'run command', 'execute command',
                 'terminal', 'shell', 'cmd', 'powershell'
@@ -315,8 +784,27 @@ class RobustNLProcessor:
                 'run script', 'execute script', 'run python', 'python',
                 '.py', 'run the script', 'execute the script'
             ],
-            
-            # File operations
+            IntentType.TERMINAL_MONITOR: [
+                'monitor terminals', 'show terminals', 'terminal status',
+                'what is running', 'active processes', 'background jobs',
+                'running terminals', 'watch terminals', 'show processes'
+            ],
+            IntentType.TERMINAL_OUTPUT: [
+                'show output', 'terminal output', 'what did it print',
+                'show log', 'show terminal', 'output of',
+                'see output', 'print output', 'display output'
+            ],
+            IntentType.TERMINAL_KILL: [
+                'kill terminal', 'stop terminal', 'kill process',
+                'stop process', 'cancel process', 'terminate',
+                'abort process', 'end process', 'stop running'
+            ],
+            IntentType.TERMINAL_LIST: [
+                'list terminals', 'all terminals', 'terminal list',
+                'show all terminals', 'how many terminals'
+            ],
+
+            # ── File operations ───────────────────────────────────────
             IntentType.CREATE_FILE: [
                 'create file', 'make file', 'new file', 'touch',
                 'write file', 'save file'
@@ -334,8 +822,12 @@ class RobustNLProcessor:
             IntentType.MOVE_FILE: [
                 'move file', 'mv', 'rename file'
             ],
-            
-            # Directory operations
+            IntentType.WRITE_FILE: [
+                'write to file', 'update file content', 'modify file',
+                'edit file content', 'overwrite file', 'write content'
+            ],
+
+            # ── Directory operations ──────────────────────────────────
             IntentType.CREATE_DIRECTORY: [
                 'create folder', 'mkdir', 'make directory', 'new folder',
                 'create directory'
@@ -343,8 +835,113 @@ class RobustNLProcessor:
             IntentType.DELETE_DIRECTORY: [
                 'delete folder', 'rmdir', 'remove directory', 'delete directory'
             ],
-            
-            # Query operations - for questions about previous operations
+            IntentType.COPY_DIRECTORY: [
+                'copy folder', 'copy directory', 'duplicate folder',
+                'duplicate directory', 'cp -r'
+            ],
+
+            # ── Dependency management ─────────────────────────────────
+            IntentType.INSTALL_DEPENDENCY: [
+                'install', 'pip install', 'install package', 'install dependency',
+                'install dependencies', 'install requirements', 'pip install -r',
+                'install module', 'add package', 'install lib', 'install library',
+                'npm install', 'conda install', 'apt install', 'brew install'
+            ],
+            IntentType.CONFIGURE_ENVIRONMENT: [
+                'configure environment', 'setup environment', 'create venv',
+                'create virtual environment', 'activate venv', 'set env var',
+                'set environment variable', 'setup python', 'configure path',
+                'set path'
+            ],
+            IntentType.CHECK_DEPENDENCY: [
+                'check dependency', 'check dependencies', 'is installed',
+                'verify package', 'check if', 'dependency check', 'pip show',
+                'pip list', 'check version', 'verify installation'
+            ],
+
+            # ── Search & Analysis ─────────────────────────────────────
+            IntentType.SEARCH_FILE: [
+                'search', 'find in file', 'grep', 'search for', 'look for',
+                'find text', 'search content', 'search files'
+            ],
+            IntentType.ANALYZE_RESULTS: [
+                'analyze', 'analyze results', 'analysis', 'evaluate',
+                'assess', 'examine results', 'interpret results',
+                'summarize results'
+            ],
+            IntentType.EXPORT_RESULTS: [
+                'export', 'export results', 'save results',
+                'download results', 'export to', 'save to file',
+                'write results'
+            ],
+
+            # ── Plan & Execution control ──────────────────────────────
+            IntentType.PLAN_EXECUTION: [
+                'plan', 'create plan', 'make a plan', 'execution plan',
+                'step by step', 'steps to', 'plan to', 'plan how',
+                'plan the', 'what steps', 'how should i'
+            ],
+            IntentType.UNDO_OPERATION: [
+                'undo', 'undo that', 'revert', 'revert that', 'take back',
+                'undo last', 'undo change', 'reverse that'
+            ],
+            IntentType.REDO_OPERATION: [
+                'redo', 'redo that', 'redo last', 'do again',
+                'redo change', 'apply again'
+            ],
+
+            # ── Backend build & modification ──────────────────────────
+            IntentType.BACKEND_BUILD: [
+                'build backend', 'compile backend', 'build and compile',
+                'setup build', 'build lret', 'build cirq', 'build qiskit',
+                'build quest', 'build qsim', 'build cuquantum',
+                'build pennylane', 'compile lret', 'compile cirq',
+                'compile qiskit', 'compile quest', 'compile qsim'
+            ],
+            IntentType.BACKEND_CONFIGURE: [
+                'configure backend', 'configure proxima', 'use backend',
+                'set backend', 'switch backend', 'set as default',
+                'activate backend', 'configure proxima to use',
+                'use it as backend', 'set it as backend'
+            ],
+            IntentType.BACKEND_TEST: [
+                'test backend', 'verify backend', 'test build',
+                'run backend tests', 'check backend', 'validate backend',
+                'verify build', 'test the build'
+            ],
+            IntentType.BACKEND_MODIFY: [
+                'modify backend', 'change backend code', 'edit backend',
+                'modify code', 'change source', 'edit source',
+                'patch backend', 'update backend code',
+                'modify the backend', 'change the code', 'edit the source'
+            ],
+            IntentType.BACKEND_LIST: [
+                'list backends', 'available backends', 'show backends',
+                'what backends', 'backend list', 'which backends',
+                'supported backends', 'show build profiles'
+            ],
+
+            # ── System & Admin ────────────────────────────────────────
+            IntentType.SYSTEM_INFO: [
+                'system info', 'system information', 'python version',
+                'os info', 'gpu info', 'disk space', 'memory',
+                'cpu info', 'what system'
+            ],
+            IntentType.ADMIN_ELEVATE: [
+                'admin', 'administrator', 'sudo', 'run as admin',
+                'elevate', 'root', 'admin access', 'elevated',
+                'admin privileges'
+            ],
+
+            # ── Web & Research ────────────────────────────────────────
+            IntentType.WEB_SEARCH: [
+                'search the web', 'web search', 'google',
+                'look up online', 'search online', 'fetch url',
+                'fetch page', 'open url', 'browse',
+                'search internet', 'find online'
+            ],
+
+            # ── Query operations ──────────────────────────────────────
             # NOTE: These are handled with PRIORITY in recognize_intent
             IntentType.QUERY_LOCATION: [
                 'where is', 'where did', 'where was', 'location of',
@@ -360,18 +957,7 @@ class RobustNLProcessor:
     
     def _is_query_intent(self, msg_lower: str) -> bool:
         """Check if message is a query about location/status."""
-        query_patterns = [
-            r'where\s+is\s+',
-            r'where\s+did\s+',
-            r'where\s+was\s+',
-            r'where\s+is\s+that',
-            r'where\s+is\s+the',
-            r'location\s+of',
-            r'find\s+the\s+.*(?:repo|clone|path)',
-            r'what\s+path',
-            r'where.*(?:repo|clone|put|save)',
-        ]
-        return any(re.search(p, msg_lower) for p in query_patterns)
+        return any(p.search(msg_lower) for p in self._QUERY_PATTERNS)
     
     def _create_query_intent(self, message: str, msg_lower: str) -> Intent:
         """Create a query intent with proper type."""
@@ -381,9 +967,13 @@ class RobustNLProcessor:
         
         intent_type = IntentType.QUERY_STATUS if is_status else IntentType.QUERY_LOCATION
         
+        # Phase 2: Resolve pronouns (e.g. "where is it?")
+        entities = self.extract_entities(message)
+        entities = self._resolve_entity_references(entities, msg_lower)
+        
         intent = Intent(
             intent_type=intent_type,
-            entities=self.extract_entities(message),
+            entities=entities,
             confidence=0.9,
             raw_message=message
         )
@@ -399,6 +989,8 @@ class RobustNLProcessor:
     def _create_clone_intent(self, message: str) -> Intent:
         """Create a clone intent with proper entity extraction."""
         entities = self.extract_entities(message)
+        # Phase 2: Resolve pronoun references (e.g. "clone that repo")
+        entities = self._resolve_entity_references(entities, message.lower())
         
         # Ensure URL is extracted
         url_match = re.search(r'(https?://[^\s\'"<>]+)', message, re.IGNORECASE)
@@ -418,6 +1010,34 @@ class RobustNLProcessor:
         intent.explanation = self._generate_explanation(intent)
         return intent
     
+    def _is_dependency_intent(self, msg_lower: str) -> bool:
+        """Check if message is a dependency installation command."""
+        dep_patterns = [
+            'pip install', 'pip3 install', 'npm install', 'conda install',
+            'apt install', 'apt-get install', 'brew install', 'yarn add',
+            'install dependency', 'install dependencies', 'install requirements',
+            'install packages', 'install the dependencies',
+        ]
+        return any(p in msg_lower for p in dep_patterns)
+
+    def _is_script_intent(self, msg_lower: str, message: str) -> bool:
+        """Check if message is a script execution request."""
+        has_run_keyword = any(kw in msg_lower for kw in [
+            'run ', 'execute ', 'launch ', 'start ',
+        ])
+        has_script_ext = bool(re.search(
+            r'\S+\.(?:py|sh|ps1|bat|js|lua)\b', message, re.IGNORECASE
+        ))
+        return has_run_keyword and has_script_ext
+
+    def _is_direct_command_intent(self, msg_lower: str) -> bool:
+        """Check if message starts with a direct shell command."""
+        direct_prefixes = [
+            'cd ', 'ls ', 'dir ', 'pwd', 'mkdir ', 'rmdir ',
+            'cat ', 'echo ', 'type ', 'head ', 'tail ',
+        ]
+        return any(msg_lower.startswith(p) for p in direct_prefixes)
+
     def _infer_install_command(self, part: str) -> str:
         """Infer the install command from the message part."""
         part_lower = part.lower()
@@ -488,158 +1108,673 @@ class RobustNLProcessor:
             self._context.add_path(path)
     
     def extract_entities(self, message: str) -> List[ExtractedEntity]:
-        """Extract entities from a message using regex patterns."""
-        entities = []
-        
-        # Extract paths
+        """Extract entities from a message using regex patterns.
+
+        Extracts paths, branches, URLs, scripts, commands, packages,
+        script_paths, environments, line ranges, process IDs, and
+        context-aware quoted content (Phase 2 additions).
+        """
+        entities: List[ExtractedEntity] = []
+        seen_values: set = set()  # de-duplicate identical values
+
+        def _add(entity_type: str, value: str, confidence: float, source: str = 'regex'):
+            key = (entity_type, value)
+            if key not in seen_values:
+                seen_values.add(key)
+                entities.append(ExtractedEntity(entity_type, value, confidence, source))
+
+        # ── Paths ─────────────────────────────────────────────────────
         for pattern in self._patterns['windows_path']:
             for match in pattern.finditer(message):
-                path = match.group(1).strip().rstrip('.,;:')
-                entities.append(ExtractedEntity('path', path, 0.9, 'regex'))
-        
+                _add('path', match.group(1).strip().rstrip('.,;:'), 0.9)
+
         for pattern in self._patterns['unix_path']:
             for match in pattern.finditer(message):
-                path = match.group(1).strip().rstrip('.,;:')
-                entities.append(ExtractedEntity('path', path, 0.9, 'regex'))
-        
-        # Extract branches - with strict filtering
+                _add('path', match.group(1).strip().rstrip('.,;:'), 0.9)
+
+        # ── Branches ──────────────────────────────────────────────────
         for pattern in self._patterns['branch']:
             for match in pattern.finditer(message):
                 branch = match.group(1).strip()
-                # Strict validation for branch names:
-                # 1. Must be at least 3 characters
-                # 2. Must start with a letter
-                # 3. Cannot be all digits or mostly digits
-                # 4. Cannot be a common word
-                # 5. Cannot contain only punctuation
-                if (len(branch) >= 3 and 
-                    branch[0].isalpha() and 
-                    not re.match(r'^\d+[\.]?$', branch) and  # Not just digits
-                    not re.match(r'^[\d\.\-]+$', branch) and  # Not digits with punctuation
-                    sum(c.isdigit() for c in branch) < len(branch) // 2 and  # Less than half digits
-                    branch.lower() not in ['the', 'and', 'for', 'with', 'this', 'that', 
-                                          'from', 'clone', 'build', 'run', 'to', 'a', 'an',
-                                          'of', 'it', 'in', 'on', 'at', 'be', 'is', 'are',
-                                          'repo', 'repository', 'directory', 'folder', 'file',
-                                          'branch', 'all', 'please', 'want', 'use', 'updated']):
-                    entities.append(ExtractedEntity('branch', branch, 0.85, 'regex'))
-        
-        # Extract URLs
+                if (len(branch) >= 3 and
+                    branch[0].isalpha() and
+                    not re.match(r'^\d+[\.]?$', branch) and
+                    not re.match(r'^[\d\.\-]+$', branch) and
+                    sum(c.isdigit() for c in branch) < len(branch) // 2 and
+                    branch.lower() not in self._BRANCH_STOPWORDS):
+                    _add('branch', branch, 0.85)
+
+        # ── URLs ──────────────────────────────────────────────────────
         for pattern in self._patterns['github_url']:
             for match in pattern.finditer(message):
-                url = match.group(1).strip()
-                entities.append(ExtractedEntity('url', url, 0.95, 'regex'))
-        
+                _add('url', match.group(1).strip(), 0.95)
+
         for pattern in self._patterns['git_url']:
             for match in pattern.finditer(message):
-                url = match.group(1).strip()
-                entities.append(ExtractedEntity('url', url, 0.95, 'regex'))
-        
-        # Extract scripts
+                _add('url', match.group(1).strip(), 0.95)
+
+        # ── Scripts (legacy) ──────────────────────────────────────────
         for pattern in self._patterns['python_script']:
             for match in pattern.finditer(message):
-                script = match.group(1).strip()
-                entities.append(ExtractedEntity('script', script, 0.9, 'regex'))
-        
+                _add('script', match.group(1).strip(), 0.9)
+
         for pattern in self._patterns['script']:
             for match in pattern.finditer(message):
-                script = match.group(1).strip()
-                entities.append(ExtractedEntity('script', script, 0.9, 'regex'))
-        
-        # Extract quoted commands
+                _add('script', match.group(1).strip(), 0.9)
+
+        # ── Quoted commands ───────────────────────────────────────────
         for pattern in self._patterns['quoted_command']:
             for match in pattern.finditer(message):
                 cmd = match.group(1).strip()
-                if len(cmd) > 2:  # Avoid single chars
-                    entities.append(ExtractedEntity('command', cmd, 0.8, 'regex'))
-        
-        # Try to extract directory names from context
-        dir_patterns = [
-            r'(?:go\s+)?(?:to|into|inside)\s+(?:the\s+)?([A-Za-z][A-Za-z0-9_\-\.]*)\s+(?:directory|folder|dir)',
-            r'(?:go\s+)?(?:to|into|inside)\s+([A-Za-z][A-Za-z0-9_\-\.]*)',
-            r'inside\s+([A-Za-z][A-Za-z0-9_\-\.\/]*)',
-        ]
-        for pattern in dir_patterns:
-            match = re.search(pattern, message, re.IGNORECASE)
-            if match:
-                dirname = match.group(1).strip()
-                # Filter out common words
-                if dirname.lower() not in ['the', 'a', 'an', 'this', 'that', 'and', 'or', 
-                                           'directory', 'folder', 'file', 'repo', 'branch']:
-                    entities.append(ExtractedEntity('dirname', dirname, 0.7, 'regex'))
-        
+                if len(cmd) > 2:
+                    _add('command', cmd, 0.8)
+
+        # ── Directory names from navigation context ───────────────────
+        for pattern in self._patterns['dirname']:
+            m = pattern.search(message)
+            if m:
+                dirname = m.group(1).strip()
+                if dirname.lower() not in self._DIRNAME_STOPWORDS:
+                    _add('dirname', dirname, 0.7)
+
+        # ════════════════════════════════════════════════════════════════
+        # Phase 2 entity extractors
+        # ════════════════════════════════════════════════════════════════
+
+        # ── Package names ─────────────────────────────────────────────
+        for pattern in self._patterns['package']:
+            for match in pattern.finditer(message):
+                raw = match.group(1).strip()
+                # Split on whitespace — each token is a separate package
+                for pkg in raw.split():
+                    pkg = pkg.strip().rstrip('.,;:')
+                    if pkg and len(pkg) >= 2:
+                        _add('package', pkg, 0.9)
+
+        # ── Script file paths (more specific than generic 'script') ───
+        for pattern in self._patterns['script_path']:
+            for match in pattern.finditer(message):
+                sp = match.group(1).strip().rstrip('.,;:')
+                if sp and len(sp) >= 4:  # at least "a.py"
+                    _add('script_path', sp, 0.9)
+
+        # ── Environment names ─────────────────────────────────────────
+        for pattern in self._patterns['environment']:
+            for match in pattern.finditer(message):
+                env_name = (
+                    match.group(1).strip()
+                    if match.lastindex and match.lastindex >= 1
+                    else match.group(0).strip()
+                )
+                if env_name:
+                    _add('environment', env_name, 0.85)
+
+        # ── Line ranges ───────────────────────────────────────────────
+        # Process range patterns (2-group) first, then single-line (1-group).
+        # Track matched spans to avoid the single-line pattern re-matching
+        # digits that are already part of a range.
+        _lr_spans: list = []  # (start, end) character spans already consumed
+        for pattern in self._patterns['line_range']:
+            for match in pattern.finditer(message):
+                # Skip if this match overlaps an already-consumed span
+                ms, me = match.span()
+                if any(s <= ms < e or s < me <= e for s, e in _lr_spans):
+                    continue
+                _lr_spans.append((ms, me))
+                groups = match.groups()
+                if len(groups) == 2 and groups[1] is not None:
+                    _add('line_range', f"{groups[0]}-{groups[1]}", 0.9)
+                elif len(groups) >= 1:
+                    _add('line_range', groups[0], 0.9)
+
+        # ── Process / terminal identifiers ────────────────────────────
+        for pattern in self._patterns['process_id']:
+            for match in pattern.finditer(message):
+                if match.lastindex:
+                    _add('process_id', match.group(1).strip(), 0.85)
+                else:
+                    # Ordinal reference like "the build terminal"
+                    _add('process_id', match.group(0).strip(), 0.7)
+
+        # ── Context-aware quoted content ──────────────────────────────
+        # Classify based on which sub-pattern matched
+        qc_patterns = self._patterns['quoted_context']
+        # idx 0 → path, idx 1 → name, idx 2 → command, idx 3 → package
+        qc_types = ['path', 'name', 'command', 'package']
+        for idx, pattern in enumerate(qc_patterns):
+            for match in pattern.finditer(message):
+                val = match.group(1).strip()
+                if val and len(val) > 1:
+                    _add(qc_types[idx], val, 0.85)
+
         return entities
-    
+
+    # ── Phase 2, Step 2.4: Pronoun / reference resolution ─────────────
+
+    # Pronoun patterns that trigger context resolution
+    _PRONOUN_PATTERNS = frozenset({
+        'it', 'that', 'there',
+        'the repo', 'the repository', 'that repo', 'repo',
+        'the script', 'that script',
+        'the result', 'the output', 'result', 'output',
+        'the branch', 'that branch',
+        'the backend', 'that backend',
+        'the directory', 'that directory', 'the folder', 'that folder',
+        'back', 'previous directory', 'previous folder',
+    })
+
+    def _resolve_entity_references(
+        self,
+        entities: List[ExtractedEntity],
+        msg_lower: str,
+    ) -> List[ExtractedEntity]:
+        """Post-process entities to resolve pronouns to concrete values.
+
+        For every entity whose ``value`` matches a known pronoun pattern,
+        attempt to resolve it via ``SessionContext.resolve_reference()``.
+
+        * If resolution succeeds → replace ``value``, set ``source='context'``
+        * If resolution fails   → keep original, lower confidence to 0.3
+        """
+        resolved: List[ExtractedEntity] = []
+        for entity in entities:
+            val_lower = entity.value.strip().lower()
+            if val_lower not in self._PRONOUN_PATTERNS:
+                resolved.append(entity)
+                continue
+
+            # Extract the verb immediately preceding the pronoun
+            verb_context = self._extract_verb_context(msg_lower, val_lower)
+
+            concrete = self._context.resolve_reference(val_lower, verb_context)
+            if concrete:
+                resolved.append(ExtractedEntity(
+                    entity_type=entity.entity_type,
+                    value=concrete,
+                    confidence=entity.confidence,
+                    source='context',
+                ))
+            else:
+                # Keep the entity but lower confidence
+                resolved.append(ExtractedEntity(
+                    entity_type=entity.entity_type,
+                    value=entity.value,
+                    confidence=0.3,
+                    source=entity.source,
+                ))
+        return resolved
+
+    @staticmethod
+    def _extract_verb_context(msg_lower: str, pronoun: str) -> Optional[str]:
+        """Extract the verb that immediately precedes *pronoun* in the message.
+
+        Returns the word(s) before the pronoun that look like a verb phrase,
+        or ``None`` if no clear verb is found.  For example::
+
+            "run it"       → "run"
+            "execute that" → "execute"
+            "show it"      → "show"
+        """
+        idx = msg_lower.find(pronoun)
+        if idx <= 0:
+            return None
+        preceding = msg_lower[:idx].rstrip()
+        if not preceding:
+            return None
+        # Take the last 1-2 words before the pronoun as verb context
+        words = preceding.split()
+        verb = ' '.join(words[-2:]) if len(words) >= 2 else words[-1]
+        return verb
+
     def recognize_intent(self, message: str) -> Intent:
         """Recognize the user's intent from natural language.
-        
-        Uses hybrid approach:
-        1. Priority checks for specific intents (queries, clones)
-        2. Multi-step detection (then, and, after, numbered lists)
-        3. Rule-based pattern matching
-        4. Context from previous messages
+
+        Uses a 5-layer pipeline where each layer is a fallback if the
+        previous one fails or produces low confidence:
+
+        Layer 1 — High-Priority Pattern Matching (no LLM needed)
+        Layer 2 — Multi-Step Detection
+        Layer 3 — Keyword Scoring
+        Layer 4 — LLM-Assisted Classification (optional, model-agnostic)
+        Layer 5 — Context-Based Inference
         """
         msg_lower = message.lower()
-        
-        # PRIORITY 1: Check for location/status queries FIRST
-        # These should NEVER be confused with other operations
+
+        # ══════════════════════════════════════════════════════════════
+        # Layer 1: High-Priority Pattern Matching (no LLM needed)
+        # Unambiguous intents determined from text patterns alone.
+        # ══════════════════════════════════════════════════════════════
+        layer1 = self._layer1_pattern_match(message, msg_lower)
+        if layer1 is not None:
+            return layer1
+
+        # ══════════════════════════════════════════════════════════════
+        # Layer 2: Multi-Step Detection
+        # ══════════════════════════════════════════════════════════════
+        layer2 = self._layer2_multi_step(message, msg_lower)
+        if layer2 is not None:
+            return layer2
+
+        # ══════════════════════════════════════════════════════════════
+        # Layer 3: Keyword Scoring
+        # ══════════════════════════════════════════════════════════════
+        entities = self.extract_entities(message)
+        entities = self._resolve_entity_references(entities, msg_lower)
+
+        layer3_intent, layer3_confidence, scored_candidates = self._layer3_keyword_scoring(
+            msg_lower, entities
+        )
+
+        if layer3_confidence >= 0.5:
+            intent = Intent(
+                intent_type=layer3_intent,
+                entities=entities,
+                confidence=layer3_confidence,
+                raw_message=message,
+            )
+            intent.explanation = self._generate_explanation(intent)
+            self._enhance_with_context(intent)
+            return intent
+
+        # ══════════════════════════════════════════════════════════════
+        # Layer 4: LLM-Assisted Classification (optional)
+        # Sends a multiple-choice question to the integrated model.
+        # ══════════════════════════════════════════════════════════════
+        layer4 = self._layer4_llm_classification(
+            message, msg_lower, entities, scored_candidates
+        )
+        if layer4 is not None:
+            return layer4
+
+        # ══════════════════════════════════════════════════════════════
+        # Layer 5: Context-Based Inference
+        # Uses SessionContext to infer from conversation flow.
+        # ══════════════════════════════════════════════════════════════
+        layer5 = self._layer5_context_inference(message, msg_lower, entities)
+        if layer5 is not None:
+            return layer5
+
+        # All layers failed — return UNKNOWN
+        intent = Intent(
+            intent_type=IntentType.UNKNOWN,
+            entities=entities,
+            confidence=0.0,
+            raw_message=message,
+        )
+        intent.explanation = "Could not determine intent"
+        return intent
+
+    # ── Layer 1: High-Priority Pattern Matching ───────────────────────
+
+    def _layer1_pattern_match(
+        self, message: str, msg_lower: str
+    ) -> Optional[Intent]:
+        """Layer 1 — intents unambiguously determined from text patterns.
+
+        If the message contains multi-step separators, we skip all
+        non-query patterns so Layer 2 can handle the full sequence.
+        """
+
+        # Queries — ALWAYS first (never part of multi-step)
         if self._is_query_intent(msg_lower):
             return self._create_query_intent(message, msg_lower)
-        
-        # Check for multi-step operations BEFORE clone check
-        # (because clone might be part of multi-step)
-        multi_step_separators = [' then ', ' and then ', ' after that ', ' next ', ' finally ']
-        is_multi_step = any(sep in msg_lower for sep in multi_step_separators)
-        
-        # Also check for numbered lists: "1. ... 2. ... 3. ..."
-        has_numbered_list = bool(re.search(r'(?:^|\n)\s*\d+[\.\)]\s+', message))
-        
-        if is_multi_step or has_numbered_list:
-            return self._parse_multi_step_intent(message)
-        
-        # PRIORITY 2: Check for clone operations (contains URL)
-        # This takes priority because URLs are distinctive
+
+        # Guard: if the message looks like a multi-step operation,
+        # skip the remaining Layer 1 checks and let Layer 2 handle it.
+        _multi_seps = (' then ', ' and then ', ' after that ', ' next ', ' finally ')
+        if any(sep in msg_lower for sep in _multi_seps):
+            return None
+        if re.search(r'(?:^|\n)\s*\d+[\.\)]\s+', message):
+            return None
+        if ';' in message and len(message) > 20:
+            return None
+
+        # Clone operations — URL is distinctive
         if self._is_clone_intent(msg_lower, message):
             return self._create_clone_intent(message)
-        
-        # Single operation processing
-        entities = self.extract_entities(message)
-        
-        best_intent = IntentType.UNKNOWN
-        best_confidence = 0.0
-        
-        # Score each intent type based on keyword matches
+
+        # Script execution — run/execute + file extension
+        if self._is_script_intent(msg_lower, message):
+            entities = self.extract_entities(message)
+            entities = self._resolve_entity_references(entities, msg_lower)
+            intent = Intent(
+                intent_type=IntentType.RUN_SCRIPT,
+                entities=entities,
+                confidence=0.9,
+                raw_message=message,
+            )
+            intent.explanation = self._generate_explanation(intent)
+            return intent
+
+        # Dependency installation — pip/npm/conda install
+        if self._is_dependency_intent(msg_lower):
+            entities = self.extract_entities(message)
+            entities = self._resolve_entity_references(entities, msg_lower)
+            intent = Intent(
+                intent_type=IntentType.INSTALL_DEPENDENCY,
+                entities=entities,
+                confidence=0.9,
+                raw_message=message,
+            )
+            intent.explanation = self._generate_explanation(intent)
+            return intent
+
+        # Direct shell commands (cd, ls, pwd, mkdir, ...)
+        if self._is_direct_command_intent(msg_lower):
+            entities = self.extract_entities(message)
+            entities = self._resolve_entity_references(entities, msg_lower)
+            # Determine specific intent from the prefix
+            if msg_lower.startswith('cd '):
+                it = IntentType.NAVIGATE_DIRECTORY
+            elif msg_lower.startswith(('ls ', 'dir ')):
+                it = IntentType.LIST_DIRECTORY
+            elif msg_lower.startswith('pwd'):
+                it = IntentType.SHOW_CURRENT_DIR
+            elif msg_lower.startswith('mkdir '):
+                it = IntentType.CREATE_DIRECTORY
+            elif msg_lower.startswith('rmdir '):
+                it = IntentType.DELETE_DIRECTORY
+            else:
+                it = IntentType.RUN_COMMAND
+            intent = Intent(
+                intent_type=it,
+                entities=entities,
+                confidence=0.9,
+                raw_message=message,
+            )
+            intent.explanation = self._generate_explanation(intent)
+            return intent
+
+        return None
+
+    # ── Layer 2: Multi-Step Detection ─────────────────────────────────
+
+    def _layer2_multi_step(
+        self, message: str, msg_lower: str
+    ) -> Optional[Intent]:
+        """Layer 2 — detect multi-step operations."""
+        multi_step_separators = [
+            ' then ', ' and then ', ' after that ', ' next ', ' finally ',
+        ]
+        is_multi_step = any(sep in msg_lower for sep in multi_step_separators)
+        has_numbered_list = bool(
+            re.search(r'(?:^|\n)\s*\d+[\.\)]\s+', message)
+        )
+        # Also detect semicolons separating distinct commands
+        has_semicolons = ';' in message and len(message) > 20
+
+        if is_multi_step or has_numbered_list or has_semicolons:
+            return self._parse_multi_step_intent(message)
+        return None
+
+    # ── Layer 3: Keyword Scoring ──────────────────────────────────────
+
+    def _layer3_keyword_scoring(
+        self,
+        msg_lower: str,
+        entities: List[ExtractedEntity],
+    ) -> Tuple[IntentType, float, List[Tuple[IntentType, float]]]:
+        """Layer 3 — score every intent type against the message.
+
+        Returns (best_intent, best_confidence, sorted_candidates).
+        ``sorted_candidates`` is a list of (IntentType, confidence) pairs
+        sorted descending by confidence for use in Layer 4.
+        """
+        scored: List[Tuple[IntentType, float]] = []
+
         for intent_type, keywords in self._intent_keywords.items():
             score = 0.0
             matches = 0
             for keyword in keywords:
                 if keyword in msg_lower:
                     matches += 1
-                    # Longer keyword matches are more specific
                     score += len(keyword) / 20.0
-            
             if matches > 0:
-                # Normalize score
                 confidence = min(0.5 + (score * 0.5), 0.95)
-                if confidence > best_confidence:
-                    best_confidence = confidence
-                    best_intent = intent_type
-        
-        # Build the intent object
-        intent = Intent(
-            intent_type=best_intent,
-            entities=entities,
-            confidence=best_confidence,
-            raw_message=message
+                scored.append((intent_type, confidence))
+
+        scored.sort(key=lambda x: x[1], reverse=True)
+
+        if scored:
+            return scored[0][0], scored[0][1], scored
+        return IntentType.UNKNOWN, 0.0, scored
+
+    # ── Layer 4: LLM-Assisted Classification ──────────────────────────
+
+    _INTENT_DESCRIPTIONS: Dict[IntentType, str] = {
+        IntentType.NAVIGATE_DIRECTORY: "Navigate to a directory",
+        IntentType.LIST_DIRECTORY: "List directory contents",
+        IntentType.SHOW_CURRENT_DIR: "Show current working directory",
+        IntentType.GIT_CHECKOUT: "Switch git branch",
+        IntentType.GIT_CLONE: "Clone a git repository",
+        IntentType.GIT_PULL: "Pull latest changes",
+        IntentType.GIT_PUSH: "Push commits to remote",
+        IntentType.GIT_STATUS: "Check git status",
+        IntentType.GIT_COMMIT: "Commit staged changes",
+        IntentType.GIT_ADD: "Stage files for commit",
+        IntentType.GIT_BRANCH: "List or create branches",
+        IntentType.GIT_FETCH: "Fetch from remote",
+        IntentType.GIT_MERGE: "Merge branches",
+        IntentType.GIT_REBASE: "Rebase branch",
+        IntentType.GIT_STASH: "Stash or pop changes",
+        IntentType.GIT_LOG: "View commit history",
+        IntentType.GIT_DIFF: "Show diffs / changes",
+        IntentType.GIT_CONFLICT_RESOLVE: "Resolve merge conflicts",
+        IntentType.CREATE_FILE: "Create a new file",
+        IntentType.READ_FILE: "Read file contents",
+        IntentType.WRITE_FILE: "Write / edit a file",
+        IntentType.DELETE_FILE: "Delete a file",
+        IntentType.COPY_FILE: "Copy a file",
+        IntentType.MOVE_FILE: "Move / rename a file",
+        IntentType.CREATE_DIRECTORY: "Create a directory",
+        IntentType.DELETE_DIRECTORY: "Delete a directory",
+        IntentType.COPY_DIRECTORY: "Copy a directory",
+        IntentType.RUN_COMMAND: "Run a shell command",
+        IntentType.RUN_SCRIPT: "Execute a script file",
+        IntentType.TERMINAL_MONITOR: "Monitor terminal sessions",
+        IntentType.TERMINAL_KILL: "Kill a terminal process",
+        IntentType.TERMINAL_OUTPUT: "Show terminal output",
+        IntentType.TERMINAL_LIST: "List terminals",
+        IntentType.QUERY_LOCATION: "Find where something is",
+        IntentType.QUERY_STATUS: "Check operation status",
+        IntentType.INSTALL_DEPENDENCY: "Install packages / dependencies",
+        IntentType.CONFIGURE_ENVIRONMENT: "Configure environment / venv",
+        IntentType.CHECK_DEPENDENCY: "Check if dependency is installed",
+        IntentType.SEARCH_FILE: "Search file contents",
+        IntentType.ANALYZE_RESULTS: "Analyze execution results",
+        IntentType.EXPORT_RESULTS: "Export results to file",
+        IntentType.PLAN_EXECUTION: "Create an execution plan",
+        IntentType.UNDO_OPERATION: "Undo last operation",
+        IntentType.REDO_OPERATION: "Redo undone operation",
+        IntentType.BACKEND_BUILD: "Build a quantum backend",
+        IntentType.BACKEND_CONFIGURE: "Configure a backend",
+        IntentType.BACKEND_TEST: "Test a backend",
+        IntentType.BACKEND_MODIFY: "Modify backend source code",
+        IntentType.BACKEND_LIST: "List available backends",
+        IntentType.SYSTEM_INFO: "Get system information",
+        IntentType.ADMIN_ELEVATE: "Request admin privileges",
+        IntentType.WEB_SEARCH: "Search the web / fetch URL",
+        IntentType.MULTI_STEP: "Execute multiple steps",
+    }
+
+    def _layer4_llm_classification(
+        self,
+        message: str,
+        msg_lower: str,
+        entities: List[ExtractedEntity],
+        scored_candidates: List[Tuple[IntentType, float]],
+    ) -> Optional[Intent]:
+        """Layer 4 — ask the integrated model via a multiple-choice prompt.
+
+        This works with ANY model (including small local models) because
+        it uses a simple numbered-choice format instead of JSON extraction.
+        """
+        if not self._llm_router:
+            return None
+
+        # Take top 4 candidates from Layer 3 (or fill with common intents)
+        candidates: List[IntentType] = []
+        for it, _ in scored_candidates[:4]:
+            candidates.append(it)
+
+        # Pad with common intents if fewer than 4 candidates
+        common_fallbacks = [
+            IntentType.RUN_COMMAND, IntentType.NAVIGATE_DIRECTORY,
+            IntentType.RUN_SCRIPT, IntentType.SEARCH_FILE,
+        ]
+        for fb in common_fallbacks:
+            if len(candidates) >= 4:
+                break
+            if fb not in candidates:
+                candidates.append(fb)
+
+        # Build the multiple-choice prompt
+        options = []
+        for i, it in enumerate(candidates[:4], 1):
+            desc = self._INTENT_DESCRIPTIONS.get(it, it.name.replace('_', ' ').lower())
+            options.append(f"{i}. {it.name}: {desc}")
+        options.append("5. None of the above")
+
+        prompt = (
+            f"The user said: '{message}'\n"
+            f"Which action best matches? Pick ONE number:\n"
+            + "\n".join(options) + "\n"
+            "Answer with just the number:"
         )
-        
-        # Generate explanation
-        intent.explanation = self._generate_explanation(intent)
-        
-        # Enhance with context
-        self._enhance_with_context(intent)
-        
-        return intent
+
+        try:
+            # Use the LLM router to get a response
+            from proxima.intelligence.llm_router import LLMRequest
+            request = LLMRequest(
+                prompt=prompt,
+                system_prompt="You are a classifier. Reply with a single digit (1-5) only.",
+                temperature=0.0,
+                max_tokens=8,
+            )
+            response = self._llm_router.route(request)
+            if response and hasattr(response, 'text') and response.text:
+                text = response.text.strip()
+                # Parse the first digit found
+                digit_match = re.search(r'[1-5]', text)
+                if digit_match:
+                    choice = int(digit_match.group())
+                    if 1 <= choice <= len(candidates):
+                        chosen = candidates[choice - 1]
+                        intent = Intent(
+                            intent_type=chosen,
+                            entities=entities,
+                            confidence=0.7,
+                            raw_message=message,
+                        )
+                        intent.explanation = self._generate_explanation(intent)
+                        self._enhance_with_context(intent)
+                        return intent
+                    # choice == 5 or out of range → fall through
+        except Exception:
+            pass  # LLM unavailable or error — fall through
+
+        return None
+
+    # ── Layer 5: Context-Based Inference ──────────────────────────────
+
+    def _layer5_context_inference(
+        self,
+        message: str,
+        msg_lower: str,
+        entities: List[ExtractedEntity],
+    ) -> Optional[Intent]:
+        """Layer 5 — infer intent from SessionContext conversation flow."""
+        ctx = self._context
+
+        # "build it" / "test it" after a clone → BACKEND_BUILD / BACKEND_TEST
+        if 'build' in msg_lower and ('it' in msg_lower or 'that' in msg_lower):
+            # Check if last operation was a clone of a known backend
+            if ctx.last_cloned_repo:
+                _known_backends = {
+                    'lret', 'cirq', 'qiskit', 'quest', 'qsim',
+                    'cuquantum', 'pennylane',
+                }
+                repo_lower = ctx.last_cloned_repo.lower()
+                if any(b in repo_lower for b in _known_backends):
+                    intent = Intent(
+                        intent_type=IntentType.BACKEND_BUILD,
+                        entities=entities,
+                        confidence=0.6,
+                        raw_message=message,
+                    )
+                    intent.explanation = "Build the recently cloned backend"
+                    return intent
+                # Not a known backend → generic build command
+                intent = Intent(
+                    intent_type=IntentType.RUN_COMMAND,
+                    entities=entities,
+                    confidence=0.55,
+                    raw_message=message,
+                )
+                intent.explanation = "Run build command on cloned repository"
+                return intent
+
+        if 'test' in msg_lower and ('it' in msg_lower or 'that' in msg_lower):
+            if ctx.last_built_backend or ctx.last_cloned_repo:
+                intent = Intent(
+                    intent_type=IntentType.BACKEND_TEST,
+                    entities=entities,
+                    confidence=0.55,
+                    raw_message=message,
+                )
+                intent.explanation = "Test the recently built backend"
+                return intent
+
+        # "run it" → RUN_SCRIPT using last_script_executed
+        if 'run' in msg_lower and ('it' in msg_lower or 'that' in msg_lower):
+            if ctx.last_script_executed:
+                entities_copy = list(entities)
+                entities_copy.append(ExtractedEntity(
+                    'script_path', ctx.last_script_executed, 0.7, 'context'
+                ))
+                intent = Intent(
+                    intent_type=IntentType.RUN_SCRIPT,
+                    entities=entities_copy,
+                    confidence=0.6,
+                    raw_message=message,
+                )
+                intent.explanation = f"Re-run {ctx.last_script_executed}"
+                return intent
+
+        # "go back" / "previous directory" → NAVIGATE_DIRECTORY with pop
+        if 'go back' in msg_lower or 'previous directory' in msg_lower:
+            prev = ctx.pop_directory()
+            if prev:
+                entities_copy = list(entities)
+                entities_copy.append(ExtractedEntity(
+                    'path', prev, 0.8, 'context'
+                ))
+                intent = Intent(
+                    intent_type=IntentType.NAVIGATE_DIRECTORY,
+                    entities=entities_copy,
+                    confidence=0.7,
+                    raw_message=message,
+                )
+                intent.explanation = f"Navigate back to {prev}"
+                return intent
+
+        # "install the dependencies" / "install deps" after cloning
+        if 'install' in msg_lower and ('dependencies' in msg_lower or 'deps' in msg_lower or 'requirements' in msg_lower):
+            if ctx.last_cloned_repo:
+                entities_copy = list(entities)
+                entities_copy.append(ExtractedEntity(
+                    'path', ctx.last_cloned_repo, 0.7, 'context'
+                ))
+                intent = Intent(
+                    intent_type=IntentType.INSTALL_DEPENDENCY,
+                    entities=entities_copy,
+                    confidence=0.6,
+                    raw_message=message,
+                )
+                intent.explanation = "Install dependencies for cloned repo"
+                return intent
+
+        return None
     
     def _parse_multi_step_intent(self, message: str) -> Intent:
         """Parse a multi-step operation from natural language.
@@ -682,6 +1817,8 @@ class RobustNLProcessor:
             
             # Extract entities from this part
             entities = self.extract_entities(part)
+            # Phase 2: Resolve pronouns in each sub-step (e.g. "build it")
+            entities = self._resolve_entity_references(entities, part_lower)
             all_entities.extend(entities)
             
             # Check if this part contains a URL (strong indicator of clone)
@@ -801,57 +1938,111 @@ class RobustNLProcessor:
                     'entities': entities
                 })
         
-        # Create multi-step intent
+        # Convert raw sub-intent dicts to proper Intent objects
+        parsed_sub_intents: List[Intent] = []
+        for sub in sub_intents:
+            sub_intent = Intent(
+                intent_type=sub['type'],
+                entities=sub['entities'],
+                confidence=0.8,
+                raw_message=sub['part'],
+            )
+            sub_intent.explanation = self._generate_explanation(sub_intent)
+            parsed_sub_intents.append(sub_intent)
+
+        # Create multi-step intent with sub_intents field
         intent = Intent(
             intent_type=IntentType.MULTI_STEP,
             entities=all_entities,
-            confidence=0.8 if sub_intents else 0.3,
-            raw_message=message
+            confidence=0.8 if parsed_sub_intents else 0.3,
+            raw_message=message,
+            sub_intents=parsed_sub_intents,
         )
-        
-        # Store sub-intents in a custom field (using entities as workaround)
-        intent._sub_intents = sub_intents  # type: ignore
         
         # Generate explanation
         step_descriptions = []
-        for i, sub in enumerate(sub_intents, 1):
-            step_descriptions.append(f"Step {i}: {sub['type'].name.replace('_', ' ').title()}")
+        for i, sub in enumerate(parsed_sub_intents, 1):
+            step_descriptions.append(f"Step {i}: {sub.intent_type.name.replace('_', ' ').title()}")
         
         intent.explanation = f"Multi-step operation: {' → '.join(step_descriptions)}"
         
         return intent
     
+    # Explanations for each intent type — built once as a class constant.
+    _INTENT_EXPLANATIONS: Dict[IntentType, str] = {
+        # Navigation
+        IntentType.NAVIGATE_DIRECTORY: "Navigate to directory",
+        IntentType.LIST_DIRECTORY: "List directory contents",
+        IntentType.SHOW_CURRENT_DIR: "Show current directory",
+        # Git basic
+        IntentType.GIT_CHECKOUT: "Switch to git branch",
+        IntentType.GIT_CLONE: "Clone repository",
+        IntentType.GIT_PULL: "Pull changes from remote",
+        IntentType.GIT_PUSH: "Push changes to remote",
+        IntentType.GIT_STATUS: "Show git status",
+        IntentType.GIT_COMMIT: "Commit changes",
+        IntentType.GIT_ADD: "Stage files for commit",
+        IntentType.GIT_BRANCH: "Git branch operation",
+        IntentType.GIT_FETCH: "Fetch from remote",
+        # Git extended
+        IntentType.GIT_MERGE: "Merge branches",
+        IntentType.GIT_REBASE: "Rebase branch",
+        IntentType.GIT_STASH: "Stash changes",
+        IntentType.GIT_LOG: "Show commit history",
+        IntentType.GIT_DIFF: "Show diff",
+        IntentType.GIT_CONFLICT_RESOLVE: "Resolve merge conflict",
+        # Terminal & Script
+        IntentType.RUN_COMMAND: "Run terminal command",
+        IntentType.RUN_SCRIPT: "Run script",
+        IntentType.TERMINAL_MONITOR: "Monitor terminals",
+        IntentType.TERMINAL_KILL: "Kill terminal process",
+        IntentType.TERMINAL_OUTPUT: "Show terminal output",
+        IntentType.TERMINAL_LIST: "List active terminals",
+        # File operations
+        IntentType.CREATE_FILE: "Create file",
+        IntentType.READ_FILE: "Read file",
+        IntentType.WRITE_FILE: "Write file",
+        IntentType.DELETE_FILE: "Delete file",
+        IntentType.COPY_FILE: "Copy file",
+        IntentType.MOVE_FILE: "Move file",
+        # Directory operations
+        IntentType.CREATE_DIRECTORY: "Create directory",
+        IntentType.DELETE_DIRECTORY: "Delete directory",
+        IntentType.COPY_DIRECTORY: "Copy directory",
+        # Dependency management
+        IntentType.INSTALL_DEPENDENCY: "Install dependency",
+        IntentType.CONFIGURE_ENVIRONMENT: "Configure environment",
+        IntentType.CHECK_DEPENDENCY: "Check dependency",
+        # Search & Analysis
+        IntentType.SEARCH_FILE: "Search files",
+        IntentType.ANALYZE_RESULTS: "Analyze results",
+        IntentType.EXPORT_RESULTS: "Export results",
+        # Plan & Execution control
+        IntentType.PLAN_EXECUTION: "Create execution plan",
+        IntentType.UNDO_OPERATION: "Undo last operation",
+        IntentType.REDO_OPERATION: "Redo operation",
+        # Backend
+        IntentType.BACKEND_BUILD: "Build backend",
+        IntentType.BACKEND_CONFIGURE: "Configure backend",
+        IntentType.BACKEND_TEST: "Test backend",
+        IntentType.BACKEND_MODIFY: "Modify backend code",
+        IntentType.BACKEND_LIST: "List available backends",
+        # System & Admin
+        IntentType.SYSTEM_INFO: "Show system information",
+        IntentType.ADMIN_ELEVATE: "Elevate privileges",
+        # Web
+        IntentType.WEB_SEARCH: "Search the web",
+        # Query
+        IntentType.QUERY_LOCATION: "Query location",
+        IntentType.QUERY_STATUS: "Query status",
+        # Meta
+        IntentType.MULTI_STEP: "Multi-step operation",
+        IntentType.UNKNOWN: "Unknown operation",
+    }
+
     def _generate_explanation(self, intent: Intent) -> str:
         """Generate a human-readable explanation of the intent."""
-        explanations = {
-            IntentType.NAVIGATE_DIRECTORY: "Navigate to directory",
-            IntentType.LIST_DIRECTORY: "List directory contents",
-            IntentType.SHOW_CURRENT_DIR: "Show current directory",
-            IntentType.GIT_CHECKOUT: "Switch to git branch",
-            IntentType.GIT_CLONE: "Clone repository",
-            IntentType.GIT_PULL: "Pull changes from remote",
-            IntentType.GIT_PUSH: "Push changes to remote",
-            IntentType.GIT_STATUS: "Show git status",
-            IntentType.GIT_COMMIT: "Commit changes",
-            IntentType.GIT_ADD: "Stage files for commit",
-            IntentType.GIT_BRANCH: "Git branch operation",
-            IntentType.GIT_FETCH: "Fetch from remote",
-            IntentType.GIT_CLONE: "Clone repository",
-            IntentType.RUN_COMMAND: "Run terminal command",
-            IntentType.RUN_SCRIPT: "Run script",
-            IntentType.CREATE_FILE: "Create file",
-            IntentType.READ_FILE: "Read file",
-            IntentType.DELETE_FILE: "Delete file",
-            IntentType.COPY_FILE: "Copy file",
-            IntentType.MOVE_FILE: "Move file",
-            IntentType.CREATE_DIRECTORY: "Create directory",
-            IntentType.DELETE_DIRECTORY: "Delete directory",
-            IntentType.QUERY_LOCATION: "Query location",
-            IntentType.QUERY_STATUS: "Query status",
-            IntentType.UNKNOWN: "Unknown operation",
-        }
-        
-        base = explanations.get(intent.intent_type, "Operation")
+        base = self._INTENT_EXPLANATIONS.get(intent.intent_type, "Operation")
         
         # Add entity details
         details = []
@@ -875,7 +2066,7 @@ class RobustNLProcessor:
         # If we need a path but don't have one, try to get from context
         if intent.intent_type in [IntentType.NAVIGATE_DIRECTORY, IntentType.GIT_CHECKOUT,
                                    IntentType.LIST_DIRECTORY, IntentType.RUN_SCRIPT]:
-            if not intent.get_entity('path') and not intent.get_entity('dirname'):
+            if not intent.get_entity('path'):
                 # Check if we have a dirname that could be resolved
                 dirname = intent.get_entity('dirname')
                 if dirname and self._context.last_mentioned_paths:
@@ -925,47 +2116,69 @@ class RobustNLProcessor:
     
     def execute_intent(self, intent: Intent) -> Tuple[bool, str]:
         """Execute a recognized intent.
-        
+
+        For the original core intents (navigation, git basics, scripts,
+        commands, multi-step, and queries) this method carries out the
+        action directly.  Newly-added intents from Phase 1 (dependency
+        management, backend operations, terminal monitoring, etc.) are
+        **recognized and confirmed** here but their full execution is
+        delegated to the ``IntentToolBridge`` (Phase 3) or the
+        ``agent_ai_assistant`` orchestration layer when available.
+
         Returns:
             Tuple of (success: bool, result_message: str)
         """
         try:
             if intent.intent_type == IntentType.NAVIGATE_DIRECTORY:
                 return self._execute_navigate(intent)
-            
+
             elif intent.intent_type == IntentType.LIST_DIRECTORY:
                 return self._execute_list_directory(intent)
-            
+
             elif intent.intent_type == IntentType.SHOW_CURRENT_DIR:
                 return self._execute_pwd()
-            
+
             elif intent.intent_type == IntentType.GIT_CHECKOUT:
                 return self._execute_git_checkout(intent)
-            
+
             elif intent.intent_type == IntentType.GIT_STATUS:
                 return self._execute_git_status()
-            
+
             elif intent.intent_type == IntentType.GIT_PULL:
                 return self._execute_git_pull()
-            
+
             elif intent.intent_type == IntentType.GIT_CLONE:
                 return self._execute_git_clone(intent)
-            
+
             elif intent.intent_type == IntentType.RUN_SCRIPT:
                 return self._execute_run_script(intent)
-            
+
             elif intent.intent_type == IntentType.RUN_COMMAND:
                 return self._execute_run_command(intent)
-            
+
             elif intent.intent_type == IntentType.MULTI_STEP:
                 return self._execute_multi_step(intent)
-            
+
             elif intent.intent_type == IntentType.QUERY_LOCATION:
                 return self._execute_query_location(intent)
-            
+
+            # ------------------------------------------------------------------
+            # Phase-1 recognised intents: return a structured acknowledgement
+            # that includes the intent name so the upper orchestration layer
+            # (agent_ai_assistant / IntentToolBridge) can dispatch them.
+            # ------------------------------------------------------------------
+            elif intent.intent_type in _DEFERRED_INTENTS:
+                label = intent.intent_type.name.replace('_', ' ').title()
+                return True, (
+                    f"✅ Intent recognised: **{label}**\n"
+                    f"   Confidence: {intent.confidence:.0%}\n"
+                    f"   Entities: {', '.join(e.value for e in intent.entities) or 'none'}\n"
+                    f"   ℹ️ Execution is handled by the agent orchestration layer."
+                )
+
             else:
-                return False, f"⚠️ Intent '{intent.intent_type.name}' recognized but not yet implemented"
-        
+                return False, f"⚠️ Intent '{intent.intent_type.name}' recognised but not yet implemented"
+
         except Exception as e:
             return False, f"❌ Error executing {intent.intent_type.name}: {str(e)}"
         
@@ -975,7 +2188,7 @@ class RobustNLProcessor:
     
     def _execute_multi_step(self, intent: Intent) -> Tuple[bool, str]:
         """Execute a multi-step operation."""
-        sub_intents = getattr(intent, '_sub_intents', [])
+        sub_intents = intent.sub_intents
         
         if not sub_intents:
             return False, "❌ No steps found in multi-step operation"
@@ -983,19 +2196,8 @@ class RobustNLProcessor:
         results = []
         success_count = 0
         
-        for i, sub in enumerate(sub_intents, 1):
-            step_type = sub['type']
-            entities = sub['entities']
-            part = sub['part']
-            
-            # Create a sub-intent object
-            sub_intent = Intent(
-                intent_type=step_type,
-                entities=entities,
-                confidence=0.8,
-                raw_message=part
-            )
-            sub_intent.explanation = self._generate_explanation(sub_intent)
+        for i, sub_intent in enumerate(sub_intents, 1):
+            step_type = sub_intent.intent_type
             
             results.append(f"\n**Step {i}: {step_type.name.replace('_', ' ').title()}**")
             

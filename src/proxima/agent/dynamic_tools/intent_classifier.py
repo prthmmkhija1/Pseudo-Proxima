@@ -33,12 +33,23 @@ from typing import Any, Callable, Dict, List, Optional, Protocol, Union
 from .tool_interface import ToolCategory
 from .tool_registry import ToolRegistry, get_tool_registry, ToolSearchResult
 from .execution_context import ExecutionContext, get_current_context
+from .robust_nl_processor import IntentType as CanonicalIntentType
 
 logger = logging.getLogger(__name__)
 
 
-class IntentType(Enum):
-    """Primary intent categories - discovered dynamically, not hardcoded."""
+class IntentCategory(Enum):
+    """Broad intent categories used by the LLM-based classifier.
+
+    These represent high-level domains (file, git, terminal, etc.).
+    Each category maps to one or more specific *CanonicalIntentType* values
+    defined in ``robust_nl_processor.IntentType`` via the
+    ``CATEGORY_TO_INTENTS`` mapping below.
+
+    .. deprecated::
+        Prefer importing ``IntentType`` directly from
+        ``robust_nl_processor`` for specific intent matching.
+    """
     FILE_OPERATION = "file_operation"
     DIRECTORY_OPERATION = "directory_operation"
     GIT_OPERATION = "git_operation"
@@ -50,6 +61,94 @@ class IntentType(Enum):
     CONVERSATION = "conversation"
     MULTI_STEP = "multi_step"
     UNKNOWN = "unknown"
+
+
+# ---------------------------------------------------------------------------
+# Mapping from broad IntentCategory to specific CanonicalIntentType members.
+# This allows the LLM-based classifier to narrow from a broad category
+# (e.g. FILE_OPERATION) to a concrete intent (e.g. READ_FILE).
+# ---------------------------------------------------------------------------
+CATEGORY_TO_INTENTS: Dict[IntentCategory, List[CanonicalIntentType]] = {
+    IntentCategory.FILE_OPERATION: [
+        CanonicalIntentType.CREATE_FILE,
+        CanonicalIntentType.READ_FILE,
+        CanonicalIntentType.WRITE_FILE,
+        CanonicalIntentType.DELETE_FILE,
+        CanonicalIntentType.COPY_FILE,
+        CanonicalIntentType.MOVE_FILE,
+        CanonicalIntentType.SEARCH_FILE,
+    ],
+    IntentCategory.DIRECTORY_OPERATION: [
+        CanonicalIntentType.NAVIGATE_DIRECTORY,
+        CanonicalIntentType.LIST_DIRECTORY,
+        CanonicalIntentType.CREATE_DIRECTORY,
+        CanonicalIntentType.DELETE_DIRECTORY,
+        CanonicalIntentType.COPY_DIRECTORY,
+        CanonicalIntentType.SHOW_CURRENT_DIR,
+    ],
+    IntentCategory.GIT_OPERATION: [
+        CanonicalIntentType.GIT_CLONE,
+        CanonicalIntentType.GIT_PULL,
+        CanonicalIntentType.GIT_PUSH,
+        CanonicalIntentType.GIT_COMMIT,
+        CanonicalIntentType.GIT_ADD,
+        CanonicalIntentType.GIT_BRANCH,
+        CanonicalIntentType.GIT_CHECKOUT,
+        CanonicalIntentType.GIT_FETCH,
+        CanonicalIntentType.GIT_STATUS,
+        CanonicalIntentType.GIT_MERGE,
+        CanonicalIntentType.GIT_REBASE,
+        CanonicalIntentType.GIT_STASH,
+        CanonicalIntentType.GIT_LOG,
+        CanonicalIntentType.GIT_DIFF,
+        CanonicalIntentType.GIT_CONFLICT_RESOLVE,
+    ],
+    IntentCategory.TERMINAL_OPERATION: [
+        CanonicalIntentType.RUN_COMMAND,
+        CanonicalIntentType.RUN_SCRIPT,
+        CanonicalIntentType.TERMINAL_MONITOR,
+        CanonicalIntentType.TERMINAL_KILL,
+        CanonicalIntentType.TERMINAL_OUTPUT,
+        CanonicalIntentType.TERMINAL_LIST,
+    ],
+    IntentCategory.SEARCH_OPERATION: [
+        CanonicalIntentType.SEARCH_FILE,
+        CanonicalIntentType.WEB_SEARCH,
+    ],
+    IntentCategory.ANALYSIS_OPERATION: [
+        CanonicalIntentType.ANALYZE_RESULTS,
+        CanonicalIntentType.EXPORT_RESULTS,
+    ],
+    IntentCategory.CONFIGURATION: [
+        CanonicalIntentType.BACKEND_BUILD,
+        CanonicalIntentType.BACKEND_CONFIGURE,
+        CanonicalIntentType.BACKEND_TEST,
+        CanonicalIntentType.BACKEND_MODIFY,
+        CanonicalIntentType.BACKEND_LIST,
+        CanonicalIntentType.INSTALL_DEPENDENCY,
+        CanonicalIntentType.CONFIGURE_ENVIRONMENT,
+        CanonicalIntentType.CHECK_DEPENDENCY,
+        CanonicalIntentType.ADMIN_ELEVATE,
+    ],
+    IntentCategory.INFORMATION_QUERY: [
+        CanonicalIntentType.QUERY_LOCATION,
+        CanonicalIntentType.QUERY_STATUS,
+        CanonicalIntentType.SYSTEM_INFO,
+    ],
+    IntentCategory.CONVERSATION: [
+        # Conversation does not map to a specific canonical intent;
+        # it means the user is chatting, not requesting an action.
+    ],
+    IntentCategory.MULTI_STEP: [
+        CanonicalIntentType.MULTI_STEP,
+        CanonicalIntentType.PLAN_EXECUTION,
+        CanonicalIntentType.UNDO_OPERATION,
+        CanonicalIntentType.REDO_OPERATION,
+    ],
+    IntentCategory.UNKNOWN: [
+        CanonicalIntentType.UNKNOWN,
+    ],
+}
 
 
 class IntentConfidence(Enum):
@@ -64,7 +163,7 @@ class IntentConfidence(Enum):
 class ClassifiedIntent:
     """Result of intent classification."""
     # Primary classification
-    primary_intent: IntentType
+    primary_intent: IntentCategory
     sub_intent: Optional[str] = None
     
     # Confidence metrics
@@ -90,6 +189,11 @@ class ClassifiedIntent:
     classification_reasoning: str = ""
     timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
     
+    @property
+    def canonical_intents(self) -> List[CanonicalIntentType]:
+        """Return the list of specific canonical intents for this category."""
+        return CATEGORY_TO_INTENTS.get(self.primary_intent, [])
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
         return {
@@ -347,9 +451,9 @@ Respond with a JSON object:
             else:
                 raise ValueError("No JSON found in response")
             
-            # Map primary intent to IntentType
+            # Map primary intent to IntentCategory
             primary_intent_str = data.get("primary_intent", "unknown")
-            primary_intent = self._map_intent_type(primary_intent_str)
+            primary_intent = self._map_intent_category(primary_intent_str)
             
             # Determine confidence level
             confidence_score = data.get("confidence_score", 0.5)
@@ -376,7 +480,7 @@ Respond with a JSON object:
             if classified.is_multi_step and "sub_steps" in data:
                 classified.sub_intents = [
                     ClassifiedIntent(
-                        primary_intent=self._map_intent_type(step.get("intent", "unknown")),
+                        primary_intent=self._map_intent_category(step.get("intent", "unknown")),
                         target_tools=step.get("tools", []),
                         raw_user_input=user_input,
                     )
@@ -389,7 +493,7 @@ Respond with a JSON object:
             logger.warning(f"Failed to parse classification response: {e}")
             # Return low-confidence classification
             return ClassifiedIntent(
-                primary_intent=IntentType.UNKNOWN,
+                primary_intent=IntentCategory.UNKNOWN,
                 confidence_score=0.2,
                 confidence_level=IntentConfidence.VERY_LOW,
                 requires_clarification=True,
@@ -400,42 +504,42 @@ Respond with a JSON object:
                 raw_user_input=user_input,
             )
     
-    def _map_intent_type(self, intent_str: str) -> IntentType:
-        """Map a string intent to IntentType enum."""
+    def _map_intent_category(self, intent_str: str) -> IntentCategory:
+        """Map a string intent to IntentCategory enum."""
         intent_mapping = {
-            "file_system": IntentType.FILE_OPERATION,
-            "file_operation": IntentType.FILE_OPERATION,
-            "file": IntentType.FILE_OPERATION,
-            "directory": IntentType.DIRECTORY_OPERATION,
-            "directory_operation": IntentType.DIRECTORY_OPERATION,
-            "folder": IntentType.DIRECTORY_OPERATION,
-            "git": IntentType.GIT_OPERATION,
-            "git_operation": IntentType.GIT_OPERATION,
-            "version_control": IntentType.GIT_OPERATION,
-            "terminal": IntentType.TERMINAL_OPERATION,
-            "terminal_operation": IntentType.TERMINAL_OPERATION,
-            "command": IntentType.TERMINAL_OPERATION,
-            "shell": IntentType.TERMINAL_OPERATION,
-            "search": IntentType.SEARCH_OPERATION,
-            "search_operation": IntentType.SEARCH_OPERATION,
-            "find": IntentType.SEARCH_OPERATION,
-            "analysis": IntentType.ANALYSIS_OPERATION,
-            "analysis_operation": IntentType.ANALYSIS_OPERATION,
-            "config": IntentType.CONFIGURATION,
-            "configuration": IntentType.CONFIGURATION,
-            "settings": IntentType.CONFIGURATION,
-            "question": IntentType.INFORMATION_QUERY,
-            "information_query": IntentType.INFORMATION_QUERY,
-            "info": IntentType.INFORMATION_QUERY,
-            "conversation": IntentType.CONVERSATION,
-            "chat": IntentType.CONVERSATION,
-            "greeting": IntentType.CONVERSATION,
-            "multi_step": IntentType.MULTI_STEP,
-            "multiple": IntentType.MULTI_STEP,
+            "file_system": IntentCategory.FILE_OPERATION,
+            "file_operation": IntentCategory.FILE_OPERATION,
+            "file": IntentCategory.FILE_OPERATION,
+            "directory": IntentCategory.DIRECTORY_OPERATION,
+            "directory_operation": IntentCategory.DIRECTORY_OPERATION,
+            "folder": IntentCategory.DIRECTORY_OPERATION,
+            "git": IntentCategory.GIT_OPERATION,
+            "git_operation": IntentCategory.GIT_OPERATION,
+            "version_control": IntentCategory.GIT_OPERATION,
+            "terminal": IntentCategory.TERMINAL_OPERATION,
+            "terminal_operation": IntentCategory.TERMINAL_OPERATION,
+            "command": IntentCategory.TERMINAL_OPERATION,
+            "shell": IntentCategory.TERMINAL_OPERATION,
+            "search": IntentCategory.SEARCH_OPERATION,
+            "search_operation": IntentCategory.SEARCH_OPERATION,
+            "find": IntentCategory.SEARCH_OPERATION,
+            "analysis": IntentCategory.ANALYSIS_OPERATION,
+            "analysis_operation": IntentCategory.ANALYSIS_OPERATION,
+            "config": IntentCategory.CONFIGURATION,
+            "configuration": IntentCategory.CONFIGURATION,
+            "settings": IntentCategory.CONFIGURATION,
+            "question": IntentCategory.INFORMATION_QUERY,
+            "information_query": IntentCategory.INFORMATION_QUERY,
+            "info": IntentCategory.INFORMATION_QUERY,
+            "conversation": IntentCategory.CONVERSATION,
+            "chat": IntentCategory.CONVERSATION,
+            "greeting": IntentCategory.CONVERSATION,
+            "multi_step": IntentCategory.MULTI_STEP,
+            "multiple": IntentCategory.MULTI_STEP,
         }
         
         intent_lower = intent_str.lower().replace(" ", "_")
-        return intent_mapping.get(intent_lower, IntentType.UNKNOWN)
+        return intent_mapping.get(intent_lower, IntentCategory.UNKNOWN)
     
     def _get_confidence_level(self, score: float) -> IntentConfidence:
         """Convert confidence score to level."""
@@ -466,7 +570,7 @@ Respond with a JSON object:
         
         if not search_results:
             return ClassifiedIntent(
-                primary_intent=IntentType.UNKNOWN,
+                primary_intent=IntentCategory.UNKNOWN,
                 confidence_score=0.1,
                 confidence_level=IntentConfidence.VERY_LOW,
                 requires_clarification=True,
@@ -503,19 +607,19 @@ Respond with a JSON object:
             classification_reasoning=f"Matched via semantic search: {top_result.match_reason}",
         )
     
-    def _category_to_intent(self, category: ToolCategory) -> IntentType:
-        """Map tool category to intent type."""
+    def _category_to_intent(self, category: ToolCategory) -> IntentCategory:
+        """Map tool category to intent category."""
         mapping = {
-            ToolCategory.FILE_SYSTEM: IntentType.FILE_OPERATION,
-            ToolCategory.GIT: IntentType.GIT_OPERATION,
-            ToolCategory.TERMINAL: IntentType.TERMINAL_OPERATION,
-            ToolCategory.SEARCH: IntentType.SEARCH_OPERATION,
-            ToolCategory.ANALYSIS: IntentType.ANALYSIS_OPERATION,
-            ToolCategory.BACKEND: IntentType.CONFIGURATION,
-            ToolCategory.GITHUB: IntentType.GIT_OPERATION,
-            ToolCategory.NETWORK: IntentType.INFORMATION_QUERY,
+            ToolCategory.FILE_SYSTEM: IntentCategory.FILE_OPERATION,
+            ToolCategory.GIT: IntentCategory.GIT_OPERATION,
+            ToolCategory.TERMINAL: IntentCategory.TERMINAL_OPERATION,
+            ToolCategory.SEARCH: IntentCategory.SEARCH_OPERATION,
+            ToolCategory.ANALYSIS: IntentCategory.ANALYSIS_OPERATION,
+            ToolCategory.BACKEND: IntentCategory.CONFIGURATION,
+            ToolCategory.GITHUB: IntentCategory.GIT_OPERATION,
+            ToolCategory.NETWORK: IntentCategory.INFORMATION_QUERY,
         }
-        return mapping.get(category, IntentType.UNKNOWN)
+        return mapping.get(category, IntentCategory.UNKNOWN)
     
     def detect_multi_step(
         self,

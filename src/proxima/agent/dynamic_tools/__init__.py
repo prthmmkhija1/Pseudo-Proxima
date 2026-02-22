@@ -132,10 +132,12 @@ from .llm_integration import (
 from .intent_classifier import (
     IntentClassifier,
     ClassifiedIntent,
-    IntentType,
+    IntentCategory,
     IntentConfidence,
     ClassifierConfig,
     get_intent_classifier,
+    CATEGORY_TO_INTENTS,
+    CanonicalIntentType,
 )
 
 from .entity_extractor import (
@@ -642,6 +644,17 @@ from .robust_nl_processor import (
     get_robust_nl_processor,
 )
 
+# Intent-to-Tool Bridge (Phase 3)
+from .intent_tool_bridge import (
+    IntentToolBridge,
+    INTENT_TO_TOOL,
+    build_tool_arguments,
+    resolve_path,
+    is_blocked,
+    is_dangerous,
+    is_safe,
+)
+
 # Import tools to trigger auto-registration
 from . import tools
 
@@ -716,10 +729,12 @@ __all__ = [
     # Phase 2: Intent Classification
     "IntentClassifier",
     "ClassifiedIntent",
-    "IntentType",
+    "IntentCategory",
     "IntentConfidence",
     "ClassifierConfig",
     "get_intent_classifier",
+    "CATEGORY_TO_INTENTS",
+    "CanonicalIntentType",
     
     # Phase 2: Entity Extraction
     "EntityExtractor",
@@ -1184,6 +1199,15 @@ __all__ = [
     "ExtractedEntity",
     "SessionContext",
     "get_robust_nl_processor",
+
+    # Intent-to-Tool Bridge (Phase 3)
+    "IntentToolBridge",
+    "INTENT_TO_TOOL",
+    "build_tool_arguments",
+    "resolve_path",
+    "is_blocked",
+    "is_dangerous",
+    "is_safe",
 ]
 
 

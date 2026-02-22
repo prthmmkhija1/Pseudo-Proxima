@@ -108,12 +108,67 @@ try:
 except ImportError:
     ROBUST_NL_AVAILABLE = False
 
+# Import IntentToolBridge (Phase 3)
+try:
+    from proxima.agent.dynamic_tools.intent_tool_bridge import (
+        IntentToolBridge,
+        build_tool_arguments,
+        INTENT_TO_TOOL,
+    )
+    INTENT_BRIDGE_AVAILABLE = True
+except ImportError:
+    INTENT_BRIDGE_AVAILABLE = False
+
+# Import Plan components (Phase 3)
+try:
+    from proxima.agent.task_planner import (
+        ExecutionPlan,
+        PlanStep,
+        PlanStatus,
+        StepStatus,
+        TaskCategory,
+    )
+    from proxima.agent.plan_executor import (
+        PlanExecutor,
+        ToolExecutor,
+        ExecutionMode,
+    )
+    PLAN_AVAILABLE = True
+except ImportError:
+    PLAN_AVAILABLE = False
+
 # Import LLM components
 try:
     from proxima.intelligence.llm_router import LLMRouter, LLMRequest
     LLM_AVAILABLE = True
 except ImportError:
     LLM_AVAILABLE = False
+
+
+class _LLMRouterAdapter:
+    """Thin adapter exposing ``generate(prompt) -> str`` over ``LLMRouter``.
+
+    The ``IntentToolBridge`` expects a provider with a simple
+    ``generate(prompt: str) -> str`` method (Phase 8, Step 8.4).
+    This class wraps the full ``LLMRouter.route()`` API to satisfy
+    that contract.
+    """
+
+    def __init__(self, router: "LLMRouter") -> None:
+        self._router = router
+
+    def generate(self, prompt: str) -> str:
+        """Send *prompt* to the configured LLM and return the text."""
+        try:
+            request = LLMRequest(
+                prompt=prompt,
+                temperature=0.3,
+                max_tokens=120,
+            )
+            response = self._router.route(request)
+            return response.text or ""
+        except Exception:
+            return ""
 
 
 class SendableTextArea(TextArea):
@@ -878,6 +933,21 @@ class AgentAIAssistantScreen(BaseScreen):
         if ROBUST_NL_AVAILABLE:
             try:
                 self._robust_nl_processor = get_robust_nl_processor(self._llm_router)
+            except Exception:
+                pass
+
+        # Initialize IntentToolBridge (Phase 3)
+        self._intent_bridge: Optional[IntentToolBridge] = None  # type: ignore[type-arg]
+        if INTENT_BRIDGE_AVAILABLE:
+            try:
+                self._intent_bridge = IntentToolBridge(
+                    consent_callback=self._bridge_consent_callback,
+                )
+                # Phase 8: wire LLM provider for auto-commit-message generation
+                if self._llm_router and LLM_AVAILABLE:
+                    self._intent_bridge.set_llm_provider(
+                        _LLMRouterAdapter(self._llm_router)
+                    )
             except Exception:
                 pass
         
@@ -1939,6 +2009,7 @@ class AgentAIAssistantScreen(BaseScreen):
         # WITHOUT relying on LLM JSON parsing which can be unreliable
         direct_result = self._try_direct_backend_operation(message, start_time)
         if direct_result:
+            self._update_nl_context(message, None, "direct_backend_operation", True)
             return
         
         # PHASE 1: Use Robust NL Processor (MOST RELIABLE for simpler models)
@@ -1953,17 +2024,20 @@ class AgentAIAssistantScreen(BaseScreen):
         if self._llm_router and LLM_AVAILABLE:
             operation_result = self._analyze_and_execute_with_llm(message, start_time)
             if operation_result:
+                self._update_nl_context(message, None, "llm_analyzed_operation", True)
                 return
         
         # PHASE 3: Fallback to keyword-based agent command detection
         if self._agent_enabled and self._agent:
             tool_result = self._try_execute_agent_command(message)
             if tool_result:
+                self._update_nl_context(message, None, "agent_command", True)
                 self._finish_generation()
                 return
         
         # PHASE 4: Fall back to LLM response for general questions
         self._generate_llm_response(message, start_time)
+        self._update_nl_context(message, None, "llm_response", True)
     
     def _try_direct_backend_operation(self, message: str, start_time: float) -> bool:
         """Directly handle backend clone/build/configure requests without LLM JSON parsing.
@@ -2101,13 +2175,14 @@ class AgentAIAssistantScreen(BaseScreen):
     def _try_robust_nl_execution(self, message: str, start_time: float) -> bool:
         """Use the robust NL processor for reliable intent recognition and execution.
         
-        This method uses a hybrid rule-based + context-aware approach that works
-        reliably with ANY LLM model, including smaller models like llama2-uncensored.
+        Phase 3 enhanced: Uses IntentToolBridge for dispatch when available,
+        falls back to the in-processor execute_intent for core actions.
         
-        Key features:
-        - Pattern-based entity extraction (paths, branches, scripts, commands)
-        - Context tracking across multiple messages  
-        - Fallback-safe execution
+        Dispatch paths:
+        1. MULTI_STEP / PLAN_EXECUTION → plan creation + sequential dispatch
+        2. Core intents (navigate, list, pwd, checkout, clone, etc.) → in-processor
+        3. All other intents → IntentToolBridge dispatch (if available)
+        4. Fallback → in-processor execute_intent
         
         Returns True if an operation was identified and executed, False otherwise.
         """
@@ -2115,7 +2190,7 @@ class AgentAIAssistantScreen(BaseScreen):
             return False
         
         try:
-            # Recognize the user's intent
+            # Recognize the user's intent (5-layer pipeline)
             intent = self._robust_nl_processor.recognize_intent(message)
             
             # Skip if unknown intent or low confidence
@@ -2125,11 +2200,18 @@ class AgentAIAssistantScreen(BaseScreen):
             # Show what we understood
             self._show_ai_message(f"🔍 **Understood:** {intent.explanation}")
             
-            # Execute the intent
-            success, result = self._robust_nl_processor.execute_intent(intent)
+            # ── Dispatch path 1: Multi-step via IntentToolBridge ──────
+            if intent.intent_type in (IntentType.MULTI_STEP, IntentType.PLAN_EXECUTION):
+                return self._dispatch_multi_step(intent, message, start_time)
+            
+            # ── Dispatch path 2 & 3: Single intent ───────────────────
+            success, result = self._dispatch_single_intent(intent)
             
             if result:
                 self._show_ai_message(result)
+                
+                # ── Phase 2 (Step 2.5): Update session context ────────
+                self._update_nl_context(message, intent, result, success)
                 
                 # Update stats
                 elapsed = int((time.time() - start_time) * 1000)
@@ -2152,6 +2234,331 @@ class AgentAIAssistantScreen(BaseScreen):
         except Exception as e:
             # Log error but don't show to user, fall through to other methods
             return False
+
+    # ── Phase 3 dispatch helpers ──────────────────────────────────────
+
+    # Core intents that are executed directly by the NL processor
+    _CORE_INTENTS = frozenset({
+        IntentType.NAVIGATE_DIRECTORY,
+        IntentType.LIST_DIRECTORY,
+        IntentType.SHOW_CURRENT_DIR,
+        IntentType.GIT_CHECKOUT,
+        IntentType.GIT_STATUS,
+        IntentType.GIT_PULL,
+        IntentType.GIT_CLONE,
+        IntentType.RUN_SCRIPT,
+        IntentType.RUN_COMMAND,
+        IntentType.QUERY_LOCATION,
+        IntentType.QUERY_STATUS,
+    })
+
+    def _dispatch_single_intent(
+        self, intent: 'Intent'
+    ) -> 'Tuple[bool, str]':
+        """Dispatch a single intent through the best available path.
+
+        1. Core intents → ``RobustNLProcessor.execute_intent``
+        2. Other intents → ``IntentToolBridge.dispatch`` (if available)
+        3. Fallback → ``RobustNLProcessor.execute_intent`` (deferred ack)
+        """
+        # Core intents always handled in-processor for reliability
+        if intent.intent_type in self._CORE_INTENTS:
+            return self._robust_nl_processor.execute_intent(intent)
+
+        # Try bridge dispatch
+        if self._intent_bridge is not None:
+            try:
+                ctx = self._robust_nl_processor.get_context()
+                cwd = ctx.current_directory
+                tool_result = self._intent_bridge.dispatch(
+                    intent, cwd=cwd, session_context=ctx,
+                )
+                # Convert ToolResult → (bool, str)
+                msg = tool_result.message or (
+                    str(tool_result.result) if tool_result.result else
+                    ("✅ Done" if tool_result.success else f"❌ {tool_result.error}")
+                )
+                return tool_result.success, msg
+            except Exception:
+                pass  # Fall through to processor
+
+        # Fallback — processor handles it (deferred acknowledgement)
+        return self._robust_nl_processor.execute_intent(intent)
+
+    def _dispatch_multi_step(
+        self,
+        intent: 'Intent',
+        message: str,
+        start_time: float,
+    ) -> bool:
+        """Handle MULTI_STEP / PLAN_EXECUTION intents.
+
+        If the IntentToolBridge is available, dispatches each sub-intent
+        through it (with cwd updates between steps).  Otherwise, falls
+        back to the in-processor ``_execute_multi_step``.
+        """
+        if self._intent_bridge is not None and intent.sub_intents:
+            ctx = self._robust_nl_processor.get_context()
+            cwd = ctx.current_directory
+            results = self._intent_bridge.dispatch_multi_step(
+                intent, cwd=cwd, session_context=ctx,
+            )
+            # Compose result message
+            parts: list[str] = []
+            success_count = 0
+            for i, (sub, res) in enumerate(
+                zip(intent.sub_intents, results), 1
+            ):
+                label = sub.intent_type.name.replace('_', ' ').title()
+                parts.append(f"\n**Step {i}: {label}**")
+                msg = res.message or (
+                    str(res.result) if res.result else
+                    ("✅ Done" if res.success else f"❌ {res.error}")
+                )
+                parts.append(msg)
+                if res.success:
+                    success_count += 1
+                # Update session context after each step
+                self._update_nl_context(sub.raw_message, sub, msg, res.success)
+
+            parts.append(
+                f"\n✨ **Completed {success_count}/{len(results)} steps successfully**"
+            )
+            combined = "\n".join(parts)
+            self._show_ai_message(combined)
+        else:
+            # Fallback to in-processor multi-step
+            success, combined = self._robust_nl_processor.execute_intent(intent)
+            self._show_ai_message(combined)
+            self._update_nl_context(message, intent, combined, success)
+
+        elapsed = int((time.time() - start_time) * 1000)
+        self._current_session.messages.append(
+            ChatMessage(role='assistant', content="multi-step executed", thinking_time_ms=elapsed)
+        )
+        self._agent_stats.commands_run += 1
+        self._update_stats_panel()
+        self._save_current_session()
+        self._finish_generation()
+        return True
+
+    def _bridge_consent_callback(self, command: str) -> bool:
+        """Consent callback for the IntentToolBridge.
+
+        For now, returns ``True`` for all commands.  A future iteration
+        can integrate with the TUI modal dialog.
+        """
+        # TODO: Integrate with TUI ConsentDialog
+        return True
+
+    def _create_plan_from_intents(
+        self, sub_intents: list
+    ) -> 'Optional[ExecutionPlan]':
+        """Create an ``ExecutionPlan`` from a list of sub-intents.
+
+        Used for ``PLAN_EXECUTION`` intents that need the full planner
+        integration.  Returns ``None`` if plan imports are unavailable.
+        """
+        if not PLAN_AVAILABLE:
+            return None
+
+        steps: list[PlanStep] = []
+        for i, sub in enumerate(sub_intents):
+            tool_name = INTENT_TO_TOOL.get(sub.intent_type) if INTENT_BRIDGE_AVAILABLE else None
+            cwd = self._robust_nl_processor.get_context().current_directory if self._robust_nl_processor else "."
+            args = build_tool_arguments(sub, cwd) if INTENT_BRIDGE_AVAILABLE else {}
+            step = PlanStep(
+                step_id=i + 1,
+                tool=tool_name or sub.intent_type.name.lower(),
+                arguments=args,
+                description=sub.explanation or sub.intent_type.name.replace('_', ' ').title(),
+                depends_on=[i] if i > 0 else [],
+                status=StepStatus.PENDING,
+            )
+            steps.append(step)
+
+        plan = ExecutionPlan(
+            plan_id=f"plan_{int(time.time())}",
+            description=f"Multi-step execution plan ({len(steps)} steps)",
+            steps=steps,
+            category=TaskCategory.EXECUTE,
+            status=PlanStatus.DRAFT,
+            user_request=sub_intents[0].raw_message if sub_intents else "",
+        )
+        return plan
+
+    def _update_nl_context(
+        self,
+        message: str,
+        intent: 'Optional[Intent]',
+        result: str,
+        success: bool,
+    ) -> None:
+        """Update the NL processor's session context after an operation.
+
+        Called after every successful (or attempted) execution from the
+        robust NL pipeline so that subsequent requests can resolve
+        pronouns and contextual references accurately.
+
+        *intent* may be ``None`` for phases that do not produce an
+        ``Intent`` object (Phases 0, 2, 3, 4).  In that case only
+        the conversation entry and operation result are recorded.
+        """
+        try:
+            import os  # local import — used for env path join below
+            if not self._robust_nl_processor:
+                return
+
+            ctx = self._robust_nl_processor.get_context()
+
+            # Always record the conversation entry
+            label = intent.intent_type.name if intent else "DIRECT_OPERATION"
+            ctx.add_conversation_entry(message, label)
+
+            # Always record the operation result (even on failure)
+            ctx.last_operation_result = result
+
+            # Intent-specific updates (only on success with a real intent)
+            if not success or not intent:
+                return
+
+            it = intent.intent_type
+
+            # Script execution → track last script
+            if it in (IntentType.RUN_SCRIPT,):
+                script = (
+                    intent.get_entity('script_path')
+                    or intent.get_entity('script')
+                    or intent.get_entity('path')
+                )
+                if script:
+                    ctx.last_script_executed = script
+
+            # Directory navigation → push directory
+            if it in (IntentType.NAVIGATE_DIRECTORY,):
+                new_dir = (
+                    intent.get_entity('path')
+                    or intent.get_entity('dirname')
+                )
+                if new_dir:
+                    ctx.push_directory(new_dir)
+
+            # Package installation → record each package
+            if it in (IntentType.INSTALL_DEPENDENCY,):
+                for pkg in intent.get_all_entities('package'):
+                    ctx.add_package(pkg)
+                    if pkg not in ctx.installed_packages:
+                        ctx.installed_packages.append(pkg)
+
+            # Environment configuration → record active environments (Phase 5)
+            if it in (IntentType.CONFIGURE_ENVIRONMENT,):
+                env_name = (
+                    intent.get_entity('env_name')
+                    or intent.get_entity('venv_name')
+                    or intent.get_entity('name')
+                    or '.venv'
+                )
+                env_path = os.path.join(ctx.current_directory, env_name)
+                ctx.active_environments[env_name] = env_path
+
+            # Backend build → track last built backend
+            if it in (IntentType.BACKEND_BUILD,):
+                backend = (
+                    intent.get_entity('name')
+                    or intent.get_entity('backend')
+                    or intent.get_entity('path')
+                )
+                if backend:
+                    ctx.last_built_backend = backend
+
+            # Backend modify → track modified files and checkpoints (Phase 6)
+            if it in (IntentType.BACKEND_MODIFY,):
+                file_path = (
+                    intent.get_entity('path')
+                    or intent.get_entity('filename')
+                    or intent.get_entity('file')
+                )
+                if file_path:
+                    ctx.last_modified_files = [file_path]
+                backend = (
+                    intent.get_entity('backend')
+                    or intent.get_entity('name')
+                )
+                # Checkpoint ID stored by the bridge handler directly
+
+            # Backend configure → update context (Phase 6)
+            if it in (IntentType.BACKEND_CONFIGURE,):
+                backend = (
+                    intent.get_entity('backend')
+                    or intent.get_entity('name')
+                )
+                if backend:
+                    ctx.last_built_backend = backend
+
+            # Git clone → already tracked by execute_intent, but ensure
+            url = intent.get_entity('url')
+            if it in (IntentType.GIT_CLONE,) and url:
+                clone_path = intent.get_entity('path') or ctx.current_directory
+                ctx.record_clone(url, clone_path)
+
+            # Git pull/push → track result (Phase 8)
+            if it in (IntentType.GIT_PULL, IntentType.GIT_PUSH):
+                ctx.last_operation_result = (
+                    f"[{it.name.lower()}] success={success}"
+                )
+
+            # Git checkout → track branch (Phase 8)
+            if it in (IntentType.GIT_CHECKOUT,):
+                branch = intent.get_entity('branch') or intent.get_entity('branch_name')
+                if branch:
+                    ctx.add_branch(branch)
+
+            # Git commit → record commit result (Phase 8)
+            if it in (IntentType.GIT_COMMIT,):
+                message_val = (
+                    intent.get_entity('message')
+                    or intent.get_entity('commit_message')
+                    or ''
+                )
+                ctx.last_operation_result = (
+                    f"[git_commit] message='{message_val}' success={success}"
+                )
+
+            # Git add → record staged files (Phase 8)
+            if it in (IntentType.GIT_ADD,):
+                ctx.last_operation_result = (
+                    f"[git_add] success={success}"
+                )
+
+            # Git merge → track branch merge result (Phase 8)
+            if it in (IntentType.GIT_MERGE,):
+                branch = intent.get_entity('branch') or intent.get_entity('branch_name')
+                ctx.last_operation_result = (
+                    f"[git_merge] branch='{branch or ''}' success={success}"
+                )
+
+            # Git branch → track branch operations (Phase 8)
+            if it in (IntentType.GIT_BRANCH,):
+                branch = intent.get_entity('branch') or intent.get_entity('branch_name')
+                if branch:
+                    ctx.add_branch(branch)
+
+            # Admin escalation → record elevated operation (Phase 7)
+            if it in (IntentType.ADMIN_ELEVATE,):
+                command = (
+                    intent.get_entity('command')
+                    or intent.get_entity('cmd')
+                    or intent.get_entity('text')
+                    or ''
+                )
+                ctx.last_operation_result = (
+                    f"[admin_elevate] command='{command}' "
+                    f"success={success}"
+                )
+
+        except Exception:
+            # Context updates are best-effort; never break execution
+            pass
     
     def _analyze_and_execute_with_llm(self, message: str, start_time: float) -> bool:
         """Use the integrated LLM to analyze user intent and execute operations.
